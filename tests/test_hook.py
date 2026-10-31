@@ -111,6 +111,9 @@ class RootkeeperHook(unittest.TestCase):
         # тут честно отказывала. Хук кладём в init.d коротким перемонтированием rw→ro (mount подменён),
         # откат («выключить последнюю свою функцию», «Убрать всё») убирает файл тем же способом.
         self.caller.write_text("echo nothing\n")
+        orphan = "#!/bin/sh\n" + server.HOOK_MARK + "\nkeep_owner_settings\n"
+        self.keeper.write_text(orphan)
+        self.assertFalse(self.panel.hook_status()['hook'])
         self.initd.chmod(0o755)
         (self.initd / "S99zdropbear").write_text("#!/bin/sh\n")   # чужой скрипт рута — не трогаем
         self.initd.chmod(0o555)
@@ -139,6 +142,7 @@ class RootkeeperHook(unittest.TestCase):
             self.panel._drop_hook_if_unused()                # откат одной кнопкой — без adb и консоли
         self.assertFalse(script.exists())
         self.assertTrue((self.initd / "S99zdropbear").exists())
+        self.assertEqual(self.keeper.read_text(), orphan.replace(server.HOOK_MARK + "\n", ""))
         self.assertEqual(oct(self.initd.stat().st_mode)[-3:], "555")
 
     def test_installed_initd_hook_needs_no_second_remount(self):
@@ -161,7 +165,19 @@ class RootkeeperHook(unittest.TestCase):
         self.assertTrue((self.initd / "S99zwebpanel").exists())
         self.assertEqual(Path(server.BOOT_HOOK).read_text(), server.BOOT_HOOK_SCRIPT)
 
+    def test_orphan_rootkeeper_uses_initd_without_changing_owner_file(self):
+        self.caller.write_text("#!/bin/sh\n# " + str(self.keeper) + "\necho normal_boot\n")
+        original = "#!/bin/sh\n" + server.HOOK_MARK + "\nowner_commands\n"
+        self.keeper.write_text(original)
+        self.initd.chmod(0o755)
+        self.assertFalse(self.panel.hook_status()['hook'])
+        self.panel._ensure_hook()
+        self.assertEqual(self.keeper.read_text(), original)
+        self.assertEqual((self.initd / 'S99zwebpanel').read_text(), server.initd_hook_script())
+        self.assertEqual(self.panel.hook_status()['file'], server.INITD_HOOK)
+
     def test_existing_rootkeeper_keeps_its_own_lines(self):
+        self.caller.write_text(f"[ -x {self.keeper} ] && {self.keeper} &\n")
         self.keeper.write_text("#!/bin/sh\nstart_root_things\n")
         self.panel._ensure_hook()
         self.panel._drop_hook_if_unused()

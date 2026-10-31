@@ -431,7 +431,7 @@ def bt_power_sh(on):
 
 
 # при загрузке Bluetooth поднимается сам — первые две минуты гасим его, если панель велела держать выключенным
-BT_OFF_BOOT = (f"[ -f {BT_OFF} ] && ( i=0; while [ $i -lt 120 ]; do dbus-send --system --print-reply --dest=org.bluez "
+BT_OFF_BOOT = (f"[ -f {BT_OFF} ] && ( i=0; while [ $i -lt 120 ] && [ -f {BT_OFF} ]; do dbus-send --system --print-reply --dest=org.bluez "
                f"/org/bluez/hci0 org.freedesktop.DBus.Properties.Get string:org.bluez.Adapter1 string:Powered 2>/dev/null "
                f"| grep -q true && {bt_power_sh(False)}; sleep 5; i=$((i + 5)); done ) >/dev/null 2>&1 &")
 # Звук через Bluetooth-колонку: колонка остаётся «мозгом» (слушает, отвечает), а играет подключённая по Bluetooth.
@@ -600,19 +600,26 @@ def initd_available():
             f"awk -v p={directory} {shlex.quote(awk)} {mounts} 2>/dev/null; }}")
 
 
+def rootkeeper_called():
+    """Наличие rootkeeper.sh само по себе не доказывает запуск при загрузке."""
+    caller, keeper = shlex.quote(ROOTKEEPER_CALLER), shlex.quote(ROOTKEEPER)
+    return f"sed '/^[[:space:]]*#/d' {caller} 2>/dev/null | grep -F {keeper} >/dev/null"
+
+
 def boot_route_script(require_caller=False):
-    """Select a candidate using reads; installation still verifies writes."""
-    keeper, caller = shlex.quote(ROOTKEEPER), shlex.quote(ROOTKEEPER_CALLER)
-    called = f"sed '/^[[:space:]]*#/d' {caller} 2>/dev/null | grep -F {keeper} >/dev/null"
-    rootkeeper = called if require_caller else f"[ -f {keeper} ] || {{ {called}; }}"
-    return (f"if {rootkeeper}; then echo rootkeeper; "
+    """Select a candidate using reads; every model requires a real boot caller.
+
+    require_caller is retained for compatibility with existing profile adapters.
+    """
+    return (f"if {rootkeeper_called()}; then echo rootkeeper; "
             f"elif grep -q {shlex.quote(HOOK_MARK)} {shlex.quote(INITD_HOOK)} 2>/dev/null; then echo initd; "
             f"elif {initd_available()}; then echo initd; else exit 3; fi")
 
 
 def hook_active():
-    """sh: хук подключён — строка в rootkeeper.sh или свой скрипт в init.d."""
-    return f"{{ grep -q '{HOOK_MARK}' {ROOTKEEPER} 2>/dev/null || grep -q '{HOOK_MARK}' {INITD_HOOK} 2>/dev/null; }}"
+    """sh: rootkeeper должен вызываться загрузкой; иначе нужен свой init.d-хук."""
+    return (f"{{ {{ {rootkeeper_called()}; }} && grep -q '{HOOK_MARK}' {ROOTKEEPER} 2>/dev/null || "
+            f"grep -q '{HOOK_MARK}' {INITD_HOOK} 2>/dev/null; }}")
 
 
 def hook_drop():
@@ -1808,6 +1815,8 @@ class Panel:
         self.ffmpeg = shutil.which("ffmpeg")
         self._ww_info = None       # кэш «пакет установлен»: вкладка опрашивает статус часто
         self._ww_info_at = 0.0
+        self._ww_forward_lock = threading.Lock()
+        self._ww_connect_at = None
         self._ww_router = None
         self._ww_router_stop = threading.Event()
         self._ww_last_hit = None
@@ -2140,13 +2149,23 @@ echo @@BLUEZ
         self._run_timed(kind, f"{QRUN}/led_util {shlex.quote(path)}", seconds)
         return {"ok": True}
 
-    def _run_timed(self, kind, cmd, seconds):
+    def _run_timed(self, kind, cmd, seconds, verify=False):
         # Ни led_util, ни зацикленные анимации не завершаются сами — запускаем в фоне и убиваем по таймеру.
         seconds = max(1, min(600, int(seconds)))
         pidf = f"/tmp/webpanel_{kind}.pid"
         self.stop_pattern(kind)
-        self.detach(kind, f"{cmd} >/dev/null 2>&1 & p=$!; echo $p > {pidf}; "
+        log = f"/tmp/webpanel_{kind}.log"
+        self.adb.shell(f"rm -f {pidf}; : > {log}")
+        self.detach(kind, f"{cmd} >{log} 2>&1 & p=$!; echo $p > {pidf}; "
                           f"sleep {seconds}; kill $p 2>/dev/null; rm -f {pidf}")
+        if verify:
+            out, _, _ = self.adb.shell(
+                f"i=0; while [ $i -lt 10 ]; do sleep 0.1; "
+                f"p=$(cat {pidf} 2>/dev/null); "
+                f'[ -n "$p" ] && kill -0 "$p" 2>/dev/null && {{ echo @running; break; }}; '
+                f"i=$((i + 1)); done; tail -c 1200 {log} 2>/dev/null; true", check=False)
+            if "@running" not in out.splitlines():
+                raise AdbError("анимация не запустилась: " + (strip_ansi(out).strip() or f"нет работающего процесса; журнал {log}"))
 
     def play_clock(self, frames, seconds):
         frames = decode_clock_pattern(".binscled", encode_clock_pattern(frames))  # нормализуем ввод клиента
@@ -2458,7 +2477,7 @@ echo @@BLUEZ
             f = Path(td) / "a.led"
             f.write_bytes(check_led(text).encode())
             self.adb.push(f, path)
-        self._run_timed("ring", f"{QRUN}/led_util {path}", seconds)
+        self._run_timed("ring", f"{QRUN}/led_util {path}", seconds, verify=True)
         return {"ok": True}
 
     # ---------- запуск: заставка часов и звук ----------
@@ -2520,7 +2539,7 @@ echo @@BLUEZ
             self.adb.push(Path(td) / "hook", BOOT_HOOK)
         remount_branch = f"elif {with_root_rw(initd_write())}; then :; " if remount else ""
         keeper_test = (f"[ {shlex.quote(route)} = rootkeeper ]" if route else
-                       f"[ -f {ROOTKEEPER} ] || grep -q {ROOTKEEPER} {ROOTKEEPER_CALLER} 2>/dev/null")
+                       rootkeeper_called())
         _, err, rc = self.adb.shell(
             f"chmod 755 {BOOT_HOOK}; "
             f"if {keeper_test}; then "
@@ -2566,6 +2585,8 @@ echo @@BLUEZ
         hook = "hook" in flags
         fresh = hashlib.md5(BOOT_HOOK_SCRIPT.encode()).hexdigest() in out
         return {"hook": hook, "fresh": hook and fresh, "users": users, "possible": "possible" in flags,
+                "supported": getattr(self, "_hook_supported", True),
+                "reason": getattr(self, "_hook_reason", ""),
                 "broken": bool(users) and not (hook and fresh), "rootkeeper": ROOTKEEPER,
                 "file": INITD_HOOK if "initd" in flags else ROOTKEEPER}
 
@@ -3423,21 +3444,30 @@ echo @@BLUEZ
         return platform in WAKE_TARGETS, platform
 
     def _wakeword_base(self):
-        """База HTTP API демона: adb forward на свободный порт, иначе прямой IP колонки."""
-        if not getattr(self, "_ww_port", None):
+        """API слушает loopback колонки: доступ только через adb forward.
+
+        При рабочем агенте Connection может не поддерживать adb-соединение.
+        Восстанавливаем его по необходимости, не чаще одной попытки в 30 с.
+        """
+        with self._ww_forward_lock:
+            if getattr(self, "_ww_port", None):
+                return f"http://127.0.0.1:{self._ww_port}"
             try:
                 self._ww_port = self.adb.forward(WAKE_PORT)
-            except (AdbError, OSError, subprocess.TimeoutExpired):
-                self._ww_port = None
-        if getattr(self, "_ww_port", None):
+            except (AdbError, OSError, subprocess.TimeoutExpired) as first_error:
+                serial = self.adb.serial or ""
+                now = time.monotonic()
+                due = self._ww_connect_at is None or now - self._ww_connect_at >= 30
+                if ":" not in serial or not due:
+                    raise AdbError(f"для API слов активации нужен adb-проброс: {first_error}") from None
+                self._ww_connect_at = now
+                try:
+                    subprocess.run([self.adb.adb, "connect", serial], capture_output=True, timeout=10)
+                    self._ww_port = self.adb.forward(WAKE_PORT)
+                except (AdbError, OSError, subprocess.TimeoutExpired) as e:
+                    self._ww_port = None
+                    raise AdbError(f"не удалось восстановить adb-проброс для API слов активации: {e}") from None
             return f"http://127.0.0.1:{self._ww_port}"
-        gl = getattr(self, "glagol", None)
-        ip = (gl.host if gl else None) or ""
-        if not ip and self.adb.serial and ":" in self.adb.serial:
-            ip = self.adb.serial.split(":", 1)[0]
-        if not ip:
-            raise AdbError("нет связи с колонкой для API слов активации")
-        return f"http://{ip}:{WAKE_PORT}"
 
     def _wakeword_api(self, path, method="GET", body=None, timeout=60):
         """Запрос к API демона; возвращает (content-type, dict/bytes)."""
@@ -4381,7 +4411,7 @@ echo @@BLUEZ
         if sid not in {s["id"] for s in self.scenes()["scenes"]}:
             raise AdbError("нет такого сценария")
         if not self.scenes()["daemon"]:
-            raise AdbError("сценарии на колонке не запущены — сохраните сценарий ещё раз")
+            raise AdbError("служба сценариев не запущена — проверьте поддержку профиля, хук загрузки и журнал запуска")
         self.adb.shell(f"echo {shlex.quote(sid)} > {SCENE_FIRE}")
         return {"ok": True}
 
@@ -4411,7 +4441,7 @@ echo @@BLUEZ
         """(Пере)запуск демона. Пока будильник звенит, не трогаем — иначе он оборвётся."""
         self.adb.shell(
             f"p=$(cat {ALARM_SD} 2>/dev/null); if kill -0 $p 2>/dev/null; then "
-            + (f"grep -q ringing {ALARM_STATE} 2>/dev/null || {{ kill $p; rm -f {ALARM_SD}; }}; " if restart else "")
+            + (f"grep -q ringing {ALARM_STATE} 2>/dev/null || {{ kill $p; rm -f {ALARM_SD}; }}; " if restart else ":; ")
             + f"fi; [ -f {ALARM_SD} ] && kill -0 $(cat {ALARM_SD}) 2>/dev/null || "
             f"start-stop-daemon -S -b -m -p {ALARM_SD} -x /bin/sh -- {ALARMD}")
 
@@ -5232,6 +5262,22 @@ echo @@BLUEZ
         return {"preset": preset, "presets": [*EQ_PRESETS, "custom"], "custom": custom,
                 "freqs": [round(f, 1) for f in freqs], "db": db}
 
+    def _ensure_btout_tap(self):
+        arch, _, _ = self.adb.shell("uname -m", check=False)
+        if strip_ansi(arch).strip() not in ("aarch64", "arm64"):
+            raise AdbError("эквалайзер Bluetooth пока доступен только для aarch64")
+        binary = self._viz_binary()
+        digest = hashlib.md5(binary.read_bytes()).hexdigest()
+        out, _, _ = self.adb.shell(f"md5sum {VIZD} 2>/dev/null; true", check=False)
+        if out.split()[:1] == [digest]:
+            return
+        self.adb.shell(f"mkdir -p {VIZ_DIR}")
+        self.adb.push(binary, VIZD + ".new", timeout=300)
+        self.adb.shell(f"chmod 755 {VIZD}.new && mv {VIZD}.new {VIZD}")
+        # Старый конвейер мог работать через cat. Сторож соберёт его заново с tap.
+        self.adb.shell(f"p=$(cat {BTOUT_FWD_SD} 2>/dev/null) && {{ {YAM2_KILL}; }}; "
+                       f"rm -f {BTOUT_FWD_SD}; true", check=False)
+
     def btout_eq(self, preset=None, custom=None):
         """Выбрать пресет (None — применить сохранённый) и положить коэффициенты для tap на колонке."""
         s = load_settings()
@@ -5245,8 +5291,9 @@ echo @@BLUEZ
             s["eq_custom"] = custom
         else:
             custom = s.get("eq_custom") or [dict(b) for b in EQ_CUSTOM_DEFAULT]
+        if eq_filters(preset, custom):
+            self._ensure_btout_tap()
         s["eq_preset"] = preset
-        save_settings(s)
         filters = [eq_coeffs(b) for b in eq_filters(preset, custom)]
         # Запас до фильтров: учитываем суммарную АЧХ, в том числе перекрывающиеся
         # свои полосы. Масштабируем числитель первого биквада — работает и со старым vizd.
@@ -5264,7 +5311,8 @@ echo @@BLUEZ
             write_unix(f, json.dumps(payload, ensure_ascii=False))
             self.adb.shell(f"mkdir -p {VIZ_DIR}", check=False)
             self.adb.push(f, EQ_FILE + ".new")
-        self.adb.shell(f"chmod 644 {EQ_FILE}.new; mv {EQ_FILE}.new {EQ_FILE}", check=False)
+        self.adb.shell(f"chmod 644 {EQ_FILE}.new && mv {EQ_FILE}.new {EQ_FILE}")
+        save_settings(s)
         st = self.btout_eq_status()
         st["preset"] = preset
         return st
@@ -5378,11 +5426,13 @@ echo @@BLUEZ
         # сторож дальше следит за подключением (подмена уже стоит — он её не трогает, пока колонка на связи)
         self.adb.shell(f"start-stop-daemon -S -b -m -p {BTOUT_SD} -x /bin/sh -- {BTOUT_SH}")
         self._btout_volume_max()   # громкость BT-колонки в bluealsa — всегда 100 %
+        eq_error = ""
         try:
             self.btout_eq()        # сохранённый пресет эквалайзера — в tap
         except Exception as e:     # noqa: BLE001 — без эквалайзера звук всё равно должен включиться
+            eq_error = str(e)
             JOURNAL.add(f"Эквалайзер не применён: {e}", "warn")
-        return {**self.bt_state(), "restarted": restarted}
+        return {**self.bt_state(), "restarted": restarted, "eq_error": eq_error}
 
     def btout_off(self):
         """Встроенный динамик: убираем выбор — сторож снимет подмену, перезапустит Алису и выйдет."""

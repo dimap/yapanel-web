@@ -8,6 +8,11 @@ import server
 
 
 class Eq(unittest.TestCase):
+    def setUp(self):
+        mock = patch.object(server.Panel, '_ensure_btout_tap')
+        self.tap = mock.start()
+        self.addCleanup(mock.stop)
+
     def test_presets_are_valid(self):
         for name in server.EQ_PRESETS:
             for band in server.EQ_PRESETS[name]:

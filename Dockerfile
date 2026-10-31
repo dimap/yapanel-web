@@ -21,7 +21,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X 
 FROM python:3.14-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends adb ffmpeg openssl \
+ && apt-get install -y --no-install-recommends adb ffmpeg openssl ca-certificates \
+ && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

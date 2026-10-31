@@ -61,3 +61,32 @@ for(const value of [0,40]){
   assert.equal(volumeNodes['#vol-master'].disabled,false);
 }
 console.log('Unknown volume, zero volume and reconnected scale cases passed');
+
+(async()=>{
+  const start=html.indexOf('function btOutUse(');
+  const end=html.indexOf("$('#bt-out-toggle')",start);
+  // Extract just the function; the following toggle handler is outside its contract.
+  const btSource=html.slice(start,html.indexOf('\n}',start)+2);
+  for(const fail of [false,true]){
+    let finish;
+    const pending=new Promise((resolve,reject)=>{finish=()=>fail?reject(new Error('connection failed')):resolve({restarted:false});});
+    const ctx={store:{get:()=>true,set(){}},mu:{},toast(){},confirm:()=>true,
+      api:()=>pending,renderBt(){},aliceRestarting(){},
+      act:async(_b,fn)=>{try{return await fn();}catch{return null;}}};
+    vm.createContext(ctx);vm.runInContext(btSource,ctx);
+    const button={textContent:'Играть через неё'};
+    const result=ctx.btOutUse(button,'00:11:22:33:44:55');
+    assert.equal(button.textContent,'Подключение и настройка…');
+    finish();await result;
+    assert.equal(button.textContent,'Играть через неё');
+  }
+  const hookNodes={};
+  const ctx={$:id=>hookNodes[id]||=( {hidden:false,textContent:'',append(){}} ),
+    hookInfo:{broken:true,possible:false,hook:false,users:['ассистент'],supported:false,reason:'Модель не поддерживает хук'}};
+  vm.createContext(ctx);
+  vm.runInContext(html.slice(html.indexOf('function renderHook()'),html.indexOf("$('#hook-repair').onclick")),ctx);
+  ctx.renderHook();
+  assert.equal(hookNodes['#hook-repair'].hidden,true);
+  assert.equal(hookNodes['#hook-warn-text'].textContent,ctx.hookInfo.reason);
+  console.log('Bluetooth preparation feedback and unsupported hook controls passed');
+})().catch(e=>{console.error(e);process.exitCode=1});

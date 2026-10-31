@@ -63,10 +63,34 @@ class Api(unittest.TestCase):
         self.assertEqual(p._wakeword_base(), "http://127.0.0.1:4567")
         p.adb.forward.assert_called_once_with(server.WAKE_PORT)
 
-    def test_direct_ip_fallback(self):
+    def test_missing_adb_is_reconnected_for_loopback_api(self):
         p = panel()
-        p.adb.forward.side_effect = server.AdbError("no forward")
-        self.assertEqual(p._wakeword_base(), "http://192.0.2.10:8780")
+        p.adb.adb = "test-adb"
+        p.adb.forward.side_effect = [server.AdbError("device not found"), 4567]
+        with patch("server.subprocess.run") as run:
+            self.assertEqual(p._wakeword_base(), "http://127.0.0.1:4567")
+            self.assertEqual(p._wakeword_base(), "http://127.0.0.1:4567")
+        run.assert_called_once_with(["test-adb", "connect", "192.0.2.10:5555"], capture_output=True, timeout=10)
+        self.assertEqual(p.adb.forward.call_count, 2)
+
+    def test_failed_reconnect_is_throttled_without_direct_ip_fallback(self):
+        p = panel()
+        p.adb.forward.side_effect = server.AdbError("device not found")
+        with patch("server.subprocess.run") as run, patch("server.time.monotonic", side_effect=[100, 101, 131]):
+            for _ in range(3):
+                with self.assertRaisesRegex(server.AdbError, "adb-проброс"):
+                    p._wakeword_base()
+        self.assertEqual(run.call_count, 2)
+        self.assertIsNone(p._ww_port)
+
+    def test_usb_failure_never_tries_network_connect(self):
+        p = panel()
+        p.adb.serial = "test-usb-device"
+        p.adb.forward.side_effect = server.AdbError("device not found")
+        with patch("server.subprocess.run") as run:
+            with self.assertRaisesRegex(server.AdbError, "adb-проброс"):
+                p._wakeword_base()
+        run.assert_not_called()
 
     def test_json_and_wav(self):
         p = panel()

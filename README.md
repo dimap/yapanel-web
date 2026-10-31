@@ -257,6 +257,43 @@ services:
 
 > В Docker панель открыта для всей локальной сети — **задайте пароль** во вкладке «Настройки» → «Доступ».
 
+### Ошибка сертификата Яндекса в Docker
+
+Если Glagol сообщает `CERTIFICATE_VERIFY_FAILED`, проверьте доверенные CA **внутри контейнера**.
+Сертификат HTTPS самой панели к этой ошибке отношения не имеет. Образ устанавливает системный
+пакет `ca-certificates` и обновляет хранилище при сборке; для старого образа нужна пересборка
+или обновление на релиз с этим исправлением.
+
+Проверка без передачи токена Яндекса:
+
+```sh
+docker compose exec -T panel python - <<'PYTLS'
+import urllib.request
+import urllib.error
+
+try:
+    urllib.request.urlopen("https://quasar.yandex.net/glagol/token", timeout=15)
+except urllib.error.HTTPError as e:
+    print("TLS работает; HTTP", e.code)
+PYTLS
+```
+
+HTTP-ошибка без токена ожидаема; `CERTIFICATE_VERIFY_FAILED` означает, что TLS не прошёл проверку.
+Если используется HTTPS-прокси с собственным CA, получите его корневой сертификат у администратора
+сети в PEM-формате (`.crt`). Не используйте сертификат панели или произвольный сертификат из
+непроверенного соединения. Добавьте к сервису `panel` в Compose:
+
+```yaml
+    volumes:
+      - ./data:/data
+      - ./network-ca.crt:/usr/local/share/ca-certificates/network-ca.crt:ro
+    command: ["sh", "-c", "update-ca-certificates && exec python server.py"]
+```
+
+Сохраните остальные параметры сервиса и пересоздайте контейнер: `docker compose up -d`.
+Проверьте также явно заданные `SSL_CERT_FILE`, `SSL_CERT_DIR`, `HTTPS_PROXY`: они могут менять
+хранилище доверия или маршрут запроса. Не отключайте проверку TLS.
+
 ### Android — приложение на телефоне
 
 <table>

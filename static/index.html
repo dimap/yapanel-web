@@ -3568,7 +3568,7 @@ const raSeconds = () => {
 };
 $('#ra-preview-btn').onclick = () => {
   clearTimeout(ra.timer);
-  if (!ra.frames.length) return;
+  if (!ra.frames.length) return toast('Добавьте хотя бы один кадр для предпросмотра', true);
   const until = Date.now() + raSeconds() * 1000;
   let i = 0;
   const step = () => {
@@ -3738,7 +3738,7 @@ function scheduleEqCustom() {
     try {
       btEq = await api('/api/btout/eq', { preset: 'custom', bands: eqCustomBands() });
       drawEqCurve();
-    } catch { /* оставляем прошлую кривую */ }
+    } catch (e) { toast(e.message, true); }
   }, 250);
 }
 function renderBtEq() {
@@ -3817,7 +3817,9 @@ function btOutUse(b, mac) {
            && !confirm('Перевести звук в Bluetooth-колонку? Алиса перезапустится (~30 с), музыка остановится — включите её снова.')) return;
   store.set('btout.ok', '1');
   toast('Подключаю колонку — Алиса перезапустится и заговорит из неё');
-  act(b, async () => { btData = await api('/api/btout/use', { mac }); renderBt(); if (btData.restarted) aliceRestarting('Звук переходит на Bluetooth-колонку — Алиса перезапускается, это около 30 секунд'); }, 'Звук — через Bluetooth-колонку');
+  const label = b?.textContent;
+  if (b) b.textContent = 'Подключение и настройка…';
+  return act(b, async () => { btData = await api('/api/btout/use', { mac }); renderBt(); if (btData.eq_error) toast('Звук подключён, но эквалайзер не применён: ' + btData.eq_error, true); else toast('Звук — через Bluetooth-колонку'); if (btData.restarted) aliceRestarting('Звук переходит на Bluetooth-колонку — Алиса перезапускается, это около 30 секунд'); }).finally(() => { if (b) b.textContent = label; });
 }
 $('#bt-out-btn').onclick = e => {
   const b = e.currentTarget, o = btData?.out || {};
@@ -6433,7 +6435,7 @@ function renderAlarms() {
   const next = on.map(a => [a, nextFire(a)]).filter(x => x[1]).sort((x, y) => x[1] - y[1])[0];
   $('#al-badge').textContent = !d.alarms.length ? 'нет' : next ? `ближайший ${inText(next[1] - Date.now())}` : 'все выключены';
   $('#al-badge').className = 'badge' + (on.length && d.running ? ' ok' : on.length && !d.running ? ' bad' : '');
-  if (on.length && !d.running) $('#al-badge').textContent = 'демон не запущен — сохраните ещё раз';
+  if (on.length && !d.running) $('#al-badge').textContent = 'служба не запущена — проверьте поддержку профиля и хук';
   $('#al-list').innerHTML = d.alarms.length ? d.alarms.map(a => {
     const m = AL_MODES[a.mode] || AL_MODES.sound;
     const what = a.mode === 'music' ? `Включить: ${a.query}` : a.mode === 'text' ? `«${a.query}»` : m.name;
@@ -6465,12 +6467,15 @@ function renderAlarms() {
   const inst = d.installed;
   $('#al-setup').hidden = inst;
   ['#al-list-card', '#al-cols', '#al-add'].forEach(x => $(x).hidden = !inst);
+  $('#al-add').disabled = d.supported === false;
+  $$('#al-list [data-a]').forEach(b => { b.disabled = d.supported === false; });
   if (!inst) { $('#al-editor').hidden = true; $('#al-snoozed').hidden = true; }
   $('#al-install-note').textContent = d.ffmpeg ? '' : 'Нужен ffmpeg на компьютере — им перекодируется звук.';
-  $('#al-install').disabled = !d.ffmpeg;
+  $('#al-install').disabled = !d.ffmpeg || d.supported === false;
+  if (d.supported === false) { $('#al-install-note').textContent = d.reason; $('#al-save').disabled = true; }
   $('#al-inst-info').textContent = `${d.dir}${d.size_kb != null ? ' · ' + (d.size_kb >= 1024 ? (d.size_kb / 1024).toFixed(1) + ' МБ' : d.size_kb + ' КБ') : ''}`
     + (d.outdated ? ' · есть новая версия скрипта' : '');
-  $('#al-update').hidden = !d.outdated;
+  $('#al-update').hidden = !d.outdated || d.supported === false;
 }
 function renderAlarmBar() {
   const st = alarmsData?.state, bar = $('#alarm-bar');
@@ -6619,7 +6624,8 @@ async function loadScenes() {
 function renderScenes() {
   const d = scData; if (!d) return;
   const on = d.scenes.filter(s => s.on).length;
-  $('#sc-badge').textContent = !d.scenes.length ? 'нет' : on && !d.daemon ? 'не запущены на колонке — сохраните ещё раз' : `включено ${on} из ${d.scenes.length}`;
+  if (d.supported === false) { $('#sc-add').disabled = true; $('#sc-save').disabled = true; }
+  $('#sc-badge').textContent = !d.scenes.length ? 'нет' : on && !d.daemon ? 'служба не запущена — проверьте поддержку профиля и хук' : `включено ${on} из ${d.scenes.length}`;
   $('#sc-badge').className = 'badge' + (on && d.daemon ? ' ok' : on && !d.daemon ? ' bad' : '');
   $('#sc-list').innerHTML = d.scenes.length ? d.scenes.map(s => {
     const run = d.running.includes(s.id), { chain, linear } = scChain(s);
@@ -7339,12 +7345,14 @@ function renderHook() {
     : h.hook
       ? `Хук запуска (${h.file || h.rootkeeper}) — от прошлой версии панели и подключит не всё (${what}). Обновите её.`
       : `На колонке есть своё (${what}), но хук запуска не подключён — после перезагрузки вернутся стандартные, а будильник и ассистент не запустятся.`;
-  $('#hook-repair').hidden = false;
+  $('#hook-repair').hidden = h.supported === false;
+  if (h.supported === false) $('#hook-warn-text').textContent = h.reason || 'Автозапуск для этой модели пока не поддерживается';
   $('#hook-repair').textContent = h.hook ? 'Обновить хук' : 'Подключить хук';
   const head = $('main[data-page]:not([hidden]) .page-head');
   if (head && w.parentElement !== head) head.append(w);
 }
 $('#hook-repair').onclick = e => {
+  if (hookInfo?.supported === false) return toast(hookInfo.reason, true);
   const remount = hookInfo && !hookInfo.possible;
   if (remount && !confirm('Чтобы положить сценарий автозапуска в /etc/init.d, панель на секунду перемонтирует '
     + 'корень колонки в режим записи и вернёт его в только-чтение. Продолжить?')) return;
@@ -7557,8 +7565,8 @@ function wwRender() {
   const on = wwOn(), running = !!ww.running;
   const stateEl = $('#ww-state'), dot = $('#ww-dot');
   stateEl.textContent = !ww.installed ? 'не установлен' : !ww.supported ? 'не поддерживается'
-    : running ? 'работает' : 'остановлен';
-  dot.className = 'ww-dot' + (on && running ? ' on' : on ? ' warn' : ' off');
+    : running ? (ww.error ? 'процесс запущен, API недоступен' : 'работает') : 'остановлен';
+  dot.className = 'ww-dot' + (on && running && !ww.error ? ' on' : on ? ' warn' : ' off');
   $('#ww-hint').textContent = !ww.installed
     ? 'Пакет tangenx/wakeword не установлен. Установите его в «Приложения» → YAM 2, затем вернитесь сюда.'
     : !ww.supported ? `Плагин не поддерживает эту модель (${ww.platform || '?'}).`

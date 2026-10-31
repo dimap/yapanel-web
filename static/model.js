@@ -10,6 +10,22 @@ async function loadProfile(){
   }
 }
 const profile=await loadProfile();
+if(profile.hook_supported===false){
+  const reason='На этой модели автозапуск, будильники и сценарии пока не поддерживаются.';
+  for(const id of ['al-install','al-save','sc-add','sc-save']){
+    const button=document.getElementById(id);if(button){button.disabled=true;button.title=reason;}
+  }
+  for(const tab of ['alarm','scenes']){
+    const head=document.querySelector('#tab-'+tab+' .page-head');
+    if(head){const note=document.createElement('p');note.className='hint';note.textContent=reason;head.append(note);}
+  }
+}
+if(profile.ring_preview_supported===false){
+  for(const id of ['ra-device','ra-install','ra-load-default','ra-reset']){
+    const button=document.getElementById(id);if(button){button.disabled=true;button.title='Воспроизведение и подмены анимаций на этой модели пока не поддерживаются';}
+  }
+}
+
 // Запуск и будильник проверены только на Лайт 2 — на остальных не прячем, а предупреждаем крупно в шапке.
 const untested=(tab,what,text)=>{   // what — фраза целиком: «будильник не тестировался и может…», «сценарии … и могут…»
   const head=document.querySelector('#tab-'+tab+' .page-head');if(!head)return;
@@ -25,9 +41,9 @@ if(!profile.boot)document.getElementById('boot-card')?.setAttribute('data-profil
 if(tried('anims')){
   untested('boot','замена анимаций не тестировалась и может работать не так, как надо','Проверена только на Станции Лайт 2. '+(profile.boot?'':'Редактор часов скрыт — он рассчитан на дисплей Лайт 2. ')+'Свои анимации кольца подменяются при загрузке через хук в <code>rootkeeper.sh</code>; если после перезагрузки остались стандартные, значит, на этой модели хук не срабатывает.');
 }
-if(tried('scenes'))
+if(tried('scenes')&&profile.hook_supported!==false)
   untested('scenes','сценарии не тестировались и могут работать не так, как надо','Проверены только на Станции Лайт 2: их выполняет тот же скрипт на колонке, что и будильник, и запускается он при загрузке через хук в <code>rootkeeper.sh</code>. Цвет кольца в шаге «Кольцо» рассчитан на кольцо Лайт 2 — на других моделях он может не гореть. Проверьте сценарий кнопкой «Запустить».');
-if(tried('alarm'))
+if(tried('alarm')&&profile.hook_supported!==false)
   untested('alarm','будильник не тестировался и может работать не так, как надо','Проверен только на Станции Лайт 2: это скрипт на колонке, он будит звуками и голосом Алисы и запускается при загрузке через хук в <code>rootkeeper.sh</code>. Прежде чем полагаться на него утром, проверьте кнопкой «Проверить» и после перезагрузки колонки.');
 // звуки и «Сказать» живут в виджетах «Обзора» — там предупреждение строкой, а не плашкой на всю вкладку
 const note=(sel,text)=>{const w=document.querySelector(sel);if(!w)return;const p=document.createElement('p');p.className='hint untested-note';p.textContent=text;w.querySelector('.card-head')?.after(p);};

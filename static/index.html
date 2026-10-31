@@ -2032,6 +2032,21 @@
             в <code>rootkeeper.sh</code>. Упавшую службу панель перезапускает, но не больше 5 раз подряд.</p>
         </section>
       </div>
+      <section class="card" id="luna-card">
+        <div class="card-head">
+          <h2>Плагины Luna</h2>
+          <div class="row" style="gap:8px">
+            <span class="meta" id="luna-count"></span>
+            <button class="btn sm icon" id="luna-rescan" aria-label="Перечитать плагины Luna" title="Перечитать плагины из каталога Luna"><svg width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+            <button class="btn sm primary" id="luna-install">Установить .yap</button>
+            <input type="file" id="luna-file" accept=".yap" hidden>
+          </div>
+        </div>
+        <div id="luna-list"><div class="empty">Загрузка…</div></div>
+        <pre class="out" id="luna-log" hidden></pre>
+        <p class="hint">Плагины живут внутри Luna — службы <code>yam~luna~</code> выше. «Включить/Выключить» — грузить ли плагин при старте
+          Luna; служебные плагины можно запускать и останавливать отдельно, с чекбоксом автозапуска. Установленный пакет .yap включается кнопкой.</p>
+      </section>
       <section class="card" id="y2-cat-card">
         <div class="card-head">
           <h2>Каталог yam 2</h2>
@@ -4128,7 +4143,7 @@ function showTab() {
   if (tab === 'boot' && !bootLoaded) { bootLoaded = true; loadBoot(); }
   if (tab === 'wakeword') { if (window.wwLoad) window.wwLoad(); if (window.wwActionsLoad) window.wwActionsLoad(); }
   loadHook();
-  if (tab === 'apps') { loadYam2(); loadYam(); }
+  if (tab === 'apps') { loadYam2(); loadYam(); loadLuna(); }
   if (tab === 'alarm') loadAlarms();
   if (tab === 'scenes') loadScenes();
   rdPoll(tab === 'radio');
@@ -5162,6 +5177,64 @@ $('#y2-filter').oninput = renderYam2;
 $('#y2-all').onchange = renderYam2;
 $('#y2-refresh').onclick = e => act(e.currentTarget, async () => { await loadYam2(true); await loadYam2Catalog(true); });
 $('#yam-legacy > summary').addEventListener('click', () => { $('#yam-legacy').dataset.touched = 1; });
+// ---------- плагины Luna (тот же HTTP API :8099, что у старого yamd) ----------
+const luna = { plugins: null };
+async function loadLuna() {
+  try { luna.plugins = (await api('/api/luna/plugins')).plugins; }
+  catch (e) { luna.plugins = null; $('#luna-log').hidden = true;
+    $('#luna-list').innerHTML = `<p class="hint">${esc(e.message)} — если Luna ещё не запущена, запустите службу luna выше.</p>`; return; }
+  renderLuna();
+}
+function renderLuna() {
+  const ps = luna.plugins || [];
+  $('#luna-count').textContent = ps.length ? `${ps.length} шт.` : '';
+  $('#luna-list').innerHTML = ps.length ? ps.map(pl => {
+    const m = pl.manifest || {}, svc = (m.launch || {}).mode === 'service';
+    return `<div class="inst" data-id="${esc(m.id)}">
+      <div class="who"><b>${esc(m.name || m.id)} <span class="mono meta">${esc(m.version || '')}</span>${pl.enabled ? '' : ' <span class="badge">выключен</span>'}</b>
+        <span class="meta">${esc((m.description || '').slice(0, 140))}</span></div>
+      <div class="row" style="gap:6px">
+        <button class="btn sm${pl.enabled ? '' : ' primary'}" data-a="toggle">${pl.enabled ? 'Выключить' : 'Включить'}</button>
+        ${svc ? (pl.running ? '<button class="btn sm" data-a="service_stop">Стоп</button>' : '<button class="btn sm primary" data-a="service_start">Запустить</button>') : ''}
+        ${svc ? `<label class="meta"><input type="checkbox" data-a="autoboot" ${pl.service_enabled ? 'checked' : ''}>При загрузке</label>` : ''}
+        ${!svc && pl.enabled ? '<button class="btn sm" data-a="run">Запустить</button>' : ''}
+        <button class="btn sm" data-a="log">Лог</button>
+        <button class="btn sm icon danger" data-a="remove" aria-label="Удалить ${esc(m.id)}">${icon('i-trash', 14)}</button>
+      </div>
+      ${svc ? `<div class="svc"><span class="mono">${esc(m.id)}</span><span class="badge${pl.running ? ' ok' : ''}">${pl.running ? 'работает' : 'остановлен'}</span></div>` : ''}
+    </div>`;
+  }).join('') : '<p class="hint">Плагинов нет — установите пакет .yap кнопкой выше.</p>';
+  $$('#luna-list [data-a]').forEach(b => {
+    const id = b.closest('.inst').dataset.id;
+    if (b.dataset.a === 'autoboot') b.onchange = () => lunaAct(b, b.checked ? 'service_enable' : 'service_disable', id);
+    else b.onclick = () => b.dataset.a === 'log' ? lunaLog(b, id) : lunaAct(b, b.dataset.a, id);
+  });
+}
+async function lunaAct(btn, action, id) {
+  if (action === 'remove' && !confirm(`Удалить плагин ${id}?`)) return;
+  const r = await act(btn, () => api('/api/luna/action', { action, id }));
+  if (r) toast({ toggle: 'Переключено', run: 'Запущено', remove: 'Удалён: ' + id, service_start: 'Запущен',
+    service_stop: 'Остановлен', service_enable: 'Будет запускаться при загрузке', service_disable: 'Автозапуск выключен' }[action] || 'Готово');
+  loadLuna();
+}
+async function lunaLog(btn, id) {
+  const o = $('#luna-log');
+  const r = await act(btn, () => api('/api/luna/log?id=' + encodeURIComponent(id)));
+  if (!r) return;
+  o.hidden = false; o.textContent = r.text || '(пусто)'; o.scrollTop = 1e9;
+}
+$('#luna-install').onclick = () => $('#luna-file').click();
+$('#luna-file').onchange = async e => {
+  const f = e.currentTarget.files[0];
+  e.currentTarget.value = '';
+  if (!f) return;
+  const r = await act($('#luna-install'), async () => api('/api/luna/install', new Uint8Array(await f.arrayBuffer()),
+    { raw: true, headers: { 'X-Filename': encodeURIComponent(f.name) } }));
+  if (r) toast('Установлен: ' + f.name + ' — включите его');
+  loadLuna();
+};
+$('#luna-rescan').onclick = e => lunaAct(e.currentTarget, 'rescan', '');
+setInterval(() => { if (!$('#tab-apps').hidden && luna.plugins) loadLuna(); }, 15000);
 // ---------- приложения (yam) ----------
 const yam = { registry: [], plugins: [] };
 async function loadYam() {

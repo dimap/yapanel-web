@@ -4628,6 +4628,49 @@ echo @@BLUEZ
             self._yam("PUT", "/api/settings", json.dumps(s).encode(), {"Content-Type": "application/json"})
         return {"allow_plugin_binaries": s.get("allow_plugin_binaries", False)}
 
+    # ---------- Плагины Luna: тот же HTTP API на :8099, что у старого yamd (клиент _yam выше) ----------
+
+    LUNA_ACTIONS = {"remove": ("DELETE", ""), "toggle": ("POST", "/toggle"), "run": ("POST", "/invoke"),
+                    "stop": ("POST", "/stop"), "service_start": ("POST", "/service/start"),
+                    "service_stop": ("POST", "/service/stop"), "service_enable": ("POST", "/service/enable"),
+                    "service_disable": ("POST", "/service/disable")}
+
+    def luna_plugins(self):
+        return {"plugins": self._yam("GET", "/api/plugins")}
+
+    def luna_action(self, action, pkg_id):
+        if action == "rescan":
+            self._yam("POST", "/api/plugins/rescan")
+            return {"ok": True}
+        if action not in self.LUNA_ACTIONS:
+            raise AdbError(f"неизвестное действие {action}")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", pkg_id or ""):
+            raise AdbError("плохой id плагина")
+        method, path = self.LUNA_ACTIONS[action]
+        body, headers = (b"{}", {"Content-Type": "application/json"}) if action == "run" else (None, {})
+        try:
+            self._yam(method, f"/api/plugins/{pkg_id}{path}", body, headers)
+        except AdbError as e:
+            if action != "run" or "package launch mode does not support this command" not in str(e):
+                raise
+            self._yam("POST", f"/api/plugins/{pkg_id}/service/start")
+        return {"ok": True}
+
+    def luna_logs(self, pkg_id):
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", pkg_id or ""):
+            raise AdbError("плохой id плагина")
+        return {"text": strip_ansi(self._yam("GET", f"/api/plugins/{pkg_id}/logs") or "")}
+
+    def luna_install(self, blob, filename):
+        name = (filename or "").strip()
+        if not name.lower().endswith(".yap") or len(name) <= 4 or "/" in name or "\\" in name:
+            raise AdbError("ожидался файл пакета .yap")
+        boundary = "webpanel" + os.urandom(8).hex()
+        body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"{name}\"\r\n"
+                f"Content-Type: application/octet-stream\r\n\r\n").encode() + blob + f"\r\n--{boundary}--\r\n".encode()
+        return self._yam("POST", "/api/plugins", body, {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                         timeout=300)
+
     # ---------- yam 2: пакетный менеджер на колонке ----------
     # Платформа yam по device-tree — те же правила, что в install.sh yam (getprop есть не на всех колонках).
     # Порядок важен: у Лайт и Мини в compatible есть amlogic,axg, у Лайт 2 — тоже, поэтому axg — последним.
@@ -6096,6 +6139,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/yam2/packages": p.yam2_packages,
             "/api/yam2/catalog": lambda: p.yam2_catalog(q.get("refresh") == "1"),
             "/api/yam2/log": lambda: p.yam2_service_log(q.get("id", "")),
+            "/api/luna/plugins": p.luna_plugins,
+            "/api/luna/log": lambda: p.luna_logs(q.get("id", "")),
             "/api/alarms": p.alarms,
             "/api/scenes": p.scenes,
             "/api/footprint": p.footprint,
@@ -6186,6 +6231,10 @@ class Handler(BaseHTTPRequestHandler):
             directory = unquote(self.headers.get("X-Dir", "/tmp"))
             body = self._body()
             return self._handle(lambda: p.fs_upload(directory, name, body))
+        if u.path == "/api/luna/install":
+            name = unquote(self.headers.get("X-Filename", ""))
+            body = self._body()
+            return self._handle(lambda: p.luna_install(body, name))
         d = self._json()
         self._jdata = d if isinstance(d, dict) else {}
         if u.path == "/api/wakeword/proxy":
@@ -6250,6 +6299,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/yam2/doctor": lambda: p.yam2_doctor(bool(d.get("repair"))),
             "/api/yam2/pkg": lambda: p.yam2_pkg(d.get("action"), d["name"], bool(d.get("yes"))),
             "/api/yam2/service": lambda: p.yam2_service(d["id"], d["action"], bool(d.get("stop_legacy"))),
+            "/api/luna/action": lambda: p.luna_action(d.get("action"), d.get("id")),
             "/api/bt": lambda: p.bt_action(d),
             "/api/btout/scan": lambda: p.btout_scan(d.get("seconds", 12)),
             "/api/btout/use": lambda: p.btout_use(d.get("mac")),

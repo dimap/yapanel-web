@@ -42,7 +42,7 @@ log() {
 
 # Громкость Алисы 0–10 → значение ALSA Master (как platformToAlsaMap у Quasar: 0→0, 1→49, 20→255).
 alsa_of() { p=$(($1 * 2)); [ $p -le 0 ] && echo 0 || echo $((49 + (p - 1) * 206 / 19)); }
-get_alsa() { amixer get Master | sed -n 's/.*Front Left: Playback \([0-9]*\).*/\1/p'; }
+get_alsa() { amixer get Master | sed -n 's/.*\(Mono\|Front Left\): Playback \([0-9][0-9]*\).*/\2/p' | head -n 1; }
 set_alsa() { amixer -q set Master "$1" 2>/dev/null; }
 
 playing() { grep -q "state: RUNNING" /proc/asound/card*/pcm*p/sub*/status 2>/dev/null; }
@@ -249,15 +249,23 @@ node() {
 }
 
 run_scene() {
+    # Своя группа позволяет остановить сценарий вместе с дочерними командами.
+    setsid sh "$0" --scene "$1" >/dev/null 2>&1 &
+}
+
+run_scene_worker() {
     id=$1
     line=$(grep "^S|$id|" $SCENES 2>/dev/null | head -n 1)
     [ -n "$line" ] || return
     IFS='|' read -r _ _ _ _ _ _ start name <<EOF
 $line
 EOF
-    # ноды — в файл, а цикл — в одной подоболочке: панель останавливает сценарий одним kill по её pid
+    IFS= read -r selfstat < /proc/self/stat
+    printf '%s\n' "$selfstat" | sed 's/^.*) //' | awk '{print $20}' > $SRUN$id.start
+    echo "${selfstat%% *}" > $SRUN$id
+    trap 'rm -f $SRUN$id $SRUN$id.start $SRUN$id.nodes $SRUN$id.c* $SRUN$id.v*' 0
+    trap 'exit 1' HUP INT TERM
     grep "^N|$id|" $SCENES > $SRUN$id.nodes
-    (
         slog "«$name»: начат"
         # Защита от зацикливания: каждая нода — не больше 20 раз за запуск (у «Повтора» свой счёт, до 20 кругов).
         # Счёт — в файлах: переменные с номером ноды в имени потребовали бы eval.
@@ -276,10 +284,7 @@ EOF
             if node "$kind" "$a" "$b" "$id" "$pc" < /dev/null; then pc=$nx; else pc=$el; fi
         done
         slog "«$name»: готово"
-        rm -f $SRUN$id $SRUN$id.nodes $SRUN$id.c* $SRUN$id.v*
-    ) < /dev/null &
-    echo $! > $SRUN$id
-}
+} < /dev/null
 
 check_scenes() {
     [ -f $SCENES ] || return
@@ -340,6 +345,8 @@ check_minute() {
     for id in $due; do run_id "$id"; done
 }
 
+if [ "$1" = --scene ]; then run_scene_worker "$2"; exit $?; fi
+
 echo idle > $STATE
 log "запущен, время на колонке $(date '+%H:%M %Z')"
 boot_scenes
@@ -349,6 +356,11 @@ while :; do
     s=$(date +%S); s=${s#0}
     i=$((60 - s))
     while [ $i -gt 0 ]; do
+        # Срок повтора проверяем каждую секунду, не дожидаясь смены минуты.
+        if [ -f $SNOOZE ]; then
+            IFS='|' read -r sat sid < $SNOOZE
+            [ "$(date +%s)" -ge "${sat:-0}" ] && break
+        fi
         if [ -f $FIRE ]; then id=$(cat $FIRE); rm -f $FIRE; log "$id: проверка из панели"; run_id "$id"; break; fi
         # «id» — кнопка в панели, «id voice» — команда ассистенту
         if [ -f $SFIRE ]; then

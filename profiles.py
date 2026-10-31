@@ -313,7 +313,7 @@ def install(s, model='lite2', auto=False):
     profile = dict(PROFILES[model], id=model, auto=auto)
     profile['tested'] = list(profile.get('tested', ()))   # подтверждено людьми — без предупреждения
     profile['ledpanel'] = bool(profile.get('ledpanel'))
-    profile['hook_supported'] = model != 'mini3'
+    profile['hook_supported'] = True
     profile['ring_preview_supported'] = model != 'mini3'
     profile['light_note'] = ('Подсветка этой модели ещё не проверена.' if not profile['light'] else
                              'Анимация Алисы может заменить выбранный цвет.')
@@ -491,20 +491,14 @@ def install(s, model='lite2', auto=False):
             setattr(P, method, unsupported)
         if model == 'midi':
             P.display_stop = unsupported
-    # Хук в rootkeeper.sh (звук запуска, автозапуск будильника и ассистента) — только если файл есть или его
-    # вызывает штатный onboot.sh, иначе _ensure_hook сам откажет. На Мини 3 оборудование не сверено — не трогаем.
+    # Мини 3 с retail CA использует init.d; проверяем путь загрузки до записи хука.
     if model == 'mini3':
-        P._hook_supported = False
-        P._hook_reason = 'Автозапуск на Мини 3 пока не поддерживается; повторное сохранение не поможет'
-        original_alarms, original_scenes = P.alarms, P.scenes
-        P.alarms = lambda self: {**original_alarms(self), 'supported': False, 'reason': P._hook_reason}
-        P.scenes = lambda self: {**original_scenes(self), 'supported': False, 'reason': P._hook_reason}
-
-        # Reject before conversion/push/config writes, while keeping rollback available.
-        for method in ('_ensure_hook', '_install_override', 'sound_replace', 'anim_install',
-                       'alarms_save', 'scenes_save', 'alarm_install', 'alarm_sound_upload',
-                       '_alarm_write', 'alarm_test', 'ring_try'):
-            setattr(P, method, unsupported)
+        P._boot_require_caller = True
+        # В этой прошивке BusyBox не поддерживает mount --bind.
+        s.BOOT_HOOK_SCRIPT = s.BOOT_HOOK_SCRIPT.replace('mount --bind ', 'mount -t none -o bind ')
+        # Анимации этим переносом не включаем.
+        P.anim_install = unsupported
+        P.ring_try = unsupported
     if family != 'lite':    # официальный установщик старого yam знал Лайт (yandexmicro) и ставил его туда же, что на Лайт 2
         for method in ('yam_install_daemon', 'yam_update_daemon', 'yam_autostart'):
             if hasattr(P, method):

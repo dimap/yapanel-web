@@ -254,6 +254,16 @@ SCENE_FIRE = "/tmp/webpanel_scene.fire"
 SCENE_RUN = "/tmp/webpanel_scene."      # + id: pid идущего сценария
 SCENES_LOG = f"{ALARM_DIR}/scenes.log"
 
+# PID проверяем вместе со временем старта: номер мог достаться другому процессу.
+SCENE_PID_SH = f'''scene_pid() {{
+    p=$(cat {SCENE_RUN}"$1" 2>/dev/null) || return 1
+    case "$p" in ''|*[!0-9]*) return 1;; esac
+    [ "$p" -gt 1 ] || return 1
+    saved=$(cat {SCENE_RUN}"$1.start" 2>/dev/null) || return 1
+    actual=$(sed 's/^.*) //' /proc/"$p"/stat 2>/dev/null | awk '$1 != "Z" {{print $20}}')
+    [ -n "$saved" ] && [ "$saved" = "$actual" ] && kill -0 "$p" 2>/dev/null
+}}; '''
+
 
 def alarm_script():
     """Скрипт будильника для колонки — с \\n, даже если git на Windows переделал переводы строк."""
@@ -567,7 +577,9 @@ ROOT_RO = "mount -o remount,ro / 2>/dev/null"
 
 def with_root_rw(script):
     """sh: выполнить с корнем, перемонтированным в rw, и вернуть ro — даже если внутри ошибка."""
-    return f"{{ {ROOT_RW}; }} >/dev/null 2>&1; {{ {script}; }}; rc=$?; {{ {ROOT_RO}; }} >/dev/null 2>&1; exit $rc"
+    restore = shlex.quote(ROOT_RO + " >/dev/null 2>&1")
+    return (f"( {{ {ROOT_RW}; }} >/dev/null 2>&1 || exit $?; trap {restore} 0; "
+            f"( {script}; ); rc=$?; {{ {ROOT_RO}; }} >/dev/null 2>&1 || exit 5; trap - 0; exit $rc )")
 
 
 def initd_write():
@@ -2605,34 +2617,38 @@ echo @@BLUEZ
     def _install_override(self, data, custom, target, orig=None):
         """Кладёт свой файл и сразу монтирует его поверх стандартного. orig — копия оригинала (для заставки и звука
         запуска, по старинке); остальным она не нужна: оригинал под подменой цел, его читает _original_bytes."""
+        self._ensure_hook()
         with tempfile.TemporaryDirectory() as td:
             (Path(td) / "f").write_bytes(data)
             q = shlex.quote
             self.adb.shell(f"mkdir -p {q(posixpath.dirname(custom))}" + (
                 f"; grep -q ' {target} ' /proc/mounts || [ -f {orig} ] || cp {target} {orig}" if orig else ""))
             self.adb.push(Path(td) / "f", custom)
-        self._ensure_hook()
         q = shlex.quote
-        _, err, rc = self.adb.shell(f"grep -q ' {target} ' /proc/mounts || mount --bind {q(custom)} {q(target)}", check=False)
+        # ADB заменяет файл: прежний bind может всё ещё ссылаться на старый inode.
+        _, err, rc = self.adb.shell(
+            f"if grep -q ' {target} ' /proc/mounts; then umount {q(target)} || exit 1; fi; "
+            f"mount -t none -o bind {q(custom)} {q(target)}", check=False)
         if rc != 0:
             raise AdbError(err.strip() or "не удалось подменить файл")
 
     def _remove_override(self, custom, target):
         q = shlex.quote
-        self.adb.shell(f"grep -q ' {target} ' /proc/mounts && {{ umount {q(target)} || umount -l {q(target)}; }}; "
+        self.adb.shell(f"grep -q ' {target} ' /proc/mounts && {{ umount {q(target)} || umount -l {q(target)} || "
+                       "{ echo 'Не удалось снять подмену; пользовательский файл сохранён' >&2; exit 1; }; }; "
                        f"rm -f {q(custom)}; [ -d {OVR_DIR} ] && find {OVR_DIR} -depth -type d -exec rmdir {{}} \\; 2>/dev/null; true")
         self._drop_hook_if_unused()
 
     def _original_bytes(self, target):
         """Стандартный файл, даже когда поверх смонтирован свой: bind его папки без вложенных монтирований
-        (mount --bind не рекурсивный) показывает то, что лежит под подменой."""
+        (mount -t none -o bind не рекурсивный) показывает то, что лежит под подменой."""
         q = shlex.quote
         out, _, _ = self.adb.shell(f"grep -q ' {target} ' /proc/mounts && echo mounted; true", check=False)
         if "mounted" not in out:
             return self.adb.read_bytes(target)
         tmp = "/tmp/webpanel_orig.bin"
         _, err, rc = self.adb.shell(
-            f"d=/tmp/webpanel_orig.d; mkdir -p $d && mount --bind {q(posixpath.dirname(target))} $d && "
+            f"d=/tmp/webpanel_orig.d; mkdir -p $d && mount -t none -o bind {q(posixpath.dirname(target))} $d && "
             f"cp $d/{q(posixpath.basename(target))} {tmp}; rc=$?; umount $d 2>/dev/null; rmdir $d; exit $rc", check=False)
         if rc:
             raise AdbError(err.strip() or "не удалось прочитать стандартный файл")
@@ -4112,6 +4128,18 @@ echo @@BLUEZ
     @staticmethod
     def _pc_tz():
         """Часовой пояс этого компьютера: колонка живёт в UTC, а время будильника — местное."""
+        if os.name == "nt":
+            import datetime
+            import struct
+            # В Windows нет /etc/localtime: сохраняем текущее смещение при записи расписания.
+            offset = int(datetime.datetime.now().astimezone().utcoffset().total_seconds())
+            minutes = abs(offset) // 60
+            name = f"UTC{'+' if offset >= 0 else '-'}{minutes // 60:02d}:{minutes % 60:02d}"
+            abbr = name.encode("ascii") + b"\0"
+            # TZif с одним типом времени, без таблицы сезонных переходов.
+            data = (b"TZif" + b"\0" * 16 + struct.pack(">6I", 0, 0, 0, 0, 1, len(abbr))
+                    + struct.pack(">lBB", offset, 0, 0) + abbr)
+            return name, data
         lt = Path("/etc/localtime")
         try:
             real = lt.resolve()
@@ -4251,8 +4279,11 @@ echo @@BLUEZ
 
     def scenes(self):
         out, _, _ = self.adb.shell(
-            f"cat {SCENES_CONF} 2>/dev/null; echo '<<<'; for f in {SCENE_RUN}*; do case $f in *.nodes|*.c*|*\\*) continue;; esac; "
-            f"kill -0 $(cat $f) 2>/dev/null && echo \"${{f#{SCENE_RUN}}}\"; done; echo '<<<'; tail -n 40 {SCENES_LOG} 2>/dev/null; "
+            SCENE_PID_SH + f"cat {SCENES_CONF} 2>/dev/null; echo '<<<'; "
+            f"while IFS='|' read -r kind id rest; do [ \"$kind\" = S ] || continue; "
+            f"case \"$id\" in ''|*[!a-z0-9]*) continue;; esac; "
+            f"scene_pid \"$id\" && echo \"$id\"; done < {SCENES_CONF}; "
+            f"echo '<<<'; tail -n 40 {SCENES_LOG} 2>/dev/null; "
             f"echo '<<<'; p=$(cat {ALARM_SD} 2>/dev/null) && kill -0 $p 2>/dev/null && echo run; true", check=False)
         conf, running, log, daemon = (strip_ansi(out).split("<<<") + ["", "", "", ""])[:4]
         items, by_id = [], {}
@@ -4417,8 +4448,14 @@ echo @@BLUEZ
 
     def scene_stop(self, sid):
         sid = re.sub(r"[^a-z0-9]", "", str(sid or ""))
-        self.adb.shell(f"p=$(cat {SCENE_RUN}{sid} 2>/dev/null) && kill $p 2>/dev/null; rm -f {SCENE_RUN}{sid} {SCENE_RUN}{sid}.*; "
-                       f"killall aplay 2>/dev/null; true", check=False)
+        _, err, rc = self.adb.shell(SCENE_PID_SH + f"if scene_pid {shlex.quote(sid)}; then "
+            f"g=$(sed 's/^.*) //' /proc/\"$p\"/stat | awk '{{print $3}}'); "
+            f"[ \"$g\" = \"$p\" ] || exit 1; "
+            f"kill -TERM -\"$p\" 2>/dev/null || exit 1; "
+            f"i=0; while kill -0 -\"$p\" 2>/dev/null && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done; "
+            f"if kill -0 -\"$p\" 2>/dev/null; then kill -KILL -\"$p\" 2>/dev/null || exit 1; fi; fi; true", check=False)
+        if rc:
+            raise AdbError(err.strip() or "Не удалось остановить сценарий")
         self.ring_reset()
         return self.scenes()
 

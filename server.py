@@ -2597,6 +2597,7 @@ echo @@BLUEZ
         hook = "hook" in flags
         fresh = hashlib.md5(BOOT_HOOK_SCRIPT.encode()).hexdigest() in out
         return {"hook": hook, "fresh": hook and fresh, "users": users, "possible": "possible" in flags,
+                "setup_required": getattr(self, "_hook_setup_prompt", False) and not hook,
                 "supported": getattr(self, "_hook_supported", True),
                 "reason": getattr(self, "_hook_reason", ""),
                 "broken": bool(users) and not (hook and fresh), "rootkeeper": ROOTKEEPER,
@@ -4119,11 +4120,18 @@ echo @@BLUEZ
                 "device_time": {"epoch": int(t[0]) if t and t[0].isdigit() else None,
                                 "hm": t[1] if len(t) > 1 else "", "zone": t[2] if len(t) > 2 else ""},
                 "tz": parts[4].strip() or None, "pc_tz": self._pc_tz()[0],
+                "timezone_note": self._schedule_timezone_note(),
                 "snooze": {"at": int(sn[0]), "id": sn[1]} if len(sn) == 2 and sn[0].isdigit() else None,
                 "running": parts[6].strip() == "run", "ffmpeg": bool(self.ffmpeg),
                 "installed": bool(inst), "dir": ALARM_DIR,
                 "outdated": bool(inst) and inst[0] != hashlib.md5(alarm_script()).hexdigest(),
                 "size_kb": int(inst[2]) if len(inst) > 2 and inst[2].isdigit() else None}
+
+    @staticmethod
+    def _schedule_timezone_note():
+        return ("Windows: расписания используют смещение UTC, сохранённое при последнем сохранении. "
+                "После перевода часов или смены часового пояса сохраните будильники или сценарии заново."
+                if os.name == "nt" else "")
 
     @staticmethod
     def _pc_tz():
@@ -4322,6 +4330,7 @@ echo @@BLUEZ
                     n["count"] = num(a)
                 by_id[sid]["nodes"].append(n)
         return {"scenes": items, "running": running.split(), "log": [l for l in log.splitlines() if l.strip()],
+                "timezone_note": self._schedule_timezone_note(),
                 "daemon": daemon.strip() == "run"}
 
     def scenes_save(self, data):

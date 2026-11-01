@@ -28,11 +28,42 @@ class Mini3Boundaries(unittest.TestCase):
 
     def test_alarms_and_scenes_keep_native_methods(self):
         s = fresh_server()
-        methods = ('alarms_save', 'scenes_save', 'alarm_test', 'sound_replace', 'alarm_sound_upload')
+        methods = ('alarm_test', 'sound_replace')
         original = {name: getattr(s.Panel, name) for name in methods}
         profiles.install(s, 'mini3')
         for name in methods:
             self.assertIs(getattr(s.Panel, name), original[name])
+
+    def test_missing_boot_route_rejects_schedules_before_any_write(self):
+        for method, args in [('alarms_save', ({'alarms': [{'time': '07:30'}]},)),
+                             ('scenes_save', ({'scenes': []},)),
+                             ('alarm_sound_upload', ('test.wav', b'audio')),
+                             ('_alarm_write', ('/data/test', [])),
+                             ('alarm_install', ())]:
+            with self.subTest(method=method):
+                s = fresh_server()
+                profiles.install(s, 'mini3')
+                adb = Mock()
+                adb.shell.return_value = ('', '', 3)
+                p = s.Panel(adb)
+                p.alarms = Mock(return_value={'alarms': []})
+                p._alarm_wav = Mock()
+                with self.assertRaisesRegex(s.AdbError, 'Автозапуск'):
+                    getattr(p, method)(*args)
+                adb.push.assert_not_called()
+                p._alarm_wav.assert_not_called()
+                self.assertEqual(adb.shell.call_count, 1)
+
+    def test_clean_mini3_offers_hook_setup_without_saved_features(self):
+        s = fresh_server()
+        profiles.install(s, 'mini3')
+        adb = Mock()
+        adb.shell.return_value = ('', '', 0)
+        state = s.Panel(adb).hook_status()
+        self.assertEqual(state['users'], [])
+        self.assertTrue(state['setup_required'])
+        adb.shell.return_value = ('hook\n', '', 0)
+        self.assertFalse(s.Panel(adb).hook_status()['setup_required'])
 
 
 class BluetoothBoot(unittest.TestCase):

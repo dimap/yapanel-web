@@ -1786,7 +1786,7 @@
           <li><b>Музыка Алисы</b> («Моя волна», утреннее шоу, свой запрос) требует интернета. Если его нет или Алиса за 30 секунд
             ничего не включила, вместо музыки играет выбранный звук.</li>
           <li><b>Выключить:</b> кнопка на колонке, «Алиса, стоп» или кнопка в панели. <b>Отложить</b> — из панели.</li>
-          <li>Время — по часовому поясу этого компьютера: <span id="al-tz">—</span>.</li>
+          <li>Время — по часовому поясу этого компьютера: <span id="al-tz">—</span>.<span id="al-tz-note"></span></li>
         </ul>
         <div class="set-item" id="al-inst-row" style="padding-bottom:0">
           <div class="set-label"><b>Установлено на колонке</b><small id="al-inst-info">—</small></div>
@@ -1805,6 +1805,7 @@
       <div><h1>Сценарии</h1><div class="sub">Несколько действий подряд — по времени, после включения, по команде ассистенту или вручную; с условиями и повторами</div></div>
       <div class="actions"><button class="btn primary" id="sc-add"><svg width="16" height="16" aria-hidden="true"><use href="#i-plus"/></svg>Новый сценарий</button></div>
     </header>
+    <p class="hint" id="sc-tz-note" hidden></p>
     <section class="card" id="sc-editor" hidden>
       <div class="card-head"><h2 id="sc-ed-title">Новый сценарий</h2>
         <div class="seg" id="sc-view" role="group" aria-label="Вид редактора"><button type="button" data-v="list">Список</button><button type="button" data-v="field">Поле</button></div></div>
@@ -3369,7 +3370,7 @@ function renderBootStatus() {
     b.textContent = s.hook ? 'хук подключён' : needHookAll ? 'хук не подключён' : 'хук не нужен';
     b.className = 'badge' + (s.hook ? ' ok' : needHookAll ? ' bad' : '');
     b.title = s.hook ? 'Хук автозапуска (строка в rootkeeper.sh или скрипт в /etc/init.d) подключает свои анимации и звуки при каждой загрузке колонки.'
-      : needHookAll ? 'Свои анимации или звуки сохранены, но хук автозапуска не подключён — после перезагрузки вернутся стандартные. Сохраните их ещё раз — панель подключит хук.'
+      : needHookAll ? 'Свои анимации или звуки сохранены, но хук автозапуска не подключён — после перезагрузки вернутся стандартные. Проверьте поддержку профиля и нажмите «Подключить хук» в предупреждении об автозапуске.'
       : 'Хук понадобится, когда появится что-то своё: без него после перезагрузки вернутся стандартные.';
   });
   renderClockStatus();
@@ -6452,6 +6453,7 @@ function renderAlarms() {
       </div></div>`;
   }).join('') : '<div class="empty">Будильников пока нет</div>';
   $('#al-tz').textContent = d.pc_tz || 'неизвестен (используется UTC)';
+  $('#al-tz-note').textContent = d.timezone_note ? ' ' + d.timezone_note : '';
   $('#al-devtime').textContent = d.device_time?.hm ? `на колонке ${d.device_time.hm} ${d.device_time.zone || ''}` : '';
   // в журнале демона — id; показываем вместо них время и подпись
   const alName = id => { const a = d.alarms.find(x => x.id === id); return a ? a.time + (a.label ? ' ' + a.label : '') : id; };
@@ -6623,6 +6625,8 @@ async function loadScenes() {
 }
 function renderScenes() {
   const d = scData; if (!d) return;
+  $('#sc-tz-note').textContent = d.timezone_note || '';
+  $('#sc-tz-note').hidden = !d.timezone_note;
   const on = d.scenes.filter(s => s.on).length;
   if (d.supported === false) { $('#sc-add').disabled = true; $('#sc-save').disabled = true; }
   $('#sc-badge').textContent = !d.scenes.length ? 'нет' : on && !d.daemon ? 'служба не запущена — проверьте поддержку профиля и хук' : `включено ${on} из ${d.scenes.length}`;
@@ -7336,7 +7340,7 @@ async function loadHook() {
 }
 function renderHook() {
   const w = $('#hook-warn'), h = hookInfo;
-  w.hidden = !h || !h.broken;
+  w.hidden = !h || !(h.broken || h.setup_required);
   if (w.hidden) return;
   const what = h.users.join(', ');
   $('#hook-warn-title').textContent = 'После перезагрузки колонки своё пропадёт';
@@ -7346,6 +7350,11 @@ function renderHook() {
       ? `Хук запуска (${h.file || h.rootkeeper}) — от прошлой версии панели и подключит не всё (${what}). Обновите её.`
       : `На колонке есть своё (${what}), но хук запуска не подключён — после перезагрузки вернутся стандартные, а будильник и ассистент не запустятся.`;
   $('#hook-repair').hidden = h.supported === false;
+  if (h.setup_required && !h.users.length) {
+    $('#hook-warn-title').textContent = 'Подключите автозапуск';
+    $('#hook-warn-text').textContent = 'Для сохранения будильников, сценариев и подмен звуков сначала подключите хук. '
+      + (h.possible ? 'Нажмите «Подключить хук».' : 'Кнопка «Подключить хук» установит сценарий в /etc/init.d, временно перемонтировав корень для записи.');
+  }
   if (h.supported === false) $('#hook-warn-text').textContent = h.reason || 'Автозапуск для этой модели пока не поддерживается';
   $('#hook-repair').textContent = h.hook ? 'Обновить хук' : 'Подключить хук';
   const head = $('main[data-page]:not([hidden]) .page-head');

@@ -494,11 +494,19 @@ def install(s, model='lite2', auto=False):
     # Мини 3 с retail CA использует init.d; проверяем путь загрузки до записи хука.
     if model == 'mini3':
         P._boot_require_caller = True
+        P._hook_setup_prompt = True
         # В этой прошивке BusyBox не поддерживает mount --bind.
         s.BOOT_HOOK_SCRIPT = s.BOOT_HOOK_SCRIPT.replace('mount --bind ', 'mount -t none -o bind ')
         # Анимации этим переносом не включаем.
         P.anim_install = unsupported
         P.ring_try = unsupported
+        # Проверяем маршрут до конвертации звуков и записи конфигурации.
+        for method in ('alarms_save', 'scenes_save', 'alarm_sound_upload', '_alarm_write'):
+            original = getattr(P, method)
+            def guarded(self, *args, _original=original, **kwargs):
+                self._boot_route()
+                return _original(self, *args, **kwargs)
+            setattr(P, method, guarded)
     if family != 'lite':    # официальный установщик старого yam знал Лайт (yandexmicro) и ставил его туда же, что на Лайт 2
         for method in ('yam_install_daemon', 'yam_update_daemon', 'yam_autostart'):
             if hasattr(P, method):

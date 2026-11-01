@@ -21,7 +21,7 @@ if(profile.hook_supported===false){
   }
 }
 if(profile.ring_preview_supported===false){
-  for(const id of ['ra-device','ra-install','ra-load-default','ra-reset']){
+  for(const id of ['ra-device','ra-install','ra-load-default']){
     const button=document.getElementById(id);if(button){button.disabled=true;button.title='Воспроизведение и подмены анимаций на этой модели пока не поддерживаются';}
   }
 }

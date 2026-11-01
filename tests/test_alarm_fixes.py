@@ -16,6 +16,16 @@ import server
 
 
 class AlarmFixes(unittest.TestCase):
+    def test_windows_fixed_offset_is_disclosed_for_both_schedules(self):
+        with patch.object(server.os, 'name', 'nt'):
+            p = server.Panel(Mock())
+            p.adb.shell.return_value = ('', '', 0)
+            with patch.object(p, '_pc_tz', return_value=('UTC+03:00', b'')):
+                for state in (p.alarms(), p.scenes()):
+                    self.assertIn('После перевода часов', state['timezone_note'])
+        with patch.object(server.os, 'name', 'posix'):
+            self.assertEqual(server.Panel._schedule_timezone_note(), '')
+
     def shell(self, script, **kwargs):
         shell = shutil.which('sh')
         if not shell:

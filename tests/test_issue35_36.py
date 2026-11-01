@@ -84,6 +84,43 @@ class BluetoothBoot(unittest.TestCase):
             self.assertEqual(log.read_text().splitlines(), ['off'])
 
 
+class BluetoothPower(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('sh'), 'requires sh')
+    def test_power_off_propagates_dbus_failure_and_saves_only_success(self):
+        for status in (1, 0):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                flag, pair = root / 'off', root / 'pair'
+                pair.touch()
+                binary = root / 'dbus-send'
+                binary.write_text(f'#!/bin/sh\necho bluez-error >&2\nexit {status}\n')
+                binary.chmod(0o755)
+                p = server.Panel(Mock())
+                p.BT_PAIR_FLAG = str(pair)
+                p._ensure_hook = Mock()
+                p.bt_state = Mock(return_value={'powered': False})
+                def shell(command, **kwargs):
+                    if command.startswith('[ -f '):
+                        return '', '', 0  # no active Bluetooth output
+                    result = subprocess.run(['sh', '-c', command], capture_output=True, text=True,
+                                            env={**os.environ, 'PATH': td + ':' + os.environ['PATH']}, timeout=5)
+                    if result.returncode:
+                        raise server.AdbError(result.stderr)
+                    return result.stdout, result.stderr, result.returncode
+                p.adb.shell.side_effect = shell
+                with patch('server.BT_OFF', str(flag)), patch('server.WEB_DIR', td):
+                    if status:
+                        with self.assertRaisesRegex(server.AdbError, 'bluez-error'):
+                            p.bt_action({'action': 'power_off'})
+                        p.bt_state.assert_not_called()
+                        p._ensure_hook.assert_not_called()
+                    else:
+                        self.assertEqual(p.bt_action({'action': 'power_off'}), {'powered': False})
+                        p._ensure_hook.assert_called_once()
+                self.assertEqual(flag.exists(), status == 0)
+                self.assertEqual(pair.exists(), status != 0)
+
+
 class BluetoothDSP(unittest.TestCase):
     def test_missing_tap_installs_binary_and_rebuilds_forwarder_without_capture(self):
         with tempfile.TemporaryDirectory() as td:

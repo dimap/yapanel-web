@@ -225,6 +225,7 @@ cd yapanel-web
 ```sh
 docker run -d --name yapanel-web --network host --restart unless-stopped \
   -e ADB_SERIAL=192.168.1.50 -v "$PWD/data:/data" \
+  -v /etc/localtime:/etc/localtime:ro \
   ghcr.io/dimap/yapanel-web:latest
 ```
 
@@ -242,11 +243,21 @@ services:
       # PANEL_HTTPS_PORT: "8766"     # 0 — без HTTPS
     volumes:
       - ./data:/data
+      - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
 ```
 
 Панель: `http://<адрес сервера>:8765/`. Всё своё (вход в Яндекс, пароль, сертификаты, история графиков,
 ключ adb) хранится в `./data` и переживает обновления.
+
+Будильники и сценарии используют часовой пояс сервера панели. В Linux монтирование
+`/etc/localtime` передаёт его в контейнер, который иначе обычно работает в UTC.
+После добавления этого монтирования пересоздайте контейнер и сохраните будильники или
+сценарии заново: часовой пояс копируется на колонку при сохранении. Сверьте время во
+вкладке «Будильник» со временем, на которое назначаете запуск. Если сервер находится
+в другом часовом поясе, вместо `/etc/localtime` слева можно указать файл нужной зоны,
+например `/usr/share/zoneinfo/Europe/Moscow`. Для Docker Desktop нужен доступный
+на хосте файл TZif нужной зоны вместо Linux-пути `/etc/localtime`.
 
 - **Обновить:** `docker compose pull && docker compose up -d` (или `docker pull` и пересоздать контейнер).
 - **Версии:** `latest` — последняя из ветки `main`, `0.1.0` и т. д. — конкретный релиз.

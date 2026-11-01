@@ -12,4 +12,6 @@ services:
       # PANEL_HTTPS_PORT: "8766"    # 0 — без HTTPS
     volumes:
       - ./data:/data
+      # Расписания используют часовой пояс сервера, а не UTC контейнера.
+      - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped

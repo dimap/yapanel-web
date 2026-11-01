@@ -1,0 +1,70 @@
+/* Mobile browser layout. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+@media (max-width: 760px) {
+  :root {
+    --page-left: max(16px, env(safe-area-inset-left, 0px));
+    --page-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  body { padding-top: var(--sa-top); }
+  body[data-tab="player"] { padding-top: 0; }
+  /* A wrapped desktop flex basis must never define the phone's content width. */
+  .shell { display: block; width: 100%; }
+  main { width: 100%; max-width: 100%; padding-left: var(--page-left); padding-right: var(--page-right); }
+  aside { width: 100%; min-width: 0; padding-left: var(--page-left); padding-right: var(--page-right); }
+  .brand { flex: 1 1 0; }
+  .brand > div { min-width: 0; }
+  .brand b { white-space: normal; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .conn { max-width: 48%; }
+  .conn b { min-width: 0; }
+  #conn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .page-head > *, .card-head > *, .set-ctl { min-width: 0; max-width: 100%; }
+  .card { padding: 16px; }
+  #pl-artist-card { padding-left: 20px; padding-right: 20px; }
+  .grid.stats { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat { padding: 14px 12px; }
+  .stat .value { column-gap: 5px; }
+  .stat .value b { font-size: clamp(24px, 7vw, 28px); }
+  .stat .value span { font-size: 13px; }
+  .stat .meta, .stat .label, .hint, .set-label, .kv dd { overflow-wrap: anywhere; }
+  .model-view { height: clamp(240px, 80vw, 340px); }
+
+  /* Keep all three transport buttons visible even with a long track title. */
+  .minibar {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 10px;
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+  .mb-track { gap: 8px; }
+  .mb-cover { width: 48px; height: 48px; }
+  .mb-text { flex: 1 1 0; }
+  .mb-center .controls { gap: 2px; }
+  .mb-center .cbtn, .mb-center .cbtn.big { flex: none; width: 44px; height: 44px; }
+  .mbar { padding-left: max(4px, env(safe-area-inset-left, 0px)); padding-right: max(4px, env(safe-area-inset-right, 0px)); }
+  nav.side { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-left: var(--page-left); padding-right: var(--page-right); max-height: min(78dvh, 640px); }
+  nav.side a { min-width: 0; overflow-wrap: anywhere; }
+
+  /* 16px fields prevent automatic focus zoom in iOS Safari; page zoom stays available. */
+  input.field, select.field, textarea.field, .search input, .speaker-picker select { font-size: 16px; max-width: 100%; }
+  .row > .field, .row > .voice-field { max-width: 100%; }
+  .set-ctl > .field { width: 100%; }
+  .btn.sm, .chip { min-height: 44px; }
+  .seg { max-width: 100%; flex-wrap: wrap; }
+  .seg button { flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 4px 10px; overflow-wrap: anywhere; }
+  .apps-grid { grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); }
+  .vol-bt { flex-wrap: wrap; }
+  .vol-bt input { min-width: 0; }
+  .files-grid > *, .settings > * { min-width: 0; }
+  #toast { bottom: calc(var(--mbar-h) + 12px); z-index: 70; }
+  body.has-minibar #toast { bottom: calc(var(--mbar-h) + 84px); }
+}
+
+@media (max-width: 359px) {
+  #tab-overview .page-head > .actions { flex-wrap: wrap; }
+  #tab-overview .page-head > .actions > .btn { flex-basis: calc(50% - 6px); }
+  #tab-overview .page-head > .actions > #ov-edit { flex-basis: 100%; }
+  .stat .meta { font-size: 12px; }
+  .mb-cover { width: 40px; height: 40px; }
+}

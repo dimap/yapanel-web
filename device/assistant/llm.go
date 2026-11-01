@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +23,27 @@ type message struct {
 }
 
 func client(proxy string, timeout time.Duration) (*http.Client, error) {
+	return clientWithCA(proxy, timeout, caFile)
+}
+
+func clientWithCA(proxy string, timeout time.Duration, firmwareCA string) (*http.Client, error) {
 	t := http.DefaultTransport.(*http.Transport).Clone()
+	// Android stores the firmware CA bundle outside Go's standard Linux paths.
+	// Add it to system roots, retaining TLS chain and hostname verification.
+	if pem, err := os.ReadFile(firmwareCA); err == nil {
+		roots, _ := x509.SystemCertPool()
+		if roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if roots.AppendCertsFromPEM(pem) {
+			if t.TLSClientConfig == nil {
+				t.TLSClientConfig = &tls.Config{}
+			} else {
+				t.TLSClientConfig = t.TLSClientConfig.Clone()
+			}
+			t.TLSClientConfig.RootCAs = roots
+		}
+	}
 	t.Proxy = nil
 	if proxy = strings.TrimSpace(proxy); proxy != "" {
 		u, err := url.Parse(proxy)

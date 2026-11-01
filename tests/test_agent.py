@@ -1,6 +1,7 @@
 """Агент панели (device/agent) вместе с клиентом agent.py и классом Adb: настоящий агент, собранный из исходников
 и запущенный локально во временной папке. Нужны Go и Linux (агент — для колонки)."""
 import hashlib
+import http.client
 import os
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent
@@ -17,6 +18,29 @@ import server
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "t" * 43
+
+
+class AgentPoolTests(unittest.TestCase):
+    def test_retry_skips_other_stale_connections_after_agent_restart(self):
+        # После перезапуска агента закрыты все соединения пула, а не только первое.
+        link = agent.AgentLink.__new__(agent.AgentLink)
+        link.host, link.port, link.token, link.ctx = "localhost", agent.PORT, TOKEN, None
+        import threading
+        link._lock = threading.Lock()
+        stale = [Mock(sock=None) for _ in range(2)]
+        for conn in stale:
+            conn.getresponse.side_effect = http.client.RemoteDisconnected("agent restarted")
+        link._idle = stale.copy()
+        fresh = Mock(sock=None)
+        fresh.getresponse.return_value = Mock(status=200, will_close=False)
+        fresh.getresponse.return_value.read.return_value = b'{"version":"test"}'
+        with patch.object(agent.http.client, "HTTPSConnection", return_value=fresh) as create:
+            self.assertEqual(link.ping(), {"version": "test"})
+        create.assert_called_once_with("localhost", agent.PORT, context=None, timeout=4)
+        stale[-1].close.assert_called_once()
+        stale[0].request.assert_not_called()
+        fresh.request.assert_called_once()
+        link.close()
 
 
 @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("go"), "нужны Linux и Go")

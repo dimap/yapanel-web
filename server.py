@@ -5507,7 +5507,7 @@ echo @@BLUEZ
         elif act == "power_off":
             if self.adb.shell(f"[ -f {BTOUT_MAC} ] && echo on; true", check=False)[0].strip() == "on":
                 raise AdbError("Звук идёт через Bluetooth-колонку — сначала верните его в колонку")
-            self.adb.shell(f"{bt_power_sh(False)} && mkdir -p {WEB_DIR} && touch {BT_OFF}; rm -f {self.BT_PAIR_FLAG}")
+            self.adb.shell(f"{bt_power_sh(False)} && mkdir -p {WEB_DIR} && touch {BT_OFF} && rm -f {self.BT_PAIR_FLAG}")
             try:
                 self._ensure_hook()
             except AdbError as e:

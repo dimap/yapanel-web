@@ -35,9 +35,9 @@ class AgentLink:
         self._lock = threading.Lock()
 
     # ---------- HTTP ----------
-    def _take(self, timeout):
+    def _take(self, timeout, fresh=False):
         with self._lock:
-            conn = self._idle.pop() if self._idle else None
+            conn = self._idle.pop() if self._idle and not fresh else None
         reused = conn is not None
         if conn is None:
             conn = http.client.HTTPSConnection(self.host, self.port, context=self.ctx, timeout=timeout)
@@ -66,7 +66,7 @@ class AgentLink:
         if body is not None:
             headers["Content-Length"] = str(len(body))
         for attempt in (0, 1):
-            conn, reused = self._take(timeout)
+            conn, reused = self._take(timeout, fresh=attempt > 0)
             try:
                 conn.request(method, url, body=body, headers=headers)
                 r = conn.getresponse()

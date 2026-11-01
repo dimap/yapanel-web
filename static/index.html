@@ -39,6 +39,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+body[data-transport="glagol"] nav a[data-tab]:not([data-tab="overview"]):not([data-tab="player"]):not([data-tab="settings"]),
+body[data-transport="glagol"] .mbar a[data-tab]:not([data-tab="overview"]):not([data-tab="player"]):not([data-tab="settings"]),
+body[data-transport="glagol"] [data-widget]:not([data-widget="music"]):not([data-widget="alice"]),
+body[data-transport="glagol"] [data-adb-only],
+body[data-transport="glagol"] [data-finder],
+body[data-transport="glagol"] .nav-group,
+body[data-transport="glagol"] #ov-edit,
+body[data-transport="glagol"] #q-restart,
+body[data-transport="glagol"] #reboot,
+body[data-transport="glagol"] .vol-mute { display:none!important; }
+
   /* отступы под системные панели: в браузере — env(), в приложении для Android их задаёт само приложение */
   :root { --sa-top: env(safe-area-inset-top, 0px); --sa-bottom: env(safe-area-inset-bottom, 0px); }
   html.in-app body { padding-top: var(--sa-top); }
@@ -1582,7 +1593,7 @@
           <div class="set-ctl"><button class="btn sm" id="pw-others">Завершить</button></div></div>
       </section>
 
-      <section class="card set-card">
+      <section class="card set-card" data-adb-only>
         <div class="set-head"><span class="set-ic"><svg width="18" height="18" aria-hidden="true"><use href="#i-lock"/></svg></span><div><h2>Защищённое соединение</h2><p>Как панель связана с колонкой</p></div></div>
         <div class="set-item"><div class="set-label"><b>Агент панели</b><small id="agent-state">—</small></div>
           <div class="set-ctl"><button class="btn sm primary" id="agent-install" hidden>Включить</button><button class="btn sm" id="agent-remove" hidden>Выключить</button></div></div>
@@ -1601,7 +1612,7 @@
           <div class="set-ctl"><a class="btn sm" href="ca.crt"><svg width="18" height="18" aria-hidden="true"><use href="#i-dl"/></svg>Скачать</a></div></div>
       </section>
 
-      <section class="card set-card">
+      <section class="card set-card" data-adb-only>
         <div class="set-head"><span class="set-ic"><svg width="18" height="18" aria-hidden="true"><use href="#i-power"/></svg></span><div><h2>Колонка</h2><p id="fp-info">Что панель поставила на колонку</p></div></div>
         <div class="set-item set-top"><div class="set-label"><b>Установлено на колонке</b><small>Остальные функции панели ничего на колонке не хранят</small></div>
           <div class="set-ctl"><div id="fp-list" class="fp-list"><span class="meta">—</span></div></div></div>
@@ -1628,7 +1639,7 @@
         <div class="set-item" id="upd-row" hidden><div class="set-label"><b>Доступна версия <span id="upd-latest">—</span></b><small id="upd-how">—</small></div>
           <div class="set-ctl"><a class="btn sm" id="upd-notes" target="_blank" rel="noopener">Что нового ↗</a><button class="btn sm primary" id="upd-go">Обновить</button></div></div>
         <pre class="set-cmd" id="upd-cmd" hidden></pre>
-        <div class="set-item"><div class="set-label"><b>Что-то не работает?</b><small>Отчёт для Issue: версии панели, adb и прошивки, хук,
+        <div class="set-item" data-adb-only><div class="set-label"><b>Что-то не работает?</b><small>Отчёт для Issue: версии панели, adb и прошивки, хук,
           своё на колонке и журнал панели (вкладка «Логи» → «журнал панели»). Токены, ключи, адреса и MAC в нём скрыты — но перед отправкой
           всё равно просмотрите.</small></div>
           <div class="set-ctl"><button class="btn sm" data-report="set-report">Скопировать отчёт</button><a class="btn sm" href="https://github.com/dimap/yapanel-web/issues/new" target="_blank" rel="noopener">Новое Issue ↗</a></div></div>
@@ -2591,6 +2602,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
+let connectionMode = 'adb';
 let online = false;   // есть ли связь с колонкой (см. «подключение» внизу)
 const $$ = s => [...document.querySelectorAll(s)];
 const icon = (id, size = 16) => `<svg width="${size}" height="${size}" aria-hidden="true"><use href="#${id}"/></svg>`;
@@ -3843,7 +3855,7 @@ $('#bt-list').onclick = e => {
   if (a === 'connect') toast('Подключаемся… устройство должно быть рядом и с включённым Bluetooth');
   btDo(b, { action: a, mac: row.dataset.mac }, { connect: 'Подключено', disconnect: 'Отключено', remove: 'Устройство забыто' }[a]);
 };
-loadBt();
+// Bluetooth state is loaded by onConnected/showTab after the transport is known.
 
 // ---------- система ----------
 $('#q-restart').onclick = e => confirm('Перезапустить Quasar? Алиса будет недоступна ~30 с.') &&
@@ -4086,7 +4098,8 @@ $('#nav-sheet').addEventListener('click', e => { if (e.target.closest('a')) navS
 let prevTab = 'overview', plReturn = null;
 function showTab() {
   const h = location.hash.slice(1);
-  const tab = TABS.includes(h) ? h : 'overview';
+  let tab = TABS.includes(h) ? h : 'overview';
+  if (connectionMode === 'glagol' && !['overview', 'player', 'settings'].includes(tab)) tab = 'overview';
   const from = document.body.dataset.tab;
   // другая вкладка — начинаем её сверху (например, переход в «Плеер» из нижнего плеера); но из плеера на
   // телефоне возвращаемся туда же, где были: плеер лишь «накрывал» вкладку
@@ -4136,8 +4149,8 @@ function showTab() {
   rdPoll(tab === 'radio');
   asPoll(tab === 'assistant');
   if (tab === 'charts') loadCharts();
-  if (tab === 'settings') { loadAccess(); loadAgent(); loadFootprint(); loadPanelVersion().catch(() => {}); loadPanelModel(); }
-  if (tab === 'overview') loadBt();
+  if (tab === 'settings') { loadAccess(); if (connectionMode !== 'glagol') { loadAgent(); loadFootprint(); } loadPanelVersion().catch(() => {}); loadPanelModel(); }
+  if (tab === 'overview' && connectionMode !== 'glagol') loadBt();
   if (tab === 'player') { renderMusic(); loadPlayerExtras(); loadMusic(); }
   updateMinibar();
 }
@@ -7091,7 +7104,7 @@ $('#ab-stop').onclick = e => act(e.currentTarget, async () => { await api('/api/
 $('#ab-snooze').onclick = e => act(e.currentTarget, async () => { await api('/api/alarms/cmd', { action: 'snooze' }); setTimeout(loadAlarms, 1500); }, 'Отложено');
 // Состояние: на вкладке — часто, на остальных — реже и только если будильники вообще есть.
 setInterval(() => {
-  if (!online || document.hidden) return;
+  if (!online || document.hidden || connectionMode === 'glagol') return;
   const onTab = shownTab === 'alarm';
   if (onTab || alarmsData?.state?.ringing || (alarmsData?.installed && alarmsData.alarms.some(a => a.on))) {
     if (onTab || Date.now() - (loadAlarms.t || 0) > 15000 || alarmsData?.state?.ringing) { loadAlarms.t = Date.now(); loadAlarms(); }
@@ -7124,6 +7137,12 @@ async function loadPanelModel() {
     setBrush(Math.min(bootBrush(), p.clock_max));
   }
   $('#upd-model').textContent = p.name;
+  if (connectionMode === 'glagol') {
+    $('#upd-model').textContent = p.name;
+    $('#upd-model-how').textContent = 'Режим Glagol: без ADB и системных функций. Модель задана при запуске.';
+    $('#set-addr').closest('.set-item').querySelector('small').textContent = 'Адрес и Device ID заданы аргументами запуска панели.';
+    return;
+  }
   $('#upd-model-how').textContent = p.auto
     ? 'Определена автоматически по плате колонки. Задать вручную — параметр --model'
     : `Задана вручную: --model ${p.id}. Определять автоматически — --model auto (так по умолчанию)`;
@@ -7239,8 +7258,17 @@ async function connCheck() {
   } catch { connInfo = { state: 'server' }; }
   if (connInfo.retry_in != null) retryDeadline = Date.now() + connInfo.retry_in * 1000;
   const was = online;
-  online = connInfo.state === 'online';
+  connectionMode = connInfo.mode || 'adb';
+  document.body.dataset.transport = connectionMode;
+  // The player must remain accessible for account login before the WebSocket connects.
+  online = connInfo.state === 'online' || connectionMode === 'glagol';
   renderConn();
+  if (connectionMode === 'glagol') {
+    $('#conn').className = 'dot' + (connInfo.connected ? ' on' : '');
+    $('#conn-text').textContent = connInfo.state === 'auth_required' ? 'Glagol: войдите в Яндекс'
+      : connInfo.connected ? 'Подключено по Glagol' : (connInfo.error || 'Glagol: подключаемся…');
+    $('#conn-ip').innerHTML = secret('ip', connInfo.serial);
+  }
   if (online !== was) { online ? onConnected() : showTab(); updateMinibar(); }
   connTimer = setTimeout(connCheck, online ? 3000 : connInfo.state === 'locked' ? 10000 : 1000);
 }
@@ -7364,6 +7392,13 @@ $('#hook-repair').onclick = e => {
 };
 
 function onConnected() {
+  if (connectionMode === 'glagol') {
+    clearInterval(statusTimer);
+    showTab();
+    loadMusic();
+    loadPanelModel();
+    return;
+  }
   // После переподключения всё, что могло не загрузиться, грузим заново.
   fs.loaded = false; logsLoaded = false; bootLoaded = false;
   showTab();

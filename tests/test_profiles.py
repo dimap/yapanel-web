@@ -67,10 +67,35 @@ class ProfileTests(unittest.TestCase):
         s = fresh_server()
         profiles.install(s, 'mini3')
         p = s.Panel(Mock())
-        for action in (lambda: p.clock({'text':'12:34'}), lambda: p.ring({'red':128}), lambda: p._ensure_hook()):
+        for action in (lambda: p.clock({'text':'12:34'}), lambda: p.ring({'red':128})):
             with self.assertRaises(s.AdbError): action()
         p.adb.assert_not_called()
         self.assertEqual(p.adb.mock_calls, [])
+
+    def test_mini3_hook_requires_a_boot_route_before_writing(self):
+        s = fresh_server()
+        profiles.install(s, 'mini3')
+        adb = Mock()
+        adb.shell.return_value = ('', '', 3)
+        p = s.Panel(adb)
+        with self.assertRaisesRegex(s.AdbError, 'Автозапуск'):
+            p._ensure_hook()
+        adb.push.assert_not_called()
+        self.assertEqual(adb.shell.call_count, 1)
+
+    def test_mini3_explicit_hook_repair_uses_initd_and_busybox_mount(self):
+        s = fresh_server()
+        profiles.install(s, 'mini3')
+        adb = Mock()
+        adb.shell.side_effect = [('', '', 3)] + [('', '', 0)] * 4
+        p = s.Panel(adb)
+        p._ensure_hook(remount=True)
+        self.assertEqual(adb.push.call_count, 1)
+        command = adb.shell.call_args.args[0]
+        self.assertIn(s.INITD_HOOK, command)
+        self.assertIn(s.ROOT_RO, command)
+        self.assertNotIn('mount --bind ', s.BOOT_HOOK_SCRIPT)
+        self.assertIn('mount -t none -o bind ', s.BOOT_HOOK_SCRIPT)
 
     def test_lite1_ring_uses_micro_leds_and_keeps_lite2_yam(self):
         s = fresh_server()

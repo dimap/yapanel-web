@@ -116,19 +116,19 @@ class SceneInterpreter(unittest.TestCase):
     """Демон проходит граф: повтор крутит тело нужное число раз, условие выбирает выход."""
 
     def run_graph(self, conf):
-        import shutil, subprocess, tempfile
+        import shutil, subprocess, tempfile, shlex
         sh = shutil.which("sh")
         if not sh:
             self.skipTest("нет sh")
         script = server.alarm_script().decode()
         part = script[script.index("# ---------- сценарии ----------"):script.index("# Строка конфига → fire")]
         d = Path(tempfile.mkdtemp())
-        (d / "scenes.conf").write_text(conf)
-        stubs = (f'D={d}; SCENES=$D/scenes.conf; SRUN=$D/run.; SLOG=$D/log; T=$D/trace\n'
+        (d / "scenes.conf").write_bytes(conf.encode("utf-8"))
+        stubs = (f'D={shlex.quote(d.as_posix())}; SCENES=$D/scenes.conf; SRUN=$D/run.; SLOG=$D/log; T=$D/trace\n'
                  'alice() { echo "alice $*" >> $T; }; aplay() { echo "aplay $*" >> $T; }; sleep() { :; }\n'
                  'playing() { return 1; }; online() { return 0; }; get_alsa() { echo 100; }; set_alsa() { :; }\n'
-                 'alsa_of() { echo 50; }; ring() { :; }; ring_release() { n=blue:ring3; t=x; }\n')
-        subprocess.run([sh, "-c", stubs + part + '\nrun_scene s1; wait'], check=True, timeout=20)
+                 'alsa_of() { echo 50; }; ring() { :; }; ring_release() { n=blue:ring3; t=x; }; od() { echo 50; }\n')
+        subprocess.run([sh, "-c", stubs + part + '\nrun_scene_worker s1'], check=True, timeout=20)
         return (d / "trace").read_text().splitlines() if (d / "trace").exists() else []
 
     def test_repeat_and_if(self):
@@ -159,3 +159,61 @@ class SceneInterpreter(unittest.TestCase):
         # ring_release перебирает светодиоды в n — интерпретатор не должен от этого сбиться
         conf = "S|s1|1|time|23:00||1|Т\nN|s1|1|ring|ff0000|1|2||0|0\nN|s1|2|query|после||||0|0\n"
         self.assertEqual(self.run_graph(conf), ["alice после"])
+
+
+class SceneProcessRegression(unittest.TestCase):
+    """Статус и остановка на временном /proc, без сигналов настоящим процессам."""
+
+    def setUp(self):
+        import shutil, subprocess, tempfile
+        from unittest.mock import patch
+        shell = shutil.which('sh')
+        if not shell:
+            self.skipTest('Нужен sh')
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.d = Path(tmp.name)
+        self.prefix = (self.d / 'run.').as_posix()
+        proc = self.d / 'proc' / '123'
+        proc.mkdir(parents=True)
+        self.stat = proc / 'stat'
+        self.stat.write_text('123 (worker task) S 1 123 123 ' + '0 ' * 15 + '777')
+        Path(self.prefix + 'c1').write_text('123')
+        Path(self.prefix + 'c1.start').write_text('777')
+        Path(self.prefix + 'c1.v1').write_text('1')
+        conf = self.d / 'conf'
+        conf.write_bytes(b'S|c1|1|manual|||1|Test\n')
+        changes = dict(SCENE_RUN=self.prefix, SCENES_CONF=conf.as_posix(),
+                       SCENES_LOG=(self.d/'log').as_posix(), ALARM_SD=(self.d/'daemon').as_posix(),
+                       SCENE_PID_SH=server.SCENE_PID_SH.replace(server.SCENE_RUN, self.prefix))
+        patches = patch.multiple(server, **changes)
+        patches.start(); self.addCleanup(patches.stop)
+        d = self.d
+        class Adb:
+            def shell(self, command, **kwargs):
+                command = command.replace('/proc/', (d/'proc').as_posix() + '/')
+                stub = 'kill() { if [ "$1" = -0 ]; then [ "$2" = 123 ]; else echo "$*"; fi; }; '
+                r = subprocess.run([shell,'-c',stub+command],capture_output=True,text=True,timeout=5)
+                self.stdout = r.stdout
+                return r.stdout,r.stderr,r.returncode
+        self.adb = Adb()
+        self.p = server.Panel(self.adb)
+
+    def test_c_id_visible_without_service_files(self):
+        self.assertEqual(self.p.scenes()['running'], ['c1'])
+
+    def test_stale_or_zombie_pid_is_not_running_or_signalled(self):
+        self.p.ring_reset = lambda: None
+        for row in ['123 (worker task) S 1 123 123 ' + '0 '*15 + '778',
+                    '123 (worker task) Z 1 123 123 ' + '0 '*15 + '777']:
+            self.stat.write_text(row)
+            self.assertEqual(self.p.scenes()['running'], [])
+            with unittest.mock.patch.object(self.p, 'scenes', return_value={}):
+                self.p.scene_stop('c1')
+            self.assertNotIn('-TERM', self.adb.stdout)
+
+    def test_stop_targets_own_group(self):
+        self.p.ring_reset = lambda: None
+        self.p.scenes = lambda: {}
+        self.p.scene_stop('c1')
+        self.assertIn('-TERM -123', self.adb.stdout)

@@ -31,7 +31,13 @@ class AlarmScheduler(unittest.TestCase):
                     harness = r'''
 CONF="$TEST_DIR/conf"; SCENES="$TEST_DIR/scenes"; LAST="$TEST_DIR/last"
 SNOOZE="$TEST_DIR/snooze"
-date() { command date -d "@$TEST_EPOCH" "$@"; }
+date() {
+    if command date -d "@0" +%s >/dev/null 2>&1; then
+        command date -d "@$TEST_EPOCH" "$@"
+    else
+        command date -r "$TEST_EPOCH" "$@"
+    fi
+}
 run_id() { echo "alarm:$1" >> "$TEST_DIR/fired"; }
 run_scene() { echo "scene:$1" >> "$TEST_DIR/fired"; }
 ''' + scenes + minute + '\ncheck_minute\ncheck_minute\n'

@@ -42,7 +42,7 @@ log() {
 
 # Громкость Алисы 0–10 → значение ALSA Master (как platformToAlsaMap у Quasar: 0→0, 1→49, 20→255).
 alsa_of() { p=$(($1 * 2)); [ $p -le 0 ] && echo 0 || echo $((49 + (p - 1) * 206 / 19)); }
-get_alsa() { amixer get Master | sed -n 's/.*\(Mono\|Front Left\): Playback \([0-9][0-9]*\).*/\2/p' | head -n 1; }
+get_alsa() { amixer get Master | sed -n 's/.*Mono: Playback \([0-9][0-9]*\).*/\1/p; s/.*Front Left: Playback \([0-9][0-9]*\).*/\1/p' | head -n 1; }
 set_alsa() { amixer -q set Master "$1" 2>/dev/null; }
 
 playing() { grep -q "state: RUNNING" /proc/asound/card*/pcm*p/sub*/status 2>/dev/null; }

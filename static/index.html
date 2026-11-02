@@ -5040,6 +5040,9 @@ async function loadYam2Catalog(refresh) {
   catch (e) { y2.catalog = { error: e.message, packages: [] }; }
   renderYam2();
 }
+function yam2Homepage(p) {
+  return /^https:\/\//.test(p?.homepage || '') ? `<a class="btn sm" href="${esc(p.homepage)}" target="_blank" rel="noopener">Сайт ↗</a>` : '';
+}
 function renderYam2() {
   const inst = Object.fromEntries(y2.packages.map(p => [p.name, p]));
   const cat = Object.fromEntries((y2.catalog?.packages || []).map(p => [p.name, p]));
@@ -5050,6 +5053,7 @@ function renderYam2() {
       <div class="who"><b>${esc(p.name)} <span class="mono meta">${esc(p.version)}</span>${newer(p) ? ` <span class="badge" style="background:var(--accent-soft);color:var(--accent-ink)">доступна ${esc(newer(p))}</span>` : ''}</b>
         <span class="meta">${esc(cat[p.name]?.summary || p.target)}</span></div>
       <div class="row" style="gap:6px">
+        ${yam2Homepage(cat[p.name])}
         ${newer(p) ? `<button class="btn sm primary" data-a="install">Обновить</button>` : ''}
         <button class="btn sm icon danger" data-a="remove" aria-label="Удалить ${esc(p.name)}">${icon('i-trash', 14)}</button>
       </div>
@@ -5095,7 +5099,7 @@ function renderYam2() {
       ${p.fits ? '' : `<span class="meta">не для ${esc(c.platform)}: ${esc((p.targets || []).join(', '))}</span>`}
       <div class="row">${action ? `<button class="btn sm${have ? '' : ' primary'}" data-name="${esc(p.name)}">${action}</button>`
         : have ? '<span class="badge ok">установлено</span>' : ''}
-        ${/^https:\/\//.test(p.homepage || '') ? `<a class="btn sm" href="${esc(p.homepage)}" target="_blank" rel="noopener">Сайт ↗</a>` : ''}</div>
+        ${yam2Homepage(p)}</div>
     </div>`;
   }).join('') : `<div class="empty">${c.packages.length ? 'Ничего не найдено' : 'Каталог пуст'}</div>`;
   $$('#y2-catalog button[data-name]').forEach(b => b.onclick = () => yam2Pkg(b, 'install', b.dataset.name));

@@ -106,6 +106,9 @@ YAM2 = f"{YAM2_ROOT}/bin/yam"
 YAM2_RUN = f"{YAM2_ROOT}/bin/yam-run"
 # Официальный каталог и его ключ — из docs/QUICKSTART.md yam. Ключ проверяет подписи индексов на колонке.
 YAM2_REGISTRY = ("official", "https://repo.yse.wtf/v2", "ed25519:5Rz8F47uftWVU5kLgWYhprkEZ4rpP2kecUge/a7KQas=")
+# Подтверждённые сайты для пакетов, у которых реестр пока не заполнил homepage.
+# Адрес из реестра всегда имеет приоритет.
+YAM2_HOMEPAGES = {"alice/airplay": "https://github.com/Yandex-Station-Universal-Repo/Station-airplay"}
 # Службы пакетов yam только описывает, а запускать их — дело хоста; хост тут панель. На каждую службу — свой
 # скрипт запуска yam2/<пакет~служба>.sh, файл yam2/boot/<то же> — «запускать при загрузке» (его читает хук).
 YAM2_SVC_DIR = f"{WEB_DIR}/yam2"
@@ -4922,6 +4925,7 @@ echo @@BLUEZ
                 for p in data.get("packages", []) if isinstance(p, dict) and isinstance(p.get("name"), str)
                 and p["name"] not in (data.get("revoked") or {})]
         for p in pkgs:
+            p["homepage"] = p.get("homepage") or YAM2_HOMEPAGES.get(p["name"])
             t = p.get("targets") or []
             p["fits"] = not t or "any" in t or plat in t
             if p["name"] == "tangenx/wakeword":

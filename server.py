@@ -5690,6 +5690,52 @@ echo @@BLUEZ
         return {"ok": True}
 
 
+class GlagolPanel(Panel):
+    """Player-only backend: no ADB client, shell, agent or system polling."""
+    transport = "glagol"
+
+    def __init__(self):
+        super().__init__(None)
+
+    def status(self):
+        state = self.glagol.state or {}
+        return {"transport": "glagol", "ip_address": self.glagol.host,
+                "vol_level": round(float(state.get("volume") or 0) * 100),
+                "system_metrics_available": False}
+
+    def music(self):
+        # Bluetooth AVRCP progress needs a shell; keep the firmware's Glagol state.
+        return {"auth": self.auth.info(), "glagol": self.glagol.info()}
+
+    def set_volume(self, data):
+        if set(data) != {"level"}:
+            raise AdbError("В режиме Glagol доступна только громкость колонки (level)")
+        level = max(0, min(100, round(float(data["level"]) / 5) * 5))
+        return {**self.glagol.send({"command": "setVolume", "volume": level / 100}),
+                "level": level, "via": "glagol"}
+
+
+class GlagolConnection:
+    """Expose the real WebSocket state without starting the ADB connection loop."""
+    def __init__(self, panel):
+        self.panel = panel
+
+    @property
+    def online(self):
+        return bool(self.panel.glagol.info()["connected"])
+
+    def info(self):
+        g = self.panel.glagol.info()
+        state = ("auth_required" if not self.panel.auth.info()["logged_in"] else
+                 "online" if g["connected"] else "glagol_error" if g["error"] else "connecting")
+        return {"mode": "glagol", "state": state, "connected": g["connected"],
+                "error": g["error"], "serial": self.panel.glagol.host, "log": []}
+
+    def retry_now(self):
+        self.panel.glagol.reconnect()
+        return self.info()
+
+
 class WsServerConn:
     """Серверная сторона WebSocket (RFC 6455) поверх соединения http.server — только то, что нужно терминалу."""
     GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -5872,7 +5918,7 @@ class Handler(BaseHTTPRequestHandler):
             import hmac
             local = ipaddress.ip_address(self.connection.getsockname()[0])
             if local.is_loopback and hmac.compare_digest(self.headers.get("X-Panel-Gateway", ""), gateway_key):
-                return False
+                return getattr(getattr(self, "panel", None), "transport", None) == "glagol" and self._transport_guard(path)
             self._send(403, {"error": "private worker"})
             return True
         if self.command == "POST":
@@ -5888,8 +5934,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(415, {"error": "тело запроса — только JSON или файл"})
                 return True
         if path in PUBLIC_PATHS or path.startswith("/static/") or self.access.session_ok(self._token()):
-            return False
+            return getattr(getattr(self, "panel", None), "transport", None) == "glagol" and self._transport_guard(path)
         self._send(401, {"error": "Нужен вход", "auth": True})
+        return True
+
+    def _transport_guard(self, path):
+        if getattr(self.panel, "transport", None) != "glagol" or not path.startswith("/api/"):
+            return False
+        get = {"/api/conn", "/api/status", "/api/music", "/api/auth", "/api/auth/qr",
+               "/api/profile", "/api/panel/version", "/api/music/info", "/api/music/lyrics",
+               "/api/music/queue", "/api/music/similar", "/api/music/artist"}
+        post = {"/api/conn/retry", "/api/volume", "/api/music/cmd", "/api/music/like",
+                "/api/music/dislike", "/api/music/play", "/api/auth/qr", "/api/auth/oauth",
+                "/api/auth/logout", "/api/panel/update"}
+        allowed = get if self.command == "GET" else post if self.command == "POST" else set()
+        if path in allowed or path in PUBLIC_PATHS or path.startswith("/api/panel-auth/") or path == "/api/panel-auth":
+            return False
+        self._send(409, {"error": "Для этой функции нужен режим ADB и доступ к колонке.",
+                         "requires_adb": True})
         return True
 
     def _panel_auth_get(self):
@@ -6107,6 +6169,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _offline(self, path):
         """Пока колонки нет, API отвечает одним понятным статусом вместо ошибок adb."""
+        if getattr(self.panel, "transport", None) == "glagol":
+            return False  # _transport_guard limits the API even before account login.
         # отчёт для Issue нужнее всего как раз тогда, когда колонка не подключается
         if path.startswith("/api/") and not path.startswith("/api/conn") and path != "/api/report" and not self.panel.conn.online:
             self._send(503, {"error": "Колонка не подключена", "offline": True})
@@ -6164,7 +6228,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/clock/frames": lambda: p.clock_frames(q.get("name", "")),
             "/api/clock/boot": p.boot_status,
             "/api/clock/state": p.clock_state,
-            "/api/leds/live": p.leds.get,
+            "/api/leds/live": lambda: p.leds.get(),
             "/api/display": p.display_status,
             "/api/ring/frames": lambda: p.ring_frames(q.get("name", "")),
             "/api/anim/custom": p.anim_custom,
@@ -6750,7 +6814,29 @@ def main():
     ap.add_argument("--open", action="store_true", help="открыть панель в браузере после запуска")
     ap.add_argument("--model", choices=[*profiles.PROFILES, "auto"], default=env("PANEL_MODEL", "auto"),
                     help="профиль колонки: lite2, lite, mini3pro, mini3, mini2, station2, midi или auto — определить по плате [PANEL_MODEL]")
+    ap.add_argument("--transport", choices=("adb", "glagol"), default="adb",
+                    help="adb — все функции; glagol — плеер без ADB и root")
+    ap.add_argument("--speaker-host", help="IP или имя колонки для режима Glagol, без порта")
+    ap.add_argument("--device-id", help="Device ID колонки для режима Glagol")
+    ap.add_argument("--glagol-port", type=int, default=1961, help="порт Glagol (по умолчанию 1961)")
     args = ap.parse_args()
+    glagol_only = args.transport == "glagol"
+    if glagol_only:
+        if args.find:
+            ap.error("--find использует ADB; для Glagol задайте --speaker-host")
+        if args.model == "auto":
+            ap.error("в режиме Glagol укажите --model: без ADB модель не определяется")
+        if not args.speaker_host or not args.device_id:
+            ap.error("для Glagol нужны --speaker-host и --device-id")
+        try:
+            ipaddress.ip_address(args.speaker_host)
+        except ValueError:
+            if len(args.speaker_host) > 253 or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", args.speaker_host):
+                ap.error("--speaker-host: нужен IP или имя без порта и схемы URL")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args.device_id):
+            ap.error("--device-id: неверный идентификатор")
+        if not 1 <= args.glagol_port <= 65535:
+            ap.error("--glagol-port: порт должен быть от 1 до 65535")
     for stream in (sys.stdout, sys.stderr):   # консоль Windows: русский текст не должен ронять сервер
         try:
             stream.reconfigure(errors="replace", line_buffering=True)
@@ -6761,11 +6847,11 @@ def main():
 
     # Адрес колонки: из аргумента/окружения, иначе — запомненный, иначе спросим (если есть кому ответить).
     settings = load_settings()
-    device = normalize_device(args.device) or settings.get("device")
+    device = None if glagol_only else normalize_device(args.device) or settings.get("device")
     if args.find:
         device = pick_device(find_adb(), args.find) or device
     # С --open (start.bat/start.sh) не спрашиваем в консоли: страница сама найдёт колонку в сети
-    if not device and not args.open and sys.stdin and sys.stdin.isatty():
+    if not glagol_only and not device and not args.open and sys.stdin and sys.stdin.isatty():
         try:
             device = normalize_device(input("IP-адрес колонки (Enter — колонка по USB): "))
         except EOFError:
@@ -6782,22 +6868,26 @@ def main():
     global PANEL_PROFILE
     PANEL_PROFILE = (model, auto)
 
-    adb = Adb(find_adb(), device)
-    panel = Panel(adb)
+    adb = None if glagol_only else Adb(find_adb(), device)
+    panel = GlagolPanel() if glagol_only else Panel(adb)
     panel.auth = glagol.YandexAuth(AUTH_FILE)
-    host = device.rpartition(":")[0] if device and ":" in device else None
-    panel.glagol = glagol.Glagol(panel.auth, host, None, GLAGOL_PLATFORM)
-    panel.wakeword_router_start()
+    host = args.speaker_host if glagol_only else device.rpartition(":")[0] if device and ":" in device else None
+    panel.glagol = glagol.Glagol(panel.auth, host, args.device_id if glagol_only else None,
+                               GLAGOL_PLATFORM, port=args.glagol_port if glagol_only else 1961)
     panel.ymusic = glagol.YandexMusic(panel.auth)
-    panel.agent_attach()
-    panel.conn = Connection(adb)
-    panel.leds = LedStream(adb)
-    panel.metrics = Metrics(adb, panel.conn)
-    threading.Thread(target=panel.metrics.run, daemon=True, name="metrics").start()
-    threading.Thread(target=panel.conn.run, daemon=True, name="adb-connection").start()
-    threading.Thread(target=panel.agent_keeper, args=(panel.conn,), daemon=True, name="agent").start()
+    if glagol_only:
+        panel.conn = GlagolConnection(panel)
+    else:
+        panel.wakeword_router_start()
+        panel.agent_attach()
+        panel.conn = Connection(adb)
+        panel.leds = LedStream(adb)
+        panel.metrics = Metrics(adb, panel.conn)
+        threading.Thread(target=panel.metrics.run, daemon=True, name="metrics").start()
+        threading.Thread(target=panel.conn.run, daemon=True, name="adb-connection").start()
+        threading.Thread(target=panel.agent_keeper, args=(panel.conn,), daemon=True, name="agent").start()
     # в режиме нескольких колонок (multi.py) профиль задан явно: перезапуск сменил бы порт процесса
-    if auto and not os.environ.get("PANEL_GATEWAY_SECRET"):
+    if auto and not glagol_only and not os.environ.get("PANEL_GATEWAY_SECRET"):
         threading.Thread(target=watch_model, args=(adb, panel.conn, model), daemon=True, name="model").start()
     Handler.panel = panel
     Handler.access = access.PanelAccess(PANEL_AUTH_FILE)
@@ -6819,9 +6909,13 @@ def main():
         Path(ready).write_text(json.dumps({"port": args.port}), encoding="utf8")
     shown = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
     print(f"Панель {VERSION} · профиль {model}{' (авто)' if auto else ''}")
+    adb_ver = "не используется" if glagol_only else '.'.join(map(str, adb_version(adb.adb) or ())) or '?'
     JOURNAL.add(f"запуск панели {VERSION}: профиль {model}{' (авто)' if auto else ''}, {platform.system()} {platform.release()}, "
-                f"Python {platform.python_version()}, adb {'.'.join(map(str, adb_version(adb.adb) or ())) or '?'}")
-    print(f"adb: {adb.adb}  колонка: {device or 'по USB / единственное устройство adb'}  данные: {DATA_DIR}")
+                f"Python {platform.python_version()}, adb {adb_ver}")
+    if glagol_only:
+        print(f"Glagol: {host}:{args.glagol_port} · без ADB  данные: {DATA_DIR}")
+    else:
+        print(f"adb: {adb.adb}  колонка: {device or 'по USB / единственное устройство adb'}  данные: {DATA_DIR}")
     print(f"Панель: http://{shown}:{args.port}/")
     if args.https_port:
         try:
@@ -6855,7 +6949,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        panel.metrics._save()
+        if not glagol_only:
+            panel.metrics._save()
 
 
 if __name__ == "__main__":

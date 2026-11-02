@@ -1,15 +1,23 @@
 /* Mobile browser layout. */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
+/* viewport-fit=cover also exposes the notch when landscape selects the desktop layout. */
+:root {
+  --sa-left: env(safe-area-inset-left, 0px);
+  --sa-right: env(safe-area-inset-right, 0px);
+}
+.shell { padding-left: var(--sa-left); padding-right: var(--sa-right); }
+.minibar { padding-left: max(20px, var(--sa-left)); padding-right: max(20px, var(--sa-right)); }
+
 @media (max-width: 760px) {
   :root {
-    --page-left: max(16px, env(safe-area-inset-left, 0px));
-    --page-right: max(16px, env(safe-area-inset-right, 0px));
+    --page-left: max(16px, var(--sa-left));
+    --page-right: max(16px, var(--sa-right));
   }
   body { padding-top: var(--sa-top); }
   body[data-tab="player"] { padding-top: 0; }
   /* A wrapped desktop flex basis must never define the phone's content width. */
-  .shell { display: block; width: 100%; }
+  .shell { display: block; width: 100%; padding-left: 0; padding-right: 0; }
   main { width: 100%; max-width: 100%; padding-left: var(--page-left); padding-right: var(--page-right); }
   aside { width: 100%; min-width: 0; padding-left: var(--page-left); padding-right: var(--page-right); }
   .brand { flex: 1 1 0; }
@@ -34,15 +42,15 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .minibar {
     grid-template-columns: minmax(0, 1fr) max-content;
     gap: 10px;
-    padding-left: max(12px, env(safe-area-inset-left, 0px));
-    padding-right: max(12px, env(safe-area-inset-right, 0px));
+    padding-left: max(12px, var(--sa-left));
+    padding-right: max(12px, var(--sa-right));
   }
   .mb-track { gap: 8px; }
   .mb-cover { width: 48px; height: 48px; }
   .mb-text { flex: 1 1 0; }
   .mb-center .controls { gap: 2px; }
   .mb-center .cbtn, .mb-center .cbtn.big { flex: none; width: 44px; height: 44px; }
-  .mbar { padding-left: max(4px, env(safe-area-inset-left, 0px)); padding-right: max(4px, env(safe-area-inset-right, 0px)); }
+  .mbar { padding-left: max(4px, var(--sa-left)); padding-right: max(4px, var(--sa-right)); }
   nav.side { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-left: var(--page-left); padding-right: var(--page-right); max-height: min(78dvh, 640px); }
   nav.side a { min-width: 0; overflow-wrap: anywhere; }
 

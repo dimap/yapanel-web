@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import os
 import ssl
 import subprocess
@@ -49,6 +50,25 @@ class Names(unittest.TestCase):
 
 
 class Catalog(unittest.TestCase):
+    def test_homepages_and_missing_airplay_metadata(self):
+        p = server.Panel(Mock())
+        p.yam2_status = lambda: {"registries": [{"name": "official", "url": "https://repo.yse.wtf/v2"}],
+                                 "platform": "yandexmini_2"}
+        site = "https://github.com/Yandex-Station-Universal-Repo/Station-airplay"
+        for homepage in (None, "", "https://example.org/new-airplay-home"):
+            with self.subTest(homepage=homepage):
+                data = {"packages": [
+                    {"name": "alice/airplay", "homepage": homepage, "targets": ["yandexmini_2"]},
+                    {"name": "example/player", "homepage": "https://example.org/player"},
+                    {"name": "example/no-site"},
+                ]}
+                with patch("server.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(data).encode())):
+                    packages = p.yam2_catalog(refresh=True)["packages"]
+                self.assertEqual(packages[0]["homepage"], homepage or site)
+                self.assertEqual(packages[1]["homepage"], "https://example.org/player")
+                self.assertIsNone(packages[2]["homepage"])
+                self.assertTrue(packages[0]["fits"])
+
     def test_tls_error_is_explained(self):
         p = server.Panel(Mock())
         p.yam2_status = lambda: {"registries": [{"name": "official", "url": "https://repo.yse.wtf/v2"}],

@@ -17,6 +17,71 @@ node('#yam-filter').value='sqlite';vm.runInContext('renderYam();',context);
 assert(!node('#yam-catalog').innerHTML.includes('Station airplay'));
 console.log('PASS: one latest version per ID; one installed badge; update and search preserved');
 
+// Render the real YAM 2 loaders and package action to cover links across install,
+// upgrade and removal, including catalog/package responses arriving separately.
+(async () => {
+  const nodes = {};
+  const get = id => nodes[id] ||= {value: '', checked: false, innerHTML: '', textContent: ''};
+  const pkg = {name: 'example/player', latest: '1.0.0', summary: 'Player', fits: true,
+    homepage: 'https://example.org/player?first=1&second="value"'};
+  const installed = {name: pkg.name, version: pkg.latest, target: 'yandexmini_2', services: []};
+  const state = {packages: [], catalog: null};
+  let packages = [];
+  const ctx = {
+    $: get, $$: () => [], y2: state, esc: s => String(s ?? '').replace(/[&<>"]/g,
+      c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])), icon: () => '',
+    act: async (_btn, fn) => fn(), confirm: () => true, toast() {}, window: {},
+    api: async (url, data) => {
+      if (url.startsWith('/api/yam2/catalog')) return {configured: true, packages: [pkg]};
+      if (url === '/api/yam2/packages') return {packages};
+      assert.equal(url, '/api/yam2/pkg');
+      packages = data.action === 'install' ? [{...installed, version: pkg.latest}] : [];
+      return {};
+    }
+  };
+  vm.createContext(ctx);
+  const start = html.indexOf('async function loadYam2Packages(');
+  vm.runInContext(html.slice(start, html.indexOf('function y2out(', start)) + '\n' +
+    html.slice(html.indexOf('async function yam2Pkg('), html.indexOf('async function yam2Svc(')) + '\n' +
+    html.slice(html.indexOf('function vcmp('), html.indexOf('function renderYam()')), ctx);
+  const link = 'href="https://example.org/player?first=1&amp;second=&quot;value&quot;" target="_blank" rel="noopener">Сайт ↗</a>';
+  await ctx.loadYam2Packages();
+  await ctx.loadYam2Catalog();
+  assert(get('#y2-catalog').innerHTML.includes(link));
+  await ctx.yam2Pkg({textContent: 'Установить'}, 'install', pkg.name);
+  assert(get('#y2-installed').innerHTML.includes(link), 'installed package retains its homepage');
+  assert(get('#y2-catalog').innerHTML.includes(link), 'installed catalog card retains its homepage');
+  assert(get('#y2-catalog').innerHTML.includes('установлено'));
+  // A search that hides the catalog card must not hide the installed link.
+  get('#y2-filter').value = 'no matches';
+  ctx.renderYam2();
+  assert(get('#y2-installed').innerHTML.includes(link));
+  assert(!get('#y2-catalog').innerHTML.includes(link));
+  get('#y2-filter').value = '';
+  pkg.latest = '1.1.0';
+  ctx.renderYam2();
+  assert(get('#y2-installed').innerHTML.includes('Обновить'));
+  assert(get('#y2-installed').innerHTML.includes(link));
+  await ctx.yam2Pkg({textContent: 'Обновить'}, 'install', pkg.name);
+  assert(get('#y2-installed').innerHTML.includes(link));
+  for (const homepage of [null, undefined, '', 'javascript:alert(1)', 'http://example.org', '//example.org']) {
+    pkg.homepage = homepage;
+    ctx.renderYam2();
+    assert(!get('#y2-installed').innerHTML.includes('Сайт ↗'));
+    assert(!get('#y2-catalog').innerHTML.includes('Сайт ↗'));
+  }
+  pkg.homepage = 'https://example.org';
+  state.catalog = null;
+  ctx.renderYam2();
+  assert(!get('#y2-installed').innerHTML.includes('Сайт ↗'));
+  await ctx.loadYam2Catalog();
+  assert(get('#y2-installed').innerHTML.includes('Сайт ↗'), 'late catalog response adds the link');
+  await ctx.yam2Pkg({textContent: 'Удалить'}, 'remove', pkg.name);
+  assert(!get('#y2-installed').innerHTML.includes('Сайт ↗'));
+  assert(get('#y2-catalog').innerHTML.includes('Сайт ↗'));
+  console.log('PASS: YAM 2 homepages survive install/update, filtering and late catalog loading; absent/unsafe URLs stay hidden');
+})().catch(e => { console.error(e); process.exitCode = 1; });
+
 
 (async () => {
   const pkgSource = html.slice(html.indexOf('async function yam2Pkg('), html.indexOf('async function yam2Svc('));

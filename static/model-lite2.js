@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { STLLoader } from './vendor/three/STLLoader.js';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import {modelSettings} from './model-settings.js';
+import {modelPalette} from './model-colors.js';
 import { toCreasedNormals } from './vendor/three/BufferGeometryUtils.js';
 
 // Цвета корпусов (yandex-getcolor) — на глаз по фото.
-const BODY_COLORS = { copper: '#a8603e', black: '#2c2c31', blue: '#3e5f90', green: '#56715f', pink: '#d8a4a9', violet: '#6e5b98' };
+const BODY_COLORS = Object.fromEntries(Object.entries(modelPalette('lite2')).map(([key,value])=>[key,value[1]]));
 // Дисплей светится сквозь ткань на лицевой стороне (−Y в STL; сзади выемка под разъём).
 // В модели окна под него нет, поэтому положение задано вручную, в мм в координатах STL.
 const DISPLAY = { centerZ: -29, arcWidth: 46, radius: 45.55 };
@@ -63,10 +64,10 @@ function paint(colorKey) {
   const col = bodyGeom.attributes.color;
   for (let i = 0; i < col.count; i++) col.setXYZ(i, ...[body, plastic, dark][partOf[i]].toArray());
   col.needsUpdate = true;
-  // Холст показываем, когда известен настоящий цвет, — чтобы не мелькала чёрная колонка.
-  if (colorKey) renderer.domElement.style.opacity = 1;
+  // Unknown colour is an explicitly labelled placeholder; keep the model visible.
+  renderer.domElement.style.opacity = 1;
 }
-window.modelColor = c => {if(!manualColor)paint(c);};
+window.modelColor = c => {if(window.__modelColorController||!manualColor)paint(c);};
 
 new STLLoader().load(new URL('models/lite2.stl',import.meta.url).href, geom => {
   // Группы граней по цвету из STL: самая частая — корпус, самая светлая из остальных — кнопка, прочее — разъёмы.
@@ -234,7 +235,7 @@ renderer.setAnimationLoop(() => {
 });
 
 let manualColor=null;
-modelSettings('lite2',Object.fromEntries(Object.entries(BODY_COLORS).map(([key,color])=>[key,[{copper:'Оранжевый',black:'Чёрный',blue:'Синий',green:'Зелёный',pink:'Розовый',violet:'Фиолетовый'}[key],color]])),{
+modelSettings(window.__modelNoClock?'lite2nc':'lite2',modelPalette('lite2'),{
   color:key=>{manualColor=key;paint(key||window.__deviceColor);},
   spin:value=>{controls.autoRotate=value;},
   home:()=>{camera.position.set(0,69,239);controls.target.set(0,0,0);group.rotation.y=START_ANGLE;controls.update();},

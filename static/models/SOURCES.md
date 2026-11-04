@@ -41,6 +41,12 @@
   Photos: https://alice.yandex.ru/station-max, station-gen3, station-midi, station-street, station-duo-max, station-mini.
   Drops: retailer photos (DNS) of the white 2026 case.
 
+Body palettes for supported models are shared with server validation in `model-colors.json`.
+Mini 3 Pro: black, light grey, blue and green, following [Yandex's announcement](https://www.yandex.ru/company/news/02-15-04-2025)
+and the [official green product](https://alice.yandex.ru/store/products/station-mini-3-pro-100488).
+Material RGB values (including light grey and green) are visual approximations, not calibrated measurements.
+An unknown device colour is labelled explicitly; see [body-colour behaviour and tests](../../docs/model-colors.md).
+
 References:
 - https://alice.yandex.ru/station-gen2
 - https://alice.yandex.ru/station-mini-gen3-pro

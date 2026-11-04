@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m compileall -q server.py profiles.py midi.py managed_yam.py multi.py tools/midi_readonly.py
+      - run: python -m compileall -q server.py model_colors.py profiles.py midi.py managed_yam.py multi.py tools/midi_readonly.py
       - run: python -m unittest discover -s tests -v
       - run: python server.py --help
       - run: python multi.py --help
@@ -41,6 +41,20 @@ jobs:
       - run: node tests/test_midi_ui.cjs
       - run: node tests/test_midi_color_ui.cjs
       - run: node tests/test_midi_clock_ui.cjs
+
+  model-colour-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --package-lock=false playwright@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/test_model_color_browser.cjs
 
   assistant:
     runs-on: ubuntu-latest

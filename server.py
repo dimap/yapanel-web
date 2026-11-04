@@ -43,10 +43,11 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 import access
 import agent as agentlink
 import glagol
+import model_colors
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
-MIME = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8",
+MIME = {".json": "application/json; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8",
         ".stl": "model/stl", ".png": "image/png", ".svg": "image/svg+xml",
         ".webmanifest": "application/manifest+json"}
 
@@ -1874,7 +1875,7 @@ echo "load=$(cut -d' ' -f1-3 /proc/loadavg)"
 awk '/MemTotal/{print "mem_total="$2} /MemAvailable/{print "mem_avail="$2}' /proc/meminfo
 echo "temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)"
 echo "kernel=$(uname -r)"
-echo "color=$(yandex-getcolor 2>/dev/null)"
+""" + model_colors.COLOR_PROBE + model_colors.IDENTITY_PROBE + r"""
 echo "date=$(date '+%Y-%m-%d %H:%M:%S %Z')"
 wpa_cli -i wlan0 status 2>/dev/null | grep -E '^(ssid|ip_address|freq|address|wpa_state)='
 wpa_cli -i wlan0 signal_poll 2>/dev/null | grep -E '^(RSSI|LINKSPEED)='
@@ -1906,11 +1907,35 @@ echo @@BLUEZ
             else:
                 st[k] = v.strip()
         st.update(self.version())
+        st["color_detection"] = model_colors.diagnostic(st.get("color"), st.pop("color_read", None))
+        st["model_color_device_id"] = model_colors.identity(st.get("model_color_device_id"))
         st["ffmpeg"] = bool(self.ffmpeg)
         st["vol_level"] = alsa_to_level(st.get("vol_master"))
         st["muted"] = bool(load_settings().get("mute_before")) and st["vol_level"] == 0
         st["via"] = "agent" if self.adb.agent and self.adb.agent_ok else "adb"
         return st
+
+    def model_color(self, model, change=None):
+        # Read the identity afresh, including on POST: version() is cached and an IP can be reused.
+        model_colors.palette(model)
+        if change is not None:
+            if not isinstance(change, dict) or "color" not in change:
+                raise ValueError("нужно указать color (null — автоопределение)")
+            color = change["color"]
+            if color is not None and (not isinstance(color, str) or color not in model_colors.palette(model)):
+                raise ValueError("цвет отсутствует в палитре этой модели")
+            if not model_colors.identity(change.get("device_id")):
+                raise ValueError("обновите сведения о колонке перед сохранением цвета")
+        out, _, _ = self.adb.shell(model_colors.IDENTITY_PROBE + model_colors.COLOR_PROBE, timeout=15)
+        fields = dict(line.split("=", 1) for line in strip_ansi(out).splitlines() if "=" in line)
+        device = model_colors.identity(fields.get("model_color_device_id"))
+        detection = model_colors.diagnostic(fields.get("color"), fields.get("color_read"))
+        store = model_colors.ColorStore(DATA_DIR / ".model_colors.json")
+        if change is not None:
+            if not device or change["device_id"] != device:
+                raise ValueError("колонка изменилась или не определена — обновите страницу")
+            store.save(device, model, change["color"])
+        return store.result(device, model, fields.get("color"), detection)
 
     # ---------- громкость ----------
     def _volume_level(self):
@@ -6158,6 +6183,7 @@ class Handler(BaseHTTPRequestHandler):
         p = self.panel
         routes = {
             "/api/status": p.status,
+            "/api/model-color": lambda: p.model_color(q.get("model")),
             "/api/midi/hardware": p.midi_hardware,
             "/api/midi/tests": p.midi_tests,
             "/api/midi/tests/clock": p.midi_clock_tests,
@@ -6299,6 +6325,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._wakeword_proxy(str(self._jdata.get("method", "POST")).upper(),
                                         str(self._jdata.get("path", "")), self._jdata.get("body"))
         routes = {
+            "/api/model-color": lambda: p.model_color(self._jdata.get("model"), self._jdata),
             "/api/volume": lambda: p.set_volume(d),
             "/api/midi/tests/run": lambda: p.midi_test_run(d),
             "/api/midi/tests/observe": lambda: p.midi_test_observe(d),
@@ -6407,7 +6434,7 @@ class PanelUpdater:
     """Проверка новых релизов панели на GitHub и обновление — в зависимости от того, как панель установлена:
     zip (Windows-сборка, Download ZIP) — скачать релиз и заменить файлы панели; git — git pull --ff-only;
     docker — только подсказать команду (образ изнутри не обновить)."""
-    FILES = ("server.py", "access.py", "agent.py", "glagol.py", "profiles.py", "midi.py", "managed_yam.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
+    FILES = ("server.py", "access.py", "agent.py", "glagol.py", "profiles.py", "midi.py", "managed_yam.py", "model_colors.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
     DIRS = ("static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно

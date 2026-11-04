@@ -15,7 +15,8 @@ const midiURL=moduleURL(midiSource.replace("'./clock-geometry.js'",JSON.stringif
 const T=await import(moduleURL(threeSource));
 const {textToFrame}=await import(clockURL);
 const {buildMidi}=await import(midiURL);
-const {CONCEPTS}=await import(moduleURL(conceptsSource.replace("'./model-midi.js'",JSON.stringify(midiURL))));
+const catalog=JSON.parse(await read('../static/model-colors.json'));
+const {CONCEPTS}=await import(moduleURL(conceptsSource.replace("'./model-midi.js'",JSON.stringify(midiURL)).replace("import {modelPalette} from './model-colors.js';", 'const catalog='+JSON.stringify(catalog)+'; const modelPalette=id=>catalog.palettes[catalog.aliases[id]||id];')));
 
 class Context {
   constructor() { this.draws=[]; this.globalAlpha=1; this.stack=[]; }

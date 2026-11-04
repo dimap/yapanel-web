@@ -1,13 +1,14 @@
 // MIT: approximate gallery-only bodies after Yandex's official specifications and product photos (see SOURCES.md).
 // Sizes are in millimetres and match the published width, depth and height. Hardware support is not implied.
 import {buildMidi} from './model-midi.js';
+import {modelPalette} from './model-colors.js';
 const pal=(...items)=>Object.fromEntries(items.map(([key,label,color])=>[key,[label,color]]));
 const BLACK=pal(['black','Чёрный','#2f3036']);
 // Colour names follow the official "Расцветки" lists on alice.yandex.ru/support.
 const STATION=pal(['black','Чёрный','#2f3036'],['grey','Серый','#a9abb1'],['purple','Фиолетовый','#5b43b8']);
 const MAX=pal(['graphite','Графит','#34353b'],['beige','Бежевый','#cbbfad'],['green','Зелёный','#2f5a4b'],['turquoise','Бирюза','#3f8f8c'],['blue','Синий','#2f4a7a'],['bordo','Бордовый','#6b2834']);
-const MIDI=pal(['black','Чёрный','#41434b'],['emerald','Изумруд','#46b5b5'],['grey','Серый','#a2a4aa'],['orange','Оранжевый','#cf913c'],['crimson','Малиновый','#ad365c']);
-const MINI2=pal(['white','Белый','#dcdcdc'],['black','Чёрный','#34353b'],['red','Красный','#b0303c'],['blue','Синий','#2f56a8']);
+const MIDI=modelPalette('midi');
+const MINI2=modelPalette('mini2');
 
 // Builders receive the studio kit: Three.js, shared materials and mesh helpers.
 function clock(kit,text='12:35',color='#fff4e4'){

@@ -1,5 +1,8 @@
 // Choose the visual model from the device; hardware capabilities remain explicit.
 import {rendererProfile} from './renderer-profile.js';
+import {initModelColor} from './model-color.js';
+import {modelSettings} from './model-settings.js';
+import {modelPalette} from './model-colors.js';
 async function loadProfile(){
   for(;;){
     const auth=await PanelContext.fetch('/api/panel-auth').then(r=>r.json()).catch(()=>null);
@@ -85,7 +88,8 @@ loading.remove();
 window.__modelNoClock=visual.clock===false;
 const gallery = document.getElementById("model-gallery");
 if (gallery) gallery.href = PanelContext.url("static/model-preview.html") + "?model=" + encodeURIComponent(visual.id);
-window.__deviceColor=status.color||window.__deviceColor;
+await initModelColor(visual.id,status);
+modelSettings(visual.id,modelPalette(visual.id),{});
 document.title=visual.name+' — yapanel';
 document.getElementById('model-name').textContent=visual.name;
 view.dataset.hardwareProfile=profile.id;
@@ -127,6 +131,7 @@ try{
   try{localStorage.setItem('model.lastError',stage+detail+'\n'+(e?.stack||''));}catch{}
   window.__modelError=stage+detail;
   console.error('3D-модель:',stage+detail,e);
+  view.querySelectorAll('.studio-error,.studio-caption').forEach(node=>node.remove());
   const box=document.createElement('p');box.className='studio-error';
   box.append('Не удалось показать 3D-модель. '+(stage+detail).slice(0,260)+' ');
   const btn=document.createElement('button');btn.className='btn sm';btn.type='button';btn.textContent='Перезагрузить';btn.onclick=()=>location.reload();

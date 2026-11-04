@@ -1,6 +1,7 @@
 import {startAsciiBackground} from './ascii-background.js';
 import * as geometry from './clock-geometry.js';
 import {CONCEPTS} from './model-concepts.js';
+window.__modelPreview=true;
 const supported={lite:'Станция Лайт',lite2:'Станция Лайт 2',mini3:'Станция Мини 3',mini3pro:'Станция Мини 3 Про',mini2:'Станция Мини 2 с часами',station2:'Станция 2'};
 const experimental={midi:'Станция Миди — экспериментальный профиль'};
 // Заготовки для будущих участников: только внешний вид, аппаратная совместимость не проверена.

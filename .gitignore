@@ -34,3 +34,6 @@ device/viz/build/
 # локальные настройки Command Code
 .commandcode/
 .panel_journal.jsonl
+
+.model_colors.json
+.model-colors-*

@@ -6,6 +6,7 @@ const studio = read('static/model-studio.js');
 const preview = read('static/model-preview.js');
 const model = read('static/model.js');
 const sources = read('static/models/SOURCES.md');
+const palettes = JSON.parse(read('static/model-colors.json')).palettes;
 
 // PR #10 gallery concepts must survive the Mini 2 merge.
 assert(studio.includes("import {CONCEPTS} from './model-concepts.js'"), 'concepts import');
@@ -18,10 +19,10 @@ assert(studio.includes('if(!mini2&&!concept)'), 'top marks skipped for Mini 2 an
 assert(studio.includes('else if(mini2)'), 'Mini 2 body branch');
 assert(studio.includes("import * as G from './clock-geometry.js'"), 'shared clock geometry import');
 assert(studio.includes('97 × 54'), 'Mini 2 dimensions');
-assert(studio.includes("white:['Белый','#dcd8d1','#e8e5df']"), 'white body');
-assert(studio.includes("black:['Чёрный','#2b2b2f','#232326']"), 'black body');
-assert(studio.includes("red:['Красный','#6e2634','#601f2d']"), 'red body');
-assert(studio.includes("blue:['Синий','#2d4070','#273863']"), 'blue body');
+assert.deepStrictEqual(palettes.mini2.white, ["Белый", "#dcd8d1", "#e8e5df"]);
+assert.deepStrictEqual(palettes.mini2.black, ["Чёрный", "#2b2b2f", "#232326"]);
+assert.deepStrictEqual(palettes.mini2.red, ["Красный", "#6e2634", "#601f2d"]);
+assert.deepStrictEqual(palettes.mini2.blue, ["Синий", "#2d4070", "#273863"]);
 assert(studio.includes('liteSlots(c,R,w=22,h=56,ring=.905)'), 'default Lite 1 slot geometry');
 assert(studio.includes('display(values)'), 'Mini 2 canvas display is used by modelShow');
 assert(studio.includes('G.DIGIT_X') && studio.includes('G.segShapes'), 'clock segments come from the panel geometry');

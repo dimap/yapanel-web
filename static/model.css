@@ -5,3 +5,14 @@
 .preview-settings .set-label b{display:block}.preview-settings .set-label small{display:block;color:var(--muted,#a5a5b2);font-size:12px;margin-top:2px}
 .preview-settings select,.preview-settings button{background:var(--card,#222);color:var(--text,inherit);padding:8px 12px;border:1px solid var(--border,#8885);border-radius:8px;cursor:pointer}
 .preview-settings input.switch{width:20px;height:20px}
+
+/* The colour picker belongs to the movable model widget, outside its WebGL canvas. */
+.model-widget { min-width: 0; }
+.model-color-panel { padding: 8px 16px 16px; }
+.model-color-panel[hidden], .model-color-panel [hidden] { display: none; }
+.model-color-panel form { margin-top: 10px; }
+.model-color-panel label { display: block; font-size: 14px; line-height: 1.5; }
+.model-color-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.model-color-controls select { flex: 1 1 160px; min-width: 0; }
+.model-color-controls select, .model-color-controls button { min-height: 44px; }
+.model-color-panel [data-color-error] { color: var(--danger); margin-top: 8px; }

@@ -38,6 +38,7 @@ jobs:
       - run: node tests/test_catalog.cjs
       - run: node tests/test_update_ui.cjs
       - run: node tests/test_voice_input.mjs
+      - run: node tests/test_redaction.cjs
       - run: node tests/test_midi_ui.cjs
       - run: node tests/test_midi_color_ui.cjs
       - run: node tests/test_midi_clock_ui.cjs

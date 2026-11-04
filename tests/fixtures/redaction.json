@@ -1,0 +1,161 @@
+[
+  {
+    "name": "endpoint fields",
+    "input": "endpoint_id=synthetic-endpoint-123 deviceId='demo-device-456' event=CONNECTED firmware=0.9.1.3.2572674166.20240919.factory-9",
+    "hidden": [
+      "synthetic-endpoint-123",
+      "demo-device-456"
+    ],
+    "keep": [
+      "endpoint_id=",
+      "event=CONNECTED",
+      "0.9.1.3.2572674166.20240919.factory-9"
+    ]
+  },
+  {
+    "name": "unlabelled endpoint identifiers",
+    "input": "Endpoint event [00112233445566778899aabbccddeeff] connected to 00000000-1111-2222-3333-444444444444",
+    "hidden": [
+      "00112233445566778899aabbccddeeff",
+      "00000000-1111-2222-3333-444444444444"
+    ],
+    "keep": [
+      "Endpoint event [",
+      "] connected to"
+    ]
+  },
+  {
+    "name": "signed URL",
+    "input": "GET https://example.invalid/audio?track=17&sign=fakeSigned+value%2Fabc==&quality=high",
+    "hidden": [
+      "fakeSigned",
+      "value%2Fabc"
+    ],
+    "keep": [
+      "?track=17&sign=",
+      "&quality=high"
+    ]
+  },
+  {
+    "name": "case and JSON URL",
+    "input": "{\"url\":\"https://example.invalid/?SIGNATURE=fakeSignatureValue&format=wav\",\"endpointId\":\"demo endpoint with spaces\",\"wifi_hash\":\"ABCDEF0123456789\"}",
+    "hidden": [
+      "fakeSignatureValue",
+      "demo endpoint with spaces",
+      "ABCDEF0123456789"
+    ],
+    "keep": [
+      "\"url\":",
+      "&format=wav",
+      "\"endpointId\":",
+      "\"wifi_hash\":"
+    ]
+  },
+  {
+    "name": "quoted escaped secret and nested endpoint object",
+    "input": "{\"api_key\":\"fake \\\"quoted\\\" key value\",\"endpoint\":{\"id\":\"00000000-1111-2222-3333-555555555555\"},\"event\":\"READY\"}",
+    "hidden": [
+      "fake",
+      "quoted",
+      "key value",
+      "00000000-1111-2222-3333-555555555555"
+    ],
+    "keep": [
+      "\"endpoint\":{",
+      "\"event\":\"READY\""
+    ]
+  },
+  {
+    "name": "account and session",
+    "input": "passport_uid: 1122334455 Account 9988776655 sessionId=\"fake-session-101\" client_id=fake-client-202",
+    "hidden": [
+      "1122334455",
+      "9988776655",
+      "fake-session-101",
+      "fake-client-202"
+    ],
+    "keep": [
+      "passport_uid:",
+      "Account ",
+      "sessionId=",
+      "client_id="
+    ]
+  },
+  {
+    "name": "headers and short signatures",
+    "input": "Authorization: Bearer fakeJwt.part+value= Basic ZmFrZTpzZWNyZXQ= sign=sig9&kind=timer token='short'",
+    "hidden": [
+      "fakeJwt",
+      "part+value",
+      "ZmFrZTpzZWNyZXQ=",
+      "sig9",
+      "short"
+    ],
+    "keep": [
+      "Authorization:",
+      "&kind=timer",
+      "token="
+    ]
+  },
+  {
+    "name": "credentials and addresses",
+    "input": "sk-proj-syntheticKey123 y0_AgAAAAsyntheticToken123 token=synthetic_token_123456 192.0.2.10:5555 aa:bb:cc:dd:ee:ff owner@example.invalid /home/ExampleOwner/file C:\\Users\\ExampleOwner\\file",
+    "hidden": [
+      "syntheticKey123",
+      "syntheticToken123",
+      "synthetic_token_123456",
+      "192.0.2.10",
+      "aa:bb:cc:dd:ee:ff",
+      "owner@example.invalid",
+      "ExampleOwner"
+    ],
+    "keep": [
+      ":5555",
+      "/file",
+      "\\file"
+    ]
+  },
+  {
+    "name": "ordinary messages and versions",
+    "input": "firmware 0.369.1.50.4794654278.20261021.133; panel 0.2.2; adb 1.0.41; http://127.0.0.1:8765/; playback state=PAUSED; endpoint connected; checksum=00112233445566778899aabbccddeeff",
+    "hidden": [],
+    "keep": [
+      "0.369.1.50.4794654278.20261021.133",
+      "panel 0.2.2",
+      "adb 1.0.41",
+      "http://127.0.0.1:8765/",
+      "state=PAUSED",
+      "endpoint connected"
+    ]
+  },
+  {
+    "name": "truncated quoted identifiers",
+    "input": "endpoint_id=\"demo-incomplete\\\nREADY firmware=0.9.1.3.2572674166.20240919.factory-9",
+    "hidden": [
+      "demo-incomplete"
+    ],
+    "keep": [
+      "endpoint_id=\"",
+      "READY firmware=0.9.1.3.2572674166.20240919.factory-9"
+    ]
+  },
+  {
+    "name": "bare serials in native endpoint events",
+    "input": "onEndpointAdded 0x1234abcd, DEMOSERIAL0123\nonEndpointRemoved 0x9876abcd, DEMOSERIAL0456\n[Proxy:maind] endpoint added DEMOSERIAL0789\nendpoint event for DEMOSERIAL1111 connected\nDiscovered DEMOSERIAL1111 elsewhere",
+    "hidden": [
+      "DEMOSERIAL0123",
+      "DEMOSERIAL0456",
+      "DEMOSERIAL0789",
+      "DEMOSERIAL1111"
+    ],
+    "keep": [
+      "onEndpointAdded 0x1234abcd,",
+      "onEndpointRemoved 0x9876abcd,",
+      "[Proxy:maind] endpoint added",
+      "endpoint event for",
+      "connected",
+      "Discovered ",
+      " elsewhere"
+    ]
+  }
+]

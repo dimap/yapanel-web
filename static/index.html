@@ -2441,7 +2441,7 @@
         <select id="log-lines" class="field" aria-label="Строк"><option>100</option><option selected>300</option><option>1000</option></select>
         <button class="btn sm" id="log-load" style="min-height:42px"><svg width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg>Обновить</button>
         <label class="toggle" style="min-height:42px;gap:8px;font-size:14px"><input type="checkbox" id="log-follow"> авто (3 с)</label>
-        <label class="toggle" style="min-height:42px;gap:8px;font-size:14px" title="Device ID, серийный номер, Wi‑Fi и MAC-адреса, логин, номер аккаунта и токены Яндекса"><input type="checkbox" id="log-mask" checked> скрыть личное</label>
+        <label class="toggle" style="min-height:42px;gap:8px;font-size:14px" title="Device ID и endpoint ID, серийный номер, Wi‑Fi и MAC-адреса, логин, номер аккаунта, токены и подписи URL"><input type="checkbox" id="log-mask" checked> скрыть личное</label>
         <label class="search" style="flex:1;min-width:160px"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg>
           <input type="search" id="log-filter" placeholder="Фильтр" aria-label="Фильтр"></label>
       </div>
@@ -3860,14 +3860,27 @@ function maskLog(t) {
   const st = status || {}, serial = /[-_]([A-Za-z0-9]{4,})$/.exec(st.hostname || '')?.[1];
   // номер аккаунта Яндекса встречается в разном виде (uid: …, id=…, Account …) — находим и прячем везде
   const uids = new Set([...t.matchAll(/(?:passport_uid|puid|uid)"?\s*[:=]\s*"?(\d{5,})/gi)].map(m => m[1]));
-  for (const v of [st.device_id, st.ssid, st.address, ymLogin, serial, ...uids].filter(v => v && v.length >= 4))
+  const endpointSerials=new Set(t.split('\n').filter(line=>/endpoint/i.test(line)).flatMap(line=>line.match(/\b(?=[A-Z0-9]{10,}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]+\b/g)||[]));
+  for (const v of [st.device_id, st.ssid, st.address, ymLogin, serial, ...uids, ...endpointSerials].filter(v => v && v.length >= 4))
     t = t.split(v).join('••••');
-  return t.replace(/\b(?:y0_|AQAAAA)[\w-]{10,}/g, '••••')                           // OAuth-токены
-    .replace(/(token["']?\s*[:=]\s*["']?)[\w.-]{20,}/gi, '$1••••')
-    .replace(/(\b[Aa]ccount[ :=]+)\d{5,}/g, '$1••••')
-    .replace(/("wifi_hash"\s*:\s*")[0-9a-f]+/g, '$1••••')
+  // Same field rules as server.redact; synthetic fixtures cover both independently.
+  const fields='(?:[a-z_]*token|api[_-]?key|sign(?:ature)?|secret|password|passwd|endpoint(?:[_-]?(?:id|uuid))?|device[_-]?(?:id|uuid)|(?:passport[_-]?)?uid|puid|(?:account|user|client|session|request)[_-]?id|serial(?:[_-]?(?:number|no))?|wifi_hash|ssid|bssid)';
+  t=t.replace(/\b(?:y0_|AQAAAA)[\w-]{10,}/g,'••••')
+    .replace(/\b(sk|rk|pk|gsk|xai)-[\w-]{8,}/g,'$1-••••')
+    .replace(/(\b(?:bearer|basic)\s+)[\w.~+/=-]+/gi,'$1••••')
+    .replace(new RegExp("(\\b"+fields+"[\"']?\\s*[:=]\\s*)([\"'])((?:\\\\(?:[^\\r\\n]|$)|(?!\\2)[^\\\\\\r\\n])*)(\\2|$)","gim"),(_m,p,q,_value,end)=>p+q+'••••'+end)
+    .replace(new RegExp("(\\b"+fields+"[\"']?\\s*[:=]\\s*)(?![\"'•])[^\\s\"'&,;<>{}\\[\\]]+","gi"),'$1••••')
+    .replace(/(\bonendpoint(?:added|removed|updated)\s+(?:0x[0-9a-f]+\s*,\s*)?)(?!0x)[a-z0-9_-]{6,}/gi,'$1••••')
+    .replace(/(\bendpoint\s+(?:added|removed|updated)\s+)(?!0x)[a-z0-9_-]{6,}/gi,'$1••••')
+    .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi,'••••')
+    .replace(/^.*endpoint.*$/gim,line=>line.replace(/\b[0-9a-f]{24,}\b/gi,'••••'))
+    .replace(/(\baccount[ :=]+)\d{5,}/gi,'$1••••')
+    .replace(/(?<![\d.])(?!127\.0\.0\.1(?![\d.]))(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)/g,'x.x.x.x')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g,'•••@•••')
+    .replace(/([/\\](?:home|users)[/\\])[^/\\\s]+/gi,'$1<user>')
     // MAC роутера (BSSID) находится в открытых базах точек Wi‑Fi — по нему можно узнать адрес
     .replace(/\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b/gi, '••:••:••:••:••:••');
+  return t;
 }
 function renderLog() {
   const f = $('#log-filter').value.toLowerCase();

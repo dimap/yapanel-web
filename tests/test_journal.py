@@ -1,15 +1,38 @@
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import server
 
 
 class Redact(unittest.TestCase):
+    def fixtures(self):
+        return json.loads((Path(__file__).parent/'fixtures/redaction.json').read_text())
+
+    def test_synthetic_endpoint_signatures_and_message_context(self):
+        for item in self.fixtures():
+            with self.subTest(case=item['name']):
+                masked=server.redact(item['input'])
+                for hidden in item['hidden']:self.assertNotIn(hidden,masked)
+                for keep in item['keep']:self.assertIn(keep,masked)
+                self.assertEqual(server.redact(masked),masked)
+
+    def test_issue_report_redacts_historical_raw_journal_independently(self):
+        fixtures=self.fixtures()
+        handler=SimpleNamespace(panel=SimpleNamespace(adb=Mock(adb='fake-adb'),ffmpeg=None,conn=None),updater=None)
+        with patch.object(server.JOURNAL,'text',return_value='\n'.join(item['input'] for item in fixtures)), \
+                patch.object(server,'adb_version',return_value=(1,0,41)):
+            report=server.Handler._report(handler)['text']
+        for item in fixtures:
+            for hidden in item['hidden']:self.assertNotIn(hidden,report)
+        self.assertIn('0.9.1.3.2572674166.20240919.factory-9',report)
+        self.assertIn('state=PAUSED',report)
+
     def test_hides_secrets_and_addresses(self):
         text = server.redact("sk-proj-abcdefghijklmnop y0_AgAAAAABCDEFGHIJKLMNOP token=abcdefghijklmnopqrstu "
                              "192.168.2.115:5555 aa:bb:cc:dd:ee:ff me@mail.ru /home/dimap/x C:\\Users\\Dima\\y")

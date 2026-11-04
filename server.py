@@ -172,9 +172,26 @@ def set_data_dir(path):
 
 def redact(text):
     """Убирает из текста то, чему не место в отчёте: токены и ключи, адреса, MAC, e-mail, имя пользователя в путях."""
+    serials = {value for line in text.splitlines() if re.search("endpoint", line, re.I)
+               for value in re.findall(r"\b(?=[A-Z0-9]{10,}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]+\b", line)}
+    for value in serials:
+        text = text.replace(value, "••••")
     text = re.sub(r"\b(?:y0_|AQAAAA)[\w-]{10,}", "••••", text)
     text = re.sub(r"\b(sk|rk|pk|gsk|xai)-[\w-]{8,}", r"\1-••••", text)
-    text = re.sub(r"(?i)(bearer\s+|token[\"']?\s*[:=]\s*[\"']?|api[_-]?key[\"']?\s*[:=]\s*[\"']?)[\w.~+/-]{12,}", r"\1••••", text)
+    text = re.sub(r"(?i)(\b(?:bearer|basic)\s+)[\w.~+/=-]+", r"\1••••", text)
+    # Keep these field rules aligned with maskLog; shared synthetic fixtures test both.
+    fields = (r"(?:[a-z_]*token|api[_-]?key|sign(?:ature)?|secret|password|passwd|"
+              r"endpoint(?:[_-]?(?:id|uuid))?|device[_-]?(?:id|uuid)|(?:passport[_-]?)?uid|puid|"
+              r"(?:account|user|client|session|request)[_-]?id|serial(?:[_-]?(?:number|no))?|"
+              r"wifi_hash|ssid|bssid)")
+    text = re.sub(rf"""(?im)(\b{fields}["']?\s*[:=]\s*)(["'])((?:\\(?:[^\r\n]|$)|(?!\2)[^\\\r\n])*)(\2|$)""",
+                  lambda m: m[1] + m[2] + "••••" + m[4], text)
+    text = re.sub(rf"""(?i)(\b{fields}["']?\s*[:=]\s*)(?!["'•])[^\s"'&,;<>{{}}\[\]]+""", r"\1••••", text)
+    text = re.sub(r"(?i)(\bonendpoint(?:added|removed|updated)\s+(?:0x[0-9a-f]+\s*,\s*)?)(?!0x)[a-z0-9_-]{6,}", r"\1••••", text)
+    text = re.sub(r"(?i)(\bendpoint\s+(?:added|removed|updated)\s+)(?!0x)[a-z0-9_-]{6,}", r"\1••••", text)
+    text = re.sub(r"(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", "••••", text)
+    text = re.sub(r"(?im)^.*endpoint.*$", lambda m: re.sub(r"(?i)\b[0-9a-f]{24,}\b", "••••", m[0]), text)
+    text = re.sub(r"(?i)(\baccount[ :=]+)\d{5,}", r"\1••••", text)
     # IPv4 — но не версия прошивки вида 0.369.1.50.4794…: соседних цифр и точек быть не должно
     text = re.sub(r"(?<![\d.])(?!127\.0\.0\.1(?![\d.]))(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)", "x.x.x.x", text)
     text = re.sub(r"(?i)\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b", "••:••:••:••:••:••", text)

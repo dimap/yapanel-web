@@ -26,8 +26,21 @@ from pathlib import Path
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/126.0 Safari/537.36")
 # OAuth-клиенты: мобильный Паспорт (сессия → x-token) и Яндекс Музыка (x-token → токен для Glagol).
-PASSPORT_CLIENT = ("c0ebe342af7d48fbbbfcf2d2eedb8f9e", "ad0a908f0aa341a182a37ecd75bc319e")
-MUSIC_CLIENT = ("23cabbbdc6cd418abb4b39c32c41195d", "53bc75238f0c4d08a118e51fe9203300")
+try:
+    from config import get_config
+    _cfg_glagol = get_config().glagol
+except ImportError:
+    _cfg_glagol = None
+
+if _cfg_glagol:
+    PASSPORT_CLIENT = (_cfg_glagol.passport_client_id, _cfg_glagol.passport_client_secret)
+    MUSIC_CLIENT = (_cfg_glagol.music_client_id, _cfg_glagol.music_client_secret)
+    YASTATION_GLAGOL_PORT = _cfg_glagol.port
+else:
+    PASSPORT_CLIENT = ("c0ebe342af7d48fbbbfcf2d2eedb8f9e", "ad0a908f0aa341a182a37ecd75bc319e")
+    MUSIC_CLIENT = ("23cabbbdc6cd418abb4b39c32c41195d", "53bc75238f0c4d08a118e51fe9203300")
+    YASTATION_GLAGOL_PORT = 1961
+
 OAUTH_URL = f"https://oauth.yandex.ru/authorize?response_type=token&client_id={MUSIC_CLIENT[0]}"
 
 
@@ -243,8 +256,10 @@ class WebSocket:
 class Glagol:
     """Держит соединение с колонкой, хранит последнее состояние и отправляет команды."""
 
-    def __init__(self, auth, host, device_id, platform, port=1961):
-        self.auth, self.host, self.device_id, self.platform, self.port = auth, host, device_id, platform, port
+    def __init__(self, auth, host, device_id, platform, port=None, config=None):
+        self.config = config or (_cfg_glagol if _cfg_glagol else None)
+        effective_port = port if port is not None else (self.config.port if self.config else YASTATION_GLAGOL_PORT)
+        self.auth, self.host, self.device_id, self.platform, self.port = auth, host, device_id, platform, effective_port
         self.ws = None
         self.token = None
         self.state = None          # последний «state» от колонки
@@ -259,7 +274,9 @@ class Glagol:
 
     def _conversation_token(self):
         q = urllib.parse.urlencode({"device_id": self.device_id, "platform": self.platform})
-        req = urllib.request.Request(f"https://quasar.yandex.net/glagol/token?{q}",
+        cfg = getattr(self, "config", None)
+        token_url = cfg.quasar_token_url if cfg else "https://quasar.yandex.net/glagol/token"
+        req = urllib.request.Request(f"{token_url}?{q}",
                                      headers={"Authorization": f"OAuth {self.auth.music_token}", "User-Agent": UA})
         try:
             with urllib.request.urlopen(req, timeout=15) as r:
@@ -284,6 +301,9 @@ class Glagol:
 
     def _run(self):
         fails = 0
+        cfg = getattr(self, "config", None)
+        sock_to = cfg.sock_timeout if cfg else 30
+        ping_int = cfg.ping_interval if cfg else 20.0
         while True:
             if not self.auth.music_token or not self.host or not self.device_id:
                 self.error = None
@@ -293,7 +313,7 @@ class Glagol:
             try:
                 self.token = self._conversation_token()
                 ws = WebSocket(self.host, self.port)
-                ws.sock.settimeout(30)
+                ws.sock.settimeout(sock_to)
                 self.ws, self.error, fails = ws, None, 0
                 ws.send(self._envelope({"command": "softwareVersion"}))
                 last_ping = time.time()
@@ -309,7 +329,7 @@ class Glagol:
                         if rid in self.waiters:
                             self.waiters[rid]["resp"] = msg
                             self.waiters[rid]["event"].set()
-                    if time.time() - last_ping > 20:   # не даём соединению заснуть
+                    if time.time() - last_ping > ping_int:   # не даём соединению заснуть
                         ws.send(self._envelope({"command": "ping"}))
                         last_ping = time.time()
                     if not self.auth.music_token:
@@ -327,7 +347,9 @@ class Glagol:
             self.wake.wait(min(60, 3 * fails))
             self.wake.clear()
 
-    def send(self, payload, timeout=6):
+    def send(self, payload, timeout=None):
+        cfg = getattr(self, "config", None)
+        effective_timeout = timeout if timeout is not None else (cfg.cmd_timeout if cfg else 6.0)
         ws = self.ws
         if not ws:
             raise AuthError(self.error or "нет соединения с колонкой по Glagol")
@@ -335,7 +357,7 @@ class Glagol:
         w = self.waiters[rid] = {"event": threading.Event(), "resp": None}
         try:
             ws.send(self._envelope(payload, rid))
-            w["event"].wait(timeout)
+            w["event"].wait(effective_timeout)
             resp = w["resp"] or {}
             return {"status": resp.get("status", "timeout")}
         finally:
@@ -350,9 +372,9 @@ class Glagol:
 class YandexMusic:
     """API Яндекс Музыки (api.music.yandex.net) с тем же токеном, что и Glagol: подробности о треке,
     текст песни, очередь, похожие треки, исполнитель, лайки. Ответы приводим к компактному виду."""
-    API = "https://api.music.yandex.net"
+    API = _cfg_glagol.music_api_base if _cfg_glagol else "https://api.music.yandex.net"
     # Ключ подписи запросов к текстам (как в библиотеке yandex-music-api).
-    LYRICS_KEY = b"p93jhgh689SBReK6ghtw62"
+    LYRICS_KEY = _cfg_glagol.lyrics_key if _cfg_glagol else b"p93jhgh689SBReK6ghtw62"
 
     def __init__(self, auth):
         self.auth = auth
@@ -434,7 +456,8 @@ class YandexMusic:
     def _lrclib(title, artist, album, duration):
         """LRCLIB (lrclib.net) — открытая база текстов, часто с привязкой ко времени. Без ключей."""
         def get(path, **q):
-            url = "https://lrclib.net/api" + path + "?" + urllib.parse.urlencode(q)
+            lrclib_base = _cfg_glagol.lrclib_api_base if _cfg_glagol else "https://lrclib.net/api"
+            url = lrclib_base + path + "?" + urllib.parse.urlencode(q)
             req = urllib.request.Request(url, headers={"User-Agent": "yapanel-web (local panel)"})
             try:
                 with urllib.request.urlopen(req, timeout=12) as r:

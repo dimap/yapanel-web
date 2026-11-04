@@ -26,8 +26,9 @@ window.addEventListener('focus',()=>{dirty=true;});
 window.addEventListener('pageshow',()=>{dirty=true;});
 const scene=new T.Scene(),camera=new T.PerspectiveCamera(30,1,1,2500),controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;controls.enablePan=false;controls.minDistance=mini?135:240;controls.maxDistance=mini?520:820;controls.maxPolarAngle=Math.PI*.91;controls.autoRotateSpeed=.7;
-// На телефоне модель не крутится: палец по ней должен прокручивать страницу
-if(matchMedia('(hover: none) and (pointer: coarse)').matches){controls.enabled=false;renderer.domElement.style.touchAction='pan-y';}
+// Сенсорное вращение и масштабирование модели на телефонах и планшетах
+controls.enabled=true;
+renderer.domElement.style.touchAction='none';
 const group=new T.Group();scene.add(group);
 scene.add(new T.HemisphereLight(0xf1f4ff,0x45404b,2));
 const keyLight=new T.DirectionalLight(0xfff5e9,3.2);keyLight.position.set(-140,220,180);scene.add(keyLight);

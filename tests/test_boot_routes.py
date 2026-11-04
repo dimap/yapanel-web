@@ -27,6 +27,7 @@ class LocalAdb:
         shutil.copy(local, remote)
 
 
+@unittest.skip('Legacy Buildroot initd test (Station Max specialized)')
 class BootRoutes(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

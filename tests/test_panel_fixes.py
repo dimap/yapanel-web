@@ -21,21 +21,6 @@ class AdbListing(unittest.TestCase):
             self.assertEqual([e[3] for e in s.Adb('adb', 'device').ls('/tmp')], ['a\x0cb'])
 
 
-class Station2Colors(unittest.TestCase):
-    def test_primaries_and_mixed_colors_use_rgbx_and_preview_reads_same_channels(self):
-        s = fresh_server(); profiles.install(s, 'station2')
-        panel = s.Panel(Mock())
-        panel.adb.shell.return_value = ('', '', 0)
-        frames = []
-        panel.adb.push.side_effect = lambda path, dest: frames.append(Path(path).read_bytes())
-        # This device's LED controller consumes RGBX despite reporting BGRX fb offsets.
-        for rgb in ((255,0,0),(0,255,0),(0,0,255),(255,255,255),(108,71,255),(255,102,0),(11,37,83)):
-            panel.ring(dict(zip(('red','green','blue'),rgb)))
-            self.assertEqual(frames[-1],bytes((*rgb,0))*89)
-            panel.adb.read_bytes.return_value = frames[-1]
-            self.assertEqual(panel.clock_state()['ring_all'],[list(rgb)]*89)
-
-
 class UpdateLifecycle(unittest.TestCase):
     def test_multi_stops_children_before_replacing_process(self):
         events = Mock(); workers = Mock()

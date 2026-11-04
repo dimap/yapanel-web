@@ -120,7 +120,11 @@ class AgentStore(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, patch.object(server, "AGENT_FILE", Path(td) / ".agent.json"):
             p = server.Panel(server.Adb("adb", "10.0.0.5:5555"))
             p._agent_save({"10.0.0.5:5555": {"token": "x", "cert": "c"}, "10.0.0.6:5555": {"token": "y", "cert": "c"}})
-            self.assertEqual(os.stat(server.AGENT_FILE).st_mode & 0o777, 0o600)
+            mode = os.stat(server.AGENT_FILE).st_mode & 0o777
+            if sys.platform.startswith("win"):
+                self.assertIn(mode, (0o600, 0o666))
+            else:
+                self.assertEqual(mode, 0o600)
             p._agent_forget()
             self.assertEqual(list(p._agent_store()), ["10.0.0.6:5555"])
             self.assertIsNone(p.adb.agent)

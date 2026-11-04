@@ -17,10 +17,16 @@ import threading
 import time
 from pathlib import Path
 
-COOKIE = "yl2_session"
-SESSION_TTL = 90 * 24 * 3600       # продлевается при каждом заходе
-PBKDF2_ITER = 240_000
-MIN_PASSWORD = 4
+try:
+    from config import get_config
+    _cfg_sec = get_config().security
+except ImportError:
+    _cfg_sec = None
+
+COOKIE = _cfg_sec.cookie_name if _cfg_sec else "yl2_session"
+SESSION_TTL = _cfg_sec.session_ttl_seconds if _cfg_sec else 90 * 24 * 3600       # продлевается при каждом заходе
+PBKDF2_ITER = _cfg_sec.pbkdf2_iter if _cfg_sec else 240_000
+MIN_PASSWORD = _cfg_sec.min_password_len if _cfg_sec else 4
 
 
 class AccessError(Exception):
@@ -38,7 +44,7 @@ class PanelAccess:
         self.fails = {}            # ip → (число неудач подряд, время последней)
         self.data = {}
         try:
-            self.data = json.loads(path.read_text())
+            self.data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pass
 
@@ -50,7 +56,7 @@ class PanelAccess:
     def _save(self):
         tmp = self.path.with_suffix(".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=1)
         os.replace(tmp, self.path)
 
@@ -99,7 +105,7 @@ class PanelAccess:
                 raise AccessError("Пароль не задан")
             if not self._check_password(password or ""):
                 self.fails[ip] = (n + 1, time.time())
-                time.sleep(0.7)                  # медленнее перебор
+                time.sleep(_cfg_sec.login_throttle_delay if _cfg_sec else 0.7)                  # медленнее перебор
                 left = self._lock_left(n + 1, time.time())
                 raise AccessError("Неверный пароль" + (f". Следующая попытка через {left} с" if left else ""))
             self.fails.pop(ip, None)
@@ -112,7 +118,8 @@ class PanelAccess:
         """После 5 неудач подряд — пауза 30 с, дальше удваивается (до 15 мин)."""
         if n < 5:
             return 0
-        pause = min(900, 30 * 2 ** (n - 5))
+        max_pause = _cfg_sec.rate_limit_max_pause if _cfg_sec else 900
+        pause = min(max_pause, 30 * 2 ** (n - 5))
         return max(0, int(t + pause - time.time()))
 
     def logout(self, token):
@@ -126,7 +133,7 @@ class PanelAccess:
         """Задать/сменить пароль. Все остальные сессии сбрасываются; возвращает токен новой сессии."""
         with self.lock:
             if self.enabled and not self._check_password(current or ""):
-                time.sleep(0.7)
+                time.sleep(_cfg_sec.login_throttle_delay if _cfg_sec else 0.7)
                 raise AccessError("Текущий пароль неверный")
             if len(new or "") < MIN_PASSWORD:
                 raise AccessError(f"Пароль — не короче {MIN_PASSWORD} символов")
@@ -140,7 +147,7 @@ class PanelAccess:
     def disable(self, current):
         with self.lock:
             if not self._check_password(current or ""):
-                time.sleep(0.7)
+                time.sleep(_cfg_sec.login_throttle_delay if _cfg_sec else 0.7)
                 raise AccessError("Текущий пароль неверный")
             self.data = {}
             self._save()
@@ -160,27 +167,40 @@ class PanelAccess:
 
 
 # ---------- HTTPS ----------
+def get_host_ips():
+    """Retrieve host IP addresses using hostname -I with robust socket fallback on Windows."""
+    ips = {"127.0.0.1"}
+    try:
+        res = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0 and res.stdout:
+            ips.update(a for a in res.stdout.split() if ":" not in a)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:  # адрес маршрута по умолчанию
+        probe_target = _cfg_sec.route_probe_ip if _cfg_sec else "192.0.2.1"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((probe_target, 9))
+            ips.add(s.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(ips, key=lambda a: (ipaddress.ip_address(a).version, ipaddress.ip_address(a)))
+
+
 def local_names():
     """Имена и адреса, по которым к панели могут прийти из сети: идут в SAN сертификата."""
     host = socket.gethostname()
     names = {"localhost", host, f"{host.split('.')[0]}.local"}
-    ips = {"127.0.0.1"}
-    try:
-        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=3).stdout
-        ips.update(a for a in out.split() if ":" not in a)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    try:  # адрес маршрута по умолчанию
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("192.0.2.1", 9))
-            ips.add(s.getsockname()[0])
-    except OSError:
-        pass
-    return sorted(names), sorted(ips, key=lambda a: ipaddress.ip_address(a))
+    ips = get_host_ips()
+    return sorted(names), ips
 
 
 def find_openssl():
-    explicit = os.environ.get("PANEL_OPENSSL")
+    try:
+        from config import get_config
+        cfg_openssl = get_config().server.openssl_bin
+    except ImportError:
+        cfg_openssl = None
+    explicit = cfg_openssl or os.environ.get("PANEL_OPENSSL")
     if explicit:
         if Path(explicit).is_file():
             return explicit
@@ -225,9 +245,12 @@ def ensure_certs(tls_dir: Path):
     key, crt, sans_file = tls_dir / "server.key", tls_dir / "server.crt", tls_dir / "server.sans"
     names, ips = local_names()
     # Every SAN must fit the CA constraints, including on hosts with VPN/public interfaces.
-    networks = [ipaddress.ip_network(n) for n in ('127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')]
+    allowed = _cfg_sec.allowed_subnets if _cfg_sec else ('127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')
+    networks = [ipaddress.ip_network(n) for n in allowed]
     ips = [a for a in ips if any(ipaddress.ip_address(a) in n for n in networks)]
     sans = ",".join([f"DNS:{n}" for n in names] + [f"IP:{a}" for a in ips])
+    ca_days = str(_cfg_sec.ca_validity_days if _cfg_sec else 3650)
+    cert_days = str(_cfg_sec.cert_validity_days if _cfg_sec else 397)
     if not ca_crt.exists() or not ca_key.exists():
         permitted = ["IP:127.0.0.0/255.0.0.0", "IP:10.0.0.0/255.0.0.0", "IP:172.16.0.0/255.240.0.0",
                      "IP:192.168.0.0/255.255.0.0", "DNS:localhost", "DNS:local"] + [f"DNS:{n}" for n in names]
@@ -240,12 +263,15 @@ def ensure_certs(tls_dir: Path):
             cnf = f.name
         try:
             _openssl("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-                     "-keyout", str(ca_key), "-out", str(ca_crt), "-days", "3650", "-config", cnf, cwd=tls_dir)
+                     "-keyout", str(ca_key), "-out", str(ca_crt), "-days", ca_days, "-config", cnf, cwd=tls_dir)
         finally:
             os.unlink(cnf)
-        os.chmod(ca_key, 0o600)
+        try:
+            os.chmod(ca_key, 0o600)
+        except OSError:
+            pass
         crt.unlink(missing_ok=True)
-    if crt.exists() and key.exists() and sans_file.exists() and sans_file.read_text() == sans:
+    if crt.exists() and key.exists() and sans_file.exists() and sans_file.read_text(encoding="utf-8") == sans:
         return crt, key
     with tempfile.NamedTemporaryFile("w", suffix=".cnf", delete=False) as f:
         f.write("basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n"
@@ -257,10 +283,13 @@ def ensure_certs(tls_dir: Path):
                  "-out", str(csr), "-subj", "/CN=" + socket.gethostname()[:64], cwd=tls_dir)
         # 397 дней — дольше браузеры (Safari, Chrome) не принимают
         _openssl("x509", "-req", "-in", str(csr), "-CA", str(ca_crt), "-CAkey", str(ca_key), "-CAcreateserial",
-                 "-out", str(crt), "-days", "397", "-extfile", ext, cwd=tls_dir)
+                 "-out", str(crt), "-days", cert_days, "-extfile", ext, cwd=tls_dir)
     finally:
         os.unlink(ext)
         csr.unlink(missing_ok=True)
-    os.chmod(key, 0o600)
-    sans_file.write_text(sans)
+    try:
+        os.chmod(key, 0o600)
+    except OSError:
+        pass
+    sans_file.write_text(sans, encoding="utf-8")
     return crt, key

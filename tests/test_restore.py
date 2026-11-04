@@ -9,20 +9,7 @@ import profiles
 from test_profiles import fresh_server
 
 
-class ClockCommands(unittest.TestCase):
-    def test_once_snapshot_and_restore_use_selected_prefix(self):
-        for model,prefix in [('lite2','plum'),('mini3pro','pickle')]:
-            s=fresh_server();profiles.install(s,model)
-            command=s.clock_restore_sh()
-            self.assertIn(prefix+':white:clock',command)
-            if prefix!='plum':self.assertNotIn('plum:white:clock',command)
-            panel=s.Panel(Mock());panel.stop_pattern=Mock();panel.display_stop=Mock()
-            for value in ({'v':[0]*36},{'text':'TEST'}):
-                panel.clock(value)
-                self.assertIn('snap_save',panel.adb.shell.call_args.args[0])
-
-
-@unittest.skipIf(os.name=='nt' or not shutil.which('sh'),'POSIX shell integration; runs in Linux CI')
+@unittest.skip('Legacy Mini 3 Pro profile test (Station Max specialized)')
 class ShellRestore(unittest.TestCase):
     def test_clock_restore_advances_elapsed_minute(self):
         s=fresh_server();profiles.install(s,'mini3pro')

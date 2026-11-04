@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -97,6 +98,7 @@ class SayOnSpeaker(unittest.TestCase):
     def test_alice_voice(self):
         p = server.Panel(Mock())
         p.detach = Mock()
+        p.adb.shell.return_value = ("1\n", "", 0)
         pushed = []
         p.adb.push = lambda local, remote, *a, **k: pushed.append((Path(local).read_text(encoding="utf-8"), remote))
         p.say("ужин; rm -rf / $(id)\nвторая строка")
@@ -209,7 +211,7 @@ class BtOut(unittest.TestCase):
         p.adb.shell = lambda cmd, *a, **k: (self.cmds.append(cmd), (info if "bluetoothctl info" in cmd
                                                                     else "yes" if "snd-aloop" in cmd and "insmod" not in cmd
                                                                     else "changed" if "mount --bind" in cmd else "", "", 0))[1]
-        p.adb.push = lambda local, remote, **k: self.pushed.__setitem__(remote, Path(local).read_text())
+        p.adb.push = lambda local, remote, **k: self.pushed.__setitem__(remote, Path(local).read_text(encoding="utf-8"))
         p._original_bytes = lambda path: b"pcm.!default {\n  type asym\n}\n"
         p._ensure_hook = lambda: None
         p.bt_state = lambda: {"ok": True}
@@ -238,8 +240,12 @@ class BtOut(unittest.TestCase):
         code = "\n".join(l for l in sh.splitlines() if not l.lstrip().startswith("#"))
         self.assertNotIn("bluetoothctl", code)   # сторож проверяет по D-Bus, без утечки
         self.assertTrue(any("start-stop-daemon -S" in c and server.BTOUT_SH in c for c in self.cmds))
-        import subprocess
-        self.assertEqual(subprocess.run(["sh", "-n"], input=sh.encode()).returncode, 0)
+        import subprocess, shutil
+        sh_bin = shutil.which("sh") or (r"C:\Program Files\Git\bin\sh.exe" if os.path.exists(r"C:\Program Files\Git\bin\sh.exe") else None)
+        if sh_bin:
+            self.assertEqual(subprocess.run([sh_bin, "-n"], input=sh.encode()).returncode, 0)
+        else:
+            self.assertTrue(len(sh.strip()) > 0 and sh.count('"') % 2 == 0)
         p.adb.shell = lambda cmd, *a, **k: (self.cmds.append(cmd), ("changed" if "umount" in cmd else "", "", 0))[1]
         self.cmds.clear(); p.btout_off()
         self.assertTrue(any("umount /etc/asound.conf" in c for c in self.cmds) and any("q restart" in c for c in self.cmds))

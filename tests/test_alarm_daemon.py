@@ -35,7 +35,7 @@ class AlarmDaemon(unittest.TestCase):
 
     def shell(self, command):
         result = subprocess.run(['sh', '-c', command], capture_output=True, text=True,
-                                env={**os.environ, 'PATH': str(self.root) + ':' + os.environ['PATH']},
+                                env={**os.environ, 'PATH': str(self.root) + os.pathsep + os.environ['PATH']},
                                 timeout=5)
         if result.returncode:
             raise server.AdbError(result.stderr)

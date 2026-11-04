@@ -1,6 +1,7 @@
 import hashlib
 import io
 import os
+import shutil
 import ssl
 import subprocess
 import sys
@@ -84,6 +85,7 @@ class Services(unittest.TestCase):
         self.assertFalse(svcs[0]["boot"])
         self.assertEqual(svcs[0]["exec"], ["bin/luna", "--data-dir", "${YAM_VAR}"])
 
+    @unittest.skipUnless(shutil.which('sh'), 'POSIX shell required; runs in Linux CI')
     def test_launcher_runs_with_yam_env_and_gives_up(self):
         p = panel(self.shell)
         svc = p._yam2_services_raw()[0]

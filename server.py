@@ -16,6 +16,11 @@ import json
 import math
 import os
 import platform
+
+if os.path.exists('/data/etc/ssl/cert.pem') and 'SSL_CERT_FILE' not in os.environ:
+    os.environ['SSL_CERT_FILE'] = '/data/etc/ssl/cert.pem'
+if os.path.exists('/data/etc/ssl/cert.pem') and 'REQUESTS_CA_BUNDLE' not in os.environ:
+    os.environ['REQUESTS_CA_BUNDLE'] = '/data/etc/ssl/cert.pem'
 import random
 import re
 import shlex
@@ -43,6 +48,8 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 import access
 import agent as agentlink
 import glagol
+from config import get_config, PanelConfig, set_config
+_cfg = get_config()
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -50,12 +57,12 @@ MIME = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-
         ".stl": "model/stl", ".png": "image/png", ".svg": "image/svg+xml",
         ".webmanifest": "application/manifest+json"}
 
-QUASAR = "/system/vendor/quasar"
+QUASAR = _cfg.remote.quasar_dir
 QRUN = f"LD_LIBRARY_PATH={QUASAR}/libs {QUASAR}"
 SOUNDS_DIR = f"{QUASAR}/sounds"
 PATTERNS = {"ring": f"{QUASAR}/ledpatterns/oknix", "clock": f"{QUASAR}/ledpatterns/clock"}
 LOGS_DIR = "/data/quasar/daemons_logs"
-LEDS = "/sys/class/leds"
+LEDS = _cfg.remote.sysfs_leds
 
 # Дисплей часов: 4 позиции × сегменты A–H, затем дополнительные символы.
 # Порядок дополнительных байтов в кадре — по проверкам заставки на колонке: значок градуса, верхняя точка
@@ -63,7 +70,7 @@ LEDS = "/sys/class/leds"
 CLOCK_EXTRAS = ["DEGREE", "DH", "DL", "DM"]
 CLOCK_LEDS = [f"{s}{p}" for p in range(4) for s in "ABCDEFGH"] + CLOCK_EXTRAS
 CLOCK_FRAME = 1 + len(CLOCK_LEDS) + 2  # флаг, яркости, длительность (мс, big-endian)
-WEB_DIR = "/data/quasar/webpanel"
+WEB_DIR = _cfg.remote.web_dir
 PLAY_LOG = "/tmp/webpanel_play.log"   # stderr aplay: по нему видно, почему звук не заиграл
 BOOT_TARGET = f"{QUASAR}/ledpatterns/clock/boot.binscled.zst"
 BOOT_CUSTOM = f"{WEB_DIR}/boot.binscled.zst"
@@ -85,7 +92,7 @@ OVR_DIR = f"{WEB_DIR}/override"
 MY_ANIM_DIR = f"{WEB_DIR}/anims"
 MY_ANIM_NAME = re.compile(r"[\w-]{1,40}")
 # YAM (github.com/nyakokitsu/yam): менеджер пакетов для Станций. На колонке — демон yamd с HTTP API на :8099.
-YAM_DIR = "/data/quazar/yam"
+YAM_DIR = _cfg.remote.yam_dir
 YAMD = f"{YAM_DIR}/bin/yamd"
 YAM_PLUGINS = f"{YAM_DIR}/data/plugins"
 # Бинарникам пакетов — право на запуск: некоторые .yap (например, fastfetch 2.70.0) собраны с файлом 0666,
@@ -97,15 +104,15 @@ YAM_FIX_EXEC = (f"for t in {YAM_PLUGINS}/*/plugin.toml; do [ -f \"$t\" ] || cont
 # В консоли панели бинарники пакетов доступны по имени (fastfetch, …).
 YAM_PATH = (f"for d in {YAM_PLUGINS}/*/*/; do [ -d \"$d\" ] && PATH=\"$PATH:${{d%/}}\"; done; export PATH"
             f"; [ -d /data/yam/bin ] && PATH=\"$PATH:/data/yam/bin\"; export PATH; ")
-YAM_PORT = 8099
-YAM_REGISTRY = "https://raw.githubusercontent.com/nyakokitsu/yapkg/registry/index.json"
+YAM_PORT = _cfg.remote.yam_port
+YAM_REGISTRY = _cfg.remote.yam_registry_url
 # yam 2 (релизы yam-v0.2+): уже не демон, а пакетный менеджер — команда yam на самой колонке. Ставим как их
 # install.sh: бинарник, профиль платформы и обёртка yam-run (она задаёт платформу и корень) в /data/yam.
-YAM2_ROOT = "/data/yam"
+YAM2_ROOT = _cfg.remote.yam2_root
 YAM2 = f"{YAM2_ROOT}/bin/yam"
 YAM2_RUN = f"{YAM2_ROOT}/bin/yam-run"
 # Официальный каталог и его ключ — из docs/QUICKSTART.md yam. Ключ проверяет подписи индексов на колонке.
-YAM2_REGISTRY = ("official", "https://repo.yse.wtf/v2", "ed25519:5Rz8F47uftWVU5kLgWYhprkEZ4rpP2kecUge/a7KQas=")
+YAM2_REGISTRY = ("official", _cfg.remote.yam2_registry_url, "ed25519:5Rz8F47uftWVU5kLgWYhprkEZ4rpP2kecUge/a7KQas=")
 # Службы пакетов yam только описывает, а запускать их — дело хоста; хост тут панель. На каждую службу — свой
 # скрипт запуска yam2/<пакет~служба>.sh, файл yam2/boot/<то же> — «запускать при загрузке» (его читает хук).
 YAM2_SVC_DIR = f"{WEB_DIR}/yam2"
@@ -118,10 +125,10 @@ YAM2_KILL = ("g=$(awk '{print $5}' /proc/$p/stat 2>/dev/null); "
              "then kill -TERM -- -$g 2>/dev/null; else kill $p; fi")
 # Версия панели — в файле VERSION; сборка релиза проверяет, что метка vX.Y.Z с ним совпадает.
 try:
-    VERSION = (Path(__file__).resolve().parent / "VERSION").read_text().strip()
+    VERSION = (Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8").strip()
 except OSError:
     VERSION = "0.0.0"
-REPO = "dimap/yapanel-web"
+REPO = _cfg.server.github_repo
 LED_PREFIX = "plum"
 # Каталог сегментов часов, если он не {LEDS}/{LED_PREFIX}:white:clock: у Мини 2 сегменты называются иначе,
 # и профиль раскладывает их по именам Лайт 2 ссылками в /tmp (см. profiles.py).
@@ -132,23 +139,30 @@ def clock_path():
     return CLOCK_PATH or f"{LEDS}/{LED_PREFIX}:white:clock"
 
 
-GLAGOL_PLATFORM = "plum"   # так Лайт 2 называет себя в запросах check_updates
+GLAGOL_PLATFORM = "yandexstation_2"   # Станция Макс (yandexstation_2)
 # Где панель хранит своё (токен Яндекса, пароль, сертификаты, история графиков). По умолчанию — рядом с server.py;
 # --data-dir / PANEL_DATA_DIR меняет это (в Docker — том /data). Пути пересчитываются в set_data_dir().
 DATA_DIR = ROOT
+_DATA_DIR_LOCK = threading.Lock()
+DATA_DIR_LOCK = _DATA_DIR_LOCK
 
 
 def set_data_dir(path):
     global DATA_DIR, AUTH_FILE, PANEL_AUTH_FILE, METRICS_FILE, TLS_DIR, SETTINGS_FILE, AGENT_FILE
-    DATA_DIR = Path(path).resolve()
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    AUTH_FILE = DATA_DIR / ".yandex_auth.json"
-    PANEL_AUTH_FILE = DATA_DIR / ".panel_auth.json"
-    METRICS_FILE = DATA_DIR / ".metrics.json"
-    TLS_DIR = DATA_DIR / ".tls"
-    SETTINGS_FILE = DATA_DIR / ".panel_settings.json"
-    AGENT_FILE = DATA_DIR / ".agent.json"
-    JOURNAL.open(DATA_DIR / ".panel_journal.jsonl")
+    with _DATA_DIR_LOCK:
+        p = Path(path).resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        DATA_DIR = p
+        AUTH_FILE = p / ".yandex_auth.json"
+        PANEL_AUTH_FILE = p / ".panel_auth.json"
+        METRICS_FILE = p / ".metrics.json"
+        TLS_DIR = p / ".tls"
+        SETTINGS_FILE = p / ".panel_settings.json"
+        AGENT_FILE = p / ".agent.json"
+        JOURNAL.open(p / ".panel_journal.jsonl")
+        cfg = get_config()
+        cfg.server.data_dir = p
+        cfg.resolve_paths()
 
 
 def redact(text):
@@ -217,7 +231,7 @@ class Journal:
 
 
 JOURNAL = Journal()
-PANEL_PROFILE = ("lite2", False)   # (модель, определена ли сама) — ставит main()
+PANEL_PROFILE = ("max", False)   # (модель, определена ли сама) — ставит main()
 set_data_dir(ROOT)
 # Без пароля доступны только оболочка страницы и вход; всё остальное — после входа.
 PUBLIC_PATHS = {"/", "/index.html", "/manifest.webmanifest", "/sw.js", "/ca.crt", "/api/panel-auth",
@@ -241,7 +255,7 @@ MUSIC_COMMANDS = {"play": (), "stop": (), "next": (), "prev": (), "rewind": ("po
 YAMD_CMD = f"exec {YAMD} --data-dir {YAM_DIR}/data >{YAM_DIR}/yamd.log 2>&1"
 YAM_AUTOSTART = f"{WEB_DIR}/yamd_autostart"  # наш флаг: хук запускает yamd при загрузке
 # Будильник: sh-демон на колонке (device/alarmd.sh), конфиг и звуки — рядом.
-ALARM_DIR = f"{WEB_DIR}/alarm"
+ALARM_DIR = _cfg.remote.alarm_dir
 ALARM_CONF = f"{ALARM_DIR}/alarms.conf"
 ALARMD = f"{ALARM_DIR}/alarmd.sh"
 ALARM_SD = "/tmp/webpanel_alarmd.sd"
@@ -256,7 +270,7 @@ SCENES_LOG = f"{ALARM_DIR}/scenes.log"
 
 
 def alarm_script():
-    """Скрипт будильника для колонки — с \\n, даже если git на Windows переделал переводы строк."""
+    """Скрипт будильника для колонки — с \n, даже если git на Windows переделал переводы строк."""
     return ALARM_SRC.read_bytes().replace(b"\r\n", b"\n")
 ALARM_MODES = ("sound", "wave", "show", "music", "text")
 ALARM_DEFAULT_SOUND = "common/timer.wav"
@@ -265,7 +279,7 @@ ALARM_DEFAULT_SOUND = "common/timer.wav"
 HOSTS_TARGET = "/etc/hosts"
 HOSTS_CUSTOM = f"{WEB_DIR}/hosts"
 HOSTS_MARK = "# webpanel: блокировка аналитики Яндекса"
-ANALYTICS_HOSTS = ("clck.yandex.net", "report.appmetrica.yandex.net", "appmetrica.yandex.net", "metrica.yandex.net")
+ANALYTICS_HOSTS = _cfg.server.analytics_hosts
 # Неотправленные события телеметрия копит здесь (до 1 МБ) и отправит, как только адреса откроются. Телеметрия
 # читает файл при старте и дописывает его при выходе, поэтому сначала kill -9, потом удаление; launcher
 # перезапускает её через секунду уже с пустой очередью. Остальное (fluent-bit, teleme3d) лежит в /tmp.
@@ -275,7 +289,7 @@ ANALYTICS_PURGE = ("p=$(ps | grep '[m]aind --telemetry' | awk '{print $1}'); "
                    f"[ -n \"$p\" ] && kill -9 $p; rm -f {METRICA_BATCH}")
 # Свой голосовой помощник (device/assistant): «Алиса, спроси GPT …» уходит выбранной модели. Программа на Go
 # работает на самой колонке; панель кладёт её и config.json, проверяет текстом и читает состояние из /tmp.
-ASSIST_DIR = f"{WEB_DIR}/assistant"
+ASSIST_DIR = _cfg.remote.assist_dir
 ASSISTD = f"{ASSIST_DIR}/assistantd"
 ASSIST_CONF = f"{ASSIST_DIR}/config.json"
 ASSIST_STATUS = "/tmp/webpanel_assistant.json"
@@ -286,7 +300,7 @@ ASSIST_SRC = Path(__file__).resolve().parent / "device" / "assistant"
 # Живой спектр с колонки: маленькая программа читает захват кодека (то, что реально играет усилитель,
 # а не микрофон — микрофон остаётся Алисе) и раз в 50 мс пишет 4 полосы в /tmp. Панель читает их тем же
 # потоком, что и светодиоды. Пока экспериментально: после перезагрузки колонки не поднимается сам.
-VIZ_DIR = f"{WEB_DIR}/viz"
+VIZ_DIR = _cfg.remote.viz_dir
 VIZD = f"{VIZ_DIR}/vizd"
 VIZ_STATUS = "/tmp/webpanel_viz.json"
 VIZ_SD = "/tmp/webpanel_viz.sd"
@@ -301,11 +315,11 @@ VIZ_BT = "/tmp/webpanel_viz.bt"   # идёт Bluetooth-переливание: �
 WAKE_PKG = "/data/yam/pkgs/tangenx/wakeword"
 WAKE_SHARE = "/data/yam/share/tangenx.wakeword"
 WAKE_BIN = "/data/yam/bin/wakeword"
-WAKE_DATA = "/data/wakeword"
+WAKE_DATA = _cfg.remote.wake_data_dir
 WAKE_PID = "/tmp/wakeword.pid"
 WAKE_LOG = "/tmp/wakeword.log"
 WAKE_AUTOSTART = f"{WEB_DIR}/wakeword.autostart"   # маркер: поднимать демон хуком панели после загрузки
-WAKE_PORT = 8780
+WAKE_PORT = _cfg.remote.wake_port
 # targets из yam.yaml пакета: Макс (yandexstation_2), Стрит и Android-Станция не поддерживаются.
 # что известно про пакет: README плагина + живая проверка на Лайт 2
 WAKE_SUPPORT = {
@@ -708,6 +722,11 @@ ZSTD_HELP = "для заставки и анимаций часов нужен P
 
 def zstd_decompress(data):
     try:
+        import zstandard
+        return zstandard.ZstdDecompressor().decompress(data)
+    except (ImportError, Exception):
+        pass
+    try:
         from compression import zstd
         return zstd.decompress(data)
     except ImportError:
@@ -719,7 +738,11 @@ def zstd_decompress(data):
 
 
 def zstd_compress(data):
-    # Как в файлах Яндекса: потоковый кадр без размера содержимого и без контрольной суммы.
+    try:
+        import zstandard
+        return zstandard.ZstdCompressor(level=19).compress(data)
+    except (ImportError, Exception):
+        pass
     try:
         from compression import zstd
         c = zstd.ZstdCompressor(level=19)
@@ -783,8 +806,9 @@ def decode_clock_pattern(name, data):
         data = zstd_decompress(data)
     frames = []
     if ".binscled" in name:
-        for i in range(0, len(data) - CLOCK_FRAME + 1, CLOCK_FRAME):
-            b = data[i:i + CLOCK_FRAME]
+        frame_len = 403 if (len(data) >= 403 and len(data) % 403 == 0) else CLOCK_FRAME
+        for i in range(0, len(data) - frame_len + 1, frame_len):
+            b = data[i:i + frame_len]
             frames.append({"flag": b[0], "v": list(b[1:-2]), "ms": int.from_bytes(b[-2:], "big")})
         return frames
     loop = False
@@ -808,8 +832,8 @@ def encode_clock_pattern(frames):
     out = bytearray()
     for f in frames:
         v = [max(0, min(255, int(x))) for x in f["v"]]
-        if len(v) != len(CLOCK_LEDS):
-            raise AdbError(f"в кадре должно быть {len(CLOCK_LEDS)} значений")
+        if len(v) not in (len(CLOCK_LEDS), 400):
+            raise AdbError(f"в кадре должно быть {len(CLOCK_LEDS)} или 400 значений")
         ms = max(10, min(65535, int(f.get("ms", 100))))
         out += bytes([1 if f.get("flag") else 0, *v]) + ms.to_bytes(2, "big")
     if not out:
@@ -865,12 +889,185 @@ ADB_LOST = ("error: closed", "device offline", "not found", "no devices", "unaut
             "cannot connect", "failed to connect", "protocol fault", "connection refused")
 
 
+def normalize_adb_output(text: str) -> str:
+    """Normalize CRLF, CRCRLF, and stray CR from ADB/PTY output to standard UNIX LF."""
+    if not text:
+        return ""
+    # Strip carriage returns preceding newlines (\r\n -> \n, \r\r\n -> \n)
+    text = re.sub(r"\r+\n", "\n", text)
+    # Strip any remaining stray carriage returns
+    return text.replace("\r", "")
+
+
+# Cross-platform PTY & process control
+try:
+    import pty
+    import fcntl
+    import termios
+    import struct
+    HAVE_PTY = True
+except ImportError:
+    pty = None
+    fcntl = None
+    termios = None
+    struct = None
+    HAVE_PTY = False
+
+SIGWINCH = getattr(signal, "SIGWINCH", None)
+SIGHUP = getattr(signal, "SIGHUP", getattr(signal, "SIGTERM", 15))
+SIGKILL = getattr(signal, "SIGKILL", getattr(signal, "SIGTERM", 9))
+
+
+class PtyStdin:
+    def __init__(self, target):
+        self.target = target
+
+    def write(self, data):
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        try:
+            if isinstance(self.target, int):
+                os.write(self.target, data)
+            elif hasattr(self.target, "write"):
+                self.target.write(data)
+                if hasattr(self.target, "flush"):
+                    self.target.flush()
+        except (OSError, ValueError):
+            pass
+
+    def flush(self):
+        if not isinstance(self.target, int) and hasattr(self.target, "flush"):
+            try:
+                self.target.flush()
+            except (OSError, ValueError):
+                pass
+
+
+class PtyProc:
+    """Cross-platform pseudo-terminal process wrapper.
+    Uses openpty/termios/fcntl on POSIX systems, and graceful pipe-based fallback on Windows.
+    """
+    def __init__(self, cmd, cols=80, rows=24):
+        self.master = None
+        self.slave = None
+
+        if HAVE_PTY and os.name != "nt":
+            master, slave = pty.openpty()
+            self.master = master
+            self.slave = slave
+
+            winsize = struct.pack("HHHH", max(5, int(rows)), max(20, int(cols)), 0, 0)
+            try:
+                fcntl.ioctl(master, termios.TIOCSWINSZ, winsize)
+            except OSError:
+                pass
+
+            def preexec():
+                if hasattr(os, "setsid"):
+                    os.setsid()
+                try:
+                    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                except OSError:
+                    pass
+
+            sh = "/system/bin/sh" if os.path.exists("/system/bin/sh") else "/bin/sh"
+            self.proc = subprocess.Popen(
+                [sh, "-c", cmd],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                preexec_fn=preexec,
+                close_fds=True
+            )
+            os.close(slave)
+            self.slave = None
+            self.stdout = os.fdopen(master, "rb", buffering=0)
+            self.stdin = PtyStdin(master)
+        else:
+            # Windows / non-POSIX fallback
+            if os.name == "nt":
+                sh = shutil.which("bash") or shutil.which("sh")
+                cmd_args = [sh, "-c", cmd] if sh else ["cmd.exe", "/c", cmd]
+            else:
+                sh = "/system/bin/sh" if os.path.exists("/system/bin/sh") else "/bin/sh"
+                cmd_args = [sh, "-c", cmd]
+
+            self.proc = subprocess.Popen(
+                cmd_args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0
+            )
+            self.stdout = self.proc.stdout
+            self.stdin = PtyStdin(self.proc.stdin)
+
+    def resize(self, cols, rows):
+        if HAVE_PTY and self.master is not None and fcntl and termios and struct:
+            try:
+                winsize = struct.pack("HHHH", max(5, int(rows)), max(20, int(cols)), 0, 0)
+                fcntl.ioctl(self.master, termios.TIOCSWINSZ, winsize)
+                if SIGWINCH and self.proc.poll() is None:
+                    os.kill(self.proc.pid, SIGWINCH)
+            except OSError:
+                pass
+
+    def terminate(self):
+        try:
+            if hasattr(os, "killpg") and SIGHUP:
+                os.killpg(self.proc.pid, SIGHUP)
+            else:
+                self.proc.terminate()
+        except OSError:
+            try:
+                self.proc.terminate()
+            except OSError:
+                pass
+
+    def kill(self):
+        try:
+            if hasattr(os, "killpg") and SIGKILL:
+                os.killpg(self.proc.pid, SIGKILL)
+            else:
+                self.proc.kill()
+        except OSError:
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
+
+    def poll(self):
+        return self.proc.poll()
+
+    def wait(self, timeout=None):
+        return self.proc.wait(timeout=timeout)
+
+    def close(self):
+        try:
+            if self.stdout and hasattr(self.stdout, "close"):
+                self.stdout.close()
+        except OSError:
+            pass
+        if self.master is not None:
+            try:
+                os.close(self.master)
+            except OSError:
+                pass
+            self.master = None
+
+    @property
+    def returncode(self):
+        return self.proc.returncode
+
+
 class Adb:
-    def __init__(self, adb_path, serial):
+    def __init__(self, adb_path, serial, needs_su=False):
         self.transfers = 0      # идёт push/pull: старый adbd в это время медлит с ответами на shell
         self._transfers_lock = threading.Lock()
         self.adb = adb_path
         self.serial = serial
+        self._needs_su = needs_su
+        self._probing = False
         self.lock = threading.Lock()
         self.conn = None  # Connection; сообщаем ему, когда связь пропала посреди команды
         # Защищённый канал (yapanel-agent): если настроен и отвечает — команды и файлы идут через него,
@@ -879,6 +1076,7 @@ class Adb:
         self.agent_ok = False         # последний вызов через агента удался
         self._agent_retry = 0.0       # агент не ответил — до этого времени идём через adb
         self._local = threading.local()
+        self.is_local = (serial == "local" or adb_path == "local" or os.environ.get("PANEL_LOCAL") == "1")
 
     @contextlib.contextmanager
     def only_adb(self):
@@ -918,20 +1116,65 @@ class Adb:
     # Поэтому команда идёт в подоболочке, а её код печатается меткой в конце вывода (exit внутри тоже ловится).
     RC_MARK = "@@webpanel-rc="
 
+    def probe_needs_su(self, force=False):
+        """Explicitly probe if shell commands require su (root elevation).
+        Cached after first invocation to guarantee idempotency.
+        Does not interfere with standard command execution or mock fidelity."""
+        if getattr(self, "is_local", False):
+            self._needs_su = False
+            return False
+        if self._needs_su is not None and not force:
+            return self._needs_su
+        if getattr(self, "_probing", False):
+            return False
+        self._probing = True
+        try:
+            chk = subprocess.run(self._base() + ["shell", "id"], capture_output=True, timeout=5)
+            self._needs_su = bool(chk.stdout and b"uid=0(root)" not in chk.stdout)
+        except Exception:
+            self._needs_su = False
+        finally:
+            self._probing = False
+        return self._needs_su
+
     def shell(self, cmd, timeout=15, check=True):
+        if getattr(self, "is_local", False):
+            try:
+                if os.name == "nt":
+                    sh = shutil.which("bash") or shutil.which("sh")
+                    cmd_args = [sh, "-c", cmd] if sh else ["cmd.exe", "/c", cmd]
+                else:
+                    sh = "/system/bin/sh" if os.path.exists("/system/bin/sh") else "/bin/sh"
+                    cmd_args = [sh, "-c", cmd]
+                p = subprocess.run(cmd_args, capture_output=True, timeout=timeout)
+                out = p.stdout.decode("utf-8", "replace")
+                err = p.stderr.decode("utf-8", "replace")
+                if check and p.returncode != 0 and not out and err:
+                    raise AdbError(err.strip())
+                return normalize_adb_output(out), normalize_adb_output(err), p.returncode
+            except subprocess.TimeoutExpired:
+                raise AdbError(f"Колонка не ответила за {timeout} с")
         a = self._agent()
         if a:
             try:
                 out, rc = a.exec(cmd, timeout)
                 self.agent_ok = True
-                return out, "", rc        # stdout и stderr вместе — как у adb shell через pty
+                return normalize_adb_output(out), "", rc        # stdout и stderr вместе — как у adb shell через pty
             except TimeoutError:
                 raise AdbError(f"Колонка не ответила за {timeout} с") from None
             except agentlink.AgentError as e:
                 self._agent_down(e)
         try:
-            p = subprocess.run(self._base() + ["shell", f"(\n{cmd}\n); printf '\\n{self.RC_MARK}%d\\n' $?"],
-                               capture_output=True, timeout=timeout)
+            if getattr(self, "_needs_su", None) is None:
+                self.probe_needs_su()
+
+            if self._needs_su:
+                p = subprocess.run(self._base() + ["shell", "su"],
+                                   input=f"(\n{cmd}\n); printf '\\n{self.RC_MARK}%d\\n' $?\n".encode("utf-8"),
+                                   capture_output=True, timeout=timeout)
+            else:
+                p = subprocess.run(self._base() + ["shell", f"(\n{cmd}\n); printf '\\n{self.RC_MARK}%d\\n' $?"],
+                                   capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired:
             # Чаще всего это выключенная колонка при «зависшем» соединении adb — пусть Connection проверит.
             if self.conn:
@@ -951,10 +1194,18 @@ class Adb:
         if check and rc != 0 and not out and err:
             raise AdbError(err.strip())
         # псевдотерминал колонки даёт \r\n, а adb.exe на Windows бывает дописывает ещё \r — \r\r\n
-        crlf = lambda s: re.sub(r"\r+\n", "\n", s)
-        return crlf(out), crlf(err), rc
+        return normalize_adb_output(out), normalize_adb_output(err), rc
 
     def pull(self, remote, local, timeout=300):
+        if getattr(self, "is_local", False):
+            p_local = Path(local)
+            p_local.parent.mkdir(parents=True, exist_ok=True)
+            if str(p_local.resolve()) != str(Path(remote).resolve()):
+                if Path(remote).is_dir():
+                    shutil.copytree(remote, local, symlinks=True, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(remote, local)
+            return
         a = self._agent()
         if a:
             try:
@@ -972,16 +1223,62 @@ class Adb:
         with self._transfer():
             p = subprocess.run(self._base() + ["pull", "-a", remote, str(local)], capture_output=True, timeout=timeout)
         if p.returncode != 0:
+            if not getattr(self, "is_root", False) and getattr(self, "_needs_su", False):
+                tmp_remote = f"/data/local/tmp/pull_{os.getpid()}_{os.urandom(4).hex()}"
+                self.shell(f"cp -f {shlex.quote(remote)} {shlex.quote(tmp_remote)} && chown shell:shell {shlex.quote(tmp_remote)}", check=False)
+                with self._transfer():
+                    p2 = subprocess.run(self._base() + ["pull", "-a", tmp_remote, str(local)], capture_output=True, timeout=timeout)
+                self.shell(f"rm -f {shlex.quote(tmp_remote)}", check=False)
+                if p2.returncode == 0:
+                    return
             raise AdbError(adb_usage_error((p.stderr or p.stdout).decode("utf-8", "replace").strip(), "pull -a"))
 
     def read_bytes(self, remote, timeout=120):
+        if getattr(self, "is_local", False):
+            try:
+                return Path(remote).read_bytes()
+            except OSError as e:
+                raise AdbError(str(e))
         with tempfile.TemporaryDirectory() as td:
             dst = Path(td) / "f"
-            self.pull(remote, dst, timeout)
-            return dst.read_bytes()
+            try:
+                self.pull(remote, dst, timeout)
+                return dst.read_bytes()
+            except AdbError:
+                if getattr(self, "_needs_su", False):
+                    out, _, rc = self.shell(f"toybox base64 {shlex.quote(remote)} 2>/dev/null", check=False, timeout=timeout)
+                    if rc == 0 and out.strip():
+                        return base64.b64decode(out.strip())
+                raise
 
     def ls(self, remote):
         """Листинг через sync-протокол: [(mode, size, mtime, name)], имена с пробелами не ломаются."""
+        if getattr(self, "is_local", False):
+            res = []
+            try:
+                if not os.path.exists(remote) and not os.path.islink(remote):
+                    raise AdbError(f"нет такой папки: {remote}")
+                if not os.path.isdir(remote) or os.path.islink(remote):
+                    if os.path.islink(remote) and os.path.isdir(remote):
+                        pass
+                    else:
+                        st = os.lstat(remote)
+                        return [(st.st_mode, st.st_size, int(st.st_mtime), posixpath.basename(remote))]
+                for entry in os.scandir(remote):
+                    try:
+                        st = entry.stat(follow_symlinks=False)
+                        res.append((st.st_mode, st.st_size, int(st.st_mtime), entry.name))
+                    except OSError:
+                        is_d = False
+                        try:
+                            is_d = entry.is_dir(follow_symlinks=False)
+                        except OSError:
+                            pass
+                        mode = 0o040755 if is_d else 0o100644
+                        res.append((mode, 0, 0, entry.name))
+                return res
+            except OSError as e:
+                raise AdbError(str(e))
         a = self._agent()
         if a:
             try:
@@ -1006,6 +1303,15 @@ class Adb:
         return res
 
     def push(self, local, remote, timeout=120):
+        if getattr(self, "is_local", False):
+            p_remote = Path(remote)
+            p_remote.parent.mkdir(parents=True, exist_ok=True)
+            if str(Path(local).resolve()) != str(p_remote.resolve()):
+                if Path(local).is_dir():
+                    shutil.copytree(local, remote, symlinks=True, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(local, remote)
+            return
         a = self._agent()
         if a:
             try:
@@ -1019,11 +1325,31 @@ class Adb:
         with self._transfer():
             p = subprocess.run(self._base() + ["push", str(local), remote], capture_output=True, timeout=timeout)
         if p.returncode != 0:
+            if not getattr(self, "is_root", False) and getattr(self, "_needs_su", False):
+                tmp_remote = f"/data/local/tmp/push_{os.getpid()}_{os.urandom(4).hex()}"
+                with self._transfer():
+                    p2 = subprocess.run(self._base() + ["push", str(local), tmp_remote], capture_output=True, timeout=timeout)
+                if p2.returncode == 0:
+                    self.shell(f"mkdir -p {shlex.quote(posixpath.dirname(remote))} && mv -f {shlex.quote(tmp_remote)} {shlex.quote(remote)}", check=False)
+                    return
             raise AdbError(adb_usage_error(p.stderr.decode("utf-8", "replace").strip(), "push"))
 
     def popen(self, cmd, pty=False, text=False, cols=80, rows=24):
         """Долгая команда на колонке, похожая на subprocess.Popen (stdout, stdin.write, kill, wait).
         pty — в псевдотерминале (консоль). Через adb pty есть всегда: этот adbd иначе не умеет."""
+        if getattr(self, "is_local", False):
+            if pty:
+                try:
+                    return PtyProc(cmd, cols=cols, rows=rows)
+                except Exception:
+                    pass
+            if os.name == "nt":
+                sh = shutil.which("bash") or shutil.which("sh")
+                cmd_args = [sh, "-c", cmd] if sh else ["cmd.exe", "/c", cmd]
+            else:
+                sh = "/system/bin/sh" if os.path.exists("/system/bin/sh") else "/bin/sh"
+                cmd_args = [sh, "-c", cmd]
+            return subprocess.Popen(cmd_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text)
         a = self._agent()
         if a:
             try:
@@ -1032,15 +1358,23 @@ class Adb:
                 return proc
             except agentlink.AgentError as e:
                 self._agent_down(e)
+        if getattr(self, "_needs_su", False):
+            cmd_args = ["su", "-c", cmd] if cmd else ["su"]
+            return subprocess.Popen(self._base() + ["shell"] + cmd_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, bufsize=0 if not text else -1, text=text)
         return subprocess.Popen(self._base() + ["shell", cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, bufsize=0 if not text else -1, text=text)
 
     def devices(self):
+        if getattr(self, "is_local", False):
+            return "local\tdevice\n"
         p = subprocess.run([self.adb, "devices", "-l"], capture_output=True, timeout=10)
         return p.stdout.decode("utf-8", "replace")
 
     def forward(self, remote_port):
         """Проброс порта колонки на свободный локальный (adb forward tcp:0), возвращает локальный порт."""
+        if getattr(self, "is_local", False):
+            return remote_port
         p = subprocess.run(self._base() + ["forward", "tcp:0", f"tcp:{remote_port}"], capture_output=True, timeout=10)
         out = p.stdout.decode().strip()
         if p.returncode != 0 or not out.isdigit():
@@ -1106,7 +1440,7 @@ class Connection:
         if self.adb.transfers:      # пока идёт передача файла, медленный ответ — не обрыв
             return True
         try:
-            p = subprocess.run(self.adb._base() + ["shell", "echo ok"], capture_output=True, timeout=4)
+            p = subprocess.run(self.adb._base() + ["shell", "echo ok"], capture_output=True, timeout=8)
             return p.stdout.strip() == b"ok"
         except subprocess.TimeoutExpired:
             return False
@@ -1132,7 +1466,13 @@ class Connection:
             return False
 
     def run(self):
+        if getattr(self.adb, "is_local", False):
+            self._set("online")
+            self.note("Локальный режим: прямое выполнение без ADB")
+            while True:
+                self._sleep(3600)
         network = bool(self.adb.serial and ":" in self.adb.serial)
+        missed = 0
         while True:
             if self._agent_alive():
                 if not self.online:
@@ -1144,10 +1484,19 @@ class Connection:
             state, err = self._adb_state()
             # голый TCP-коннект к 5555 оставлял на adbd сокеты в CLOSE_WAIT и забивал его;
             # живость проверяем через сам adb: get-state и короткую shell-команду
-            if state == "device" and not self._alive():
-                self.note("adb числит колонку подключённой, но она не отвечает — сбрасываем соединение", "warn")
-                self._drop()
-                state = ""
+            if state == "device":
+                if not self._alive():
+                    missed += 1
+                    if missed >= 3:
+                        self.note("adb числит колонку подключённой, но она не отвечает — сбрасываем соединение", "warn")
+                        self._drop()
+                        state = ""
+                        missed = 0
+                    else:
+                        self._sleep(2)
+                        continue
+                else:
+                    missed = 0
             if state == "device":
                 if not self.online:
                     self.note(f"Подключено: {self.adb.serial or 'устройство по умолчанию'}")
@@ -1313,7 +1662,7 @@ class Metrics:
         "head -n 1 /proc/stat; cut -d' ' -f1 /proc/uptime; cut -d' ' -f1 /proc/loadavg; "
         "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print t-a, t}' /proc/meminfo; "
         "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo -; "
-        "wpa_cli -i wlan0 signal_poll 2>/dev/null | sed -n 's/^RSSI=//p' | grep . || echo -; "
+        "iw dev wlan0 link 2>/dev/null | awk '/signal:/{print $2}' | grep . || wpa_cli -i wlan0 signal_poll 2>/dev/null | sed -n 's/^RSSI=//p' | grep . || echo -; "
         "df -k /data | awk 'NR==2{print $3, $2}'; "
         "grep -l 'state: RUNNING' /proc/asound/card*/pcm*p/sub*/status 2>/dev/null | wc -l; "
         f"cat {ALARM_STATE} 2>/dev/null | cut -d'|' -f1-2 | grep . || echo -")
@@ -1328,7 +1677,7 @@ class Metrics:
         self.saved = 0
         self.totals = {}           # объём памяти и /data, МБ — верх шкалы на графиках
         try:
-            d = json.loads(METRICS_FILE.read_text())
+            d = json.loads(METRICS_FILE.read_text(encoding="utf-8"))
             if d.get("interval") == self.INTERVAL:
                 self.t, self.events = d["t"], d.get("events", [])
                 # новая метрика в старом файле — пустые значения, а не потеря истории
@@ -1416,7 +1765,7 @@ class Metrics:
             data = json.dumps(d, separators=(",", ":"))
         tmp = METRICS_FILE.with_suffix(".tmp")
         try:
-            tmp.write_text(data)
+            tmp.write_text(data, encoding="utf-8")
             os.replace(tmp, METRICS_FILE)
             self.saved = time.time()
         except OSError:
@@ -1589,12 +1938,14 @@ def adb_usage_error(text, what):
 
 
 def find_adb():
+    if os.environ.get("PANEL_LOCAL") or os.environ.get("ADB") == "local":
+        return "local"
     # Телефон (APK) или компьютер без adb: протокол adb на чистом Python (pyadb.py), только по сети
     if os.environ.get("PANEL_PYADB"):
         import pyadb
         return pyadb.install()
     exe = "adb.exe" if os.name == "nt" else "adb"
-    cands = [os.environ.get("ADB"), shutil.which("adb"), str(ROOT / "platform-tools" / exe),
+    cands = [os.environ.get("ADB"), shutil.which("adb"), str(ROOT / "platform-tools" / exe), str(ROOT.parent / "platform-tools" / exe),
              str(Path.home() / "Android/Sdk/platform-tools" / exe)]
     for name in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
         if os.environ.get(name):
@@ -1612,13 +1963,19 @@ def find_adb():
             old = old or (cand, version)
     if old:
         raise SystemExit(ADB_OLD.format(got=".".join(map(str, old[1])), path=old[0], need=".".join(map(str, ADB_MIN))))
-    raise SystemExit("adb не найден. Установите Android platform-tools (https://developer.android.com/tools/releases/platform-tools)\n"
-                     "и добавьте в PATH, положите папку platform-tools рядом с server.py или укажите путь в переменной ADB.")
+    try:
+        import pyadb
+        return pyadb.install()
+    except Exception:
+        raise SystemExit("adb не найден. Установите Android platform-tools (https://developer.android.com/tools/releases/platform-tools)\n"
+                         "и добавьте в PATH, положите папку platform-tools рядом с server.py или укажите путь в переменной ADB.")
 
 
 def normalize_device(dev):
     """«192.168.1.50» → «192.168.1.50:5555»; серийники USB и host:port — как есть."""
     dev = (dev or "").strip()
+    if dev in ("local", "localhost", "direct", "none", "self"):
+        return "local"
     if dev and ":" not in dev and re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}|[\w-]+\.(local|lan|home)", dev):
         dev += ":5555"
     return dev or None
@@ -1809,8 +2166,9 @@ def _led_anim_text(kind, color):
 
 
 class Panel:
-    def __init__(self, adb):
+    def __init__(self, adb, config=None):
         self.adb = adb
+        self.config = config or get_config()
         self._version = None
         self.ffmpeg = shutil.which("ffmpeg")
         self._ww_info = None       # кэш «пакет установлен»: вкладка опрашивает статус часто
@@ -1819,7 +2177,6 @@ class Panel:
         self._ww_connect_at = None
         self._ww_router = None
         self._ww_router_stop = threading.Event()
-        self._ww_last_hit = None
 
     def _configure_glagol(self, device_id):
         # Glagol использует тип устройства из прошивки, а не профиль LED/часов панели.
@@ -1835,9 +2192,12 @@ class Panel:
             pass  # На старых прошивках без этого поля остаётся платформа выбранного профиля.
         # Публикуем device_id после platform: фоновый поток уже может ожидать подключения.
         self.glagol.device_id = device_id or None
-        if not self.glagol.host:     # колонка по USB — для Glagol нужен её адрес в Wi-Fi
-            ip, _, _ = self.adb.shell("wpa_cli -i wlan0 status 2>/dev/null | sed -n 's/^ip_address=//p'", check=False)
-            self.glagol.host = strip_ansi(ip).strip() or None
+        if not self.glagol.host:     # колонка по USB или local — для Glagol нужен её адрес
+            if getattr(self.adb, "is_local", False) is True:
+                self.glagol.host = "127.0.0.1"
+            else:
+                ip, _, _ = self.adb.shell("wpa_cli -i wlan0 status 2>/dev/null | sed -n 's/^ip_address=//p'", check=False)
+                self.glagol.host = strip_ansi(ip).strip() or None
         self.glagol.wake.set()
 
     # ---------- статус ----------
@@ -1958,12 +2318,13 @@ echo @@BLUEZ
         как это делает rootkeeper.sh.
         """
         sd = f"/tmp/webpanel_{tag}.sd"
-        self.adb.shell(f"rm -f {sd}; start-stop-daemon -S -b -m -p {sd} -x /bin/sh -- -c {shlex.quote(script)}")
+        q_sd = shlex.quote(sd)
+        self.adb.shell(f"export PATH=/system/bin:/system/xbin:/vendor/bin:/odm/bin:$PATH; rm -f {q_sd}; start-stop-daemon -S -b -m -p {q_sd} -x /bin/sh -- -c {shlex.quote(script)}")
 
     def _push_play_file(self, local):
         # Уникальное имя: пока играет старый файл, новый ему не мешает; после проигрывания убираем.
         remote = f"{WEB_DIR}/play-{os.getpid()}-{os.urandom(4).hex()}.wav"
-        self.adb.shell(f"mkdir -p {WEB_DIR}", check=False)
+        self.adb.shell(f"mkdir -p {WEB_DIR} && chmod 777 {WEB_DIR}", check=False)
         self.adb.push(local, remote)
         return remote
 
@@ -2102,7 +2463,9 @@ echo @@BLUEZ
         res = {}
         for kind, d in PATTERNS.items():
             # свои — не через ls: busybox показывает не-ASCII имена знаками «?»
-            out, _, _ = self.adb.shell(f"ls {d}; echo '<<<'; for f in {MY_ANIM_DIR}/{kind}/*; do [ -f \"$f\" ] && echo \"${{f##*/}}\"; done; true")
+            q_d = shlex.quote(d)
+            q_mine = shlex.quote(f"{MY_ANIM_DIR}/{kind}")
+            out, _, _ = self.adb.shell(f"ls {q_d}; echo '<<<'; for f in {q_mine}/*; do [ -f \"$f\" ] && echo \"${{f##*/}}\"; done; true")
             std, _, mine = strip_ansi(out).partition("<<<")
             res[kind] = sorted(std.split()) + ["my/" + n for n in sorted(mine.split())]
         return res
@@ -2129,7 +2492,7 @@ echo @@BLUEZ
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "a"
             f.write_bytes(data)
-            self.adb.shell(f"mkdir -p {MY_ANIM_DIR}/{kind}")
+            self.adb.shell(f"mkdir -p {shlex.quote(f'{MY_ANIM_DIR}/{kind}')}")
             self.adb.push(f, f"{MY_ANIM_DIR}/{kind}/{fname}")
         return {"name": "my/" + fname, "patterns": self.patterns()}
 
@@ -2155,15 +2518,17 @@ echo @@BLUEZ
         pidf = f"/tmp/webpanel_{kind}.pid"
         self.stop_pattern(kind)
         log = f"/tmp/webpanel_{kind}.log"
-        self.adb.shell(f"rm -f {pidf}; : > {log}")
-        self.detach(kind, f"{cmd} >{log} 2>&1 & p=$!; echo $p > {pidf}; "
-                          f"sleep {seconds}; kill $p 2>/dev/null; rm -f {pidf}")
+        q_pidf = shlex.quote(pidf)
+        q_log = shlex.quote(log)
+        self.adb.shell(f"rm -f {q_pidf}; : > {q_log}")
+        self.detach(kind, f"{cmd} >{q_log} 2>&1 & p=$!; echo $p > {q_pidf}; "
+                          f"sleep {seconds}; kill $p 2>/dev/null; rm -f {q_pidf}")
         if verify:
             out, _, _ = self.adb.shell(
                 f"i=0; while [ $i -lt 10 ]; do sleep 0.1; "
-                f"p=$(cat {pidf} 2>/dev/null); "
+                f"p=$(cat {q_pidf} 2>/dev/null); "
                 f'[ -n "$p" ] && kill -0 "$p" 2>/dev/null && {{ echo @running; break; }}; '
-                f"i=$((i + 1)); done; tail -c 1200 {log} 2>/dev/null; true", check=False)
+                f"i=$((i + 1)); done; tail -c 1200 {q_log} 2>/dev/null; true", check=False)
             if "@running" not in out.splitlines():
                 raise AdbError("анимация не запустилась: " + (strip_ansi(out).strip() or f"нет работающего процесса; журнал {log}"))
 
@@ -2257,24 +2622,6 @@ echo @@BLUEZ
             cmd += "; " + RING_TRIGGER_CMD
         self.adb.shell(cmd + "; true")
         return {"ok": True}
-
-    def midi_hardware(self):
-        raise AdbError("Диагностика Cucumber доступна только в профиле Миди")
-
-    def midi_tests(self):
-        raise AdbError("Цветовые пробы доступны только в профиле Миди")
-
-    def midi_clock_tests(self):
-        return self.midi_tests()
-
-    def midi_test_run(self, data):
-        return self.midi_tests()
-
-    def midi_test_observe(self, data):
-        return self.midi_tests()
-
-    def midi_test_restore(self):
-        return self.midi_tests()
 
     def logo(self, data):
         raise AdbError("Управление отдельным логотипом не поддерживается этим профилем")
@@ -2609,17 +2956,17 @@ echo @@BLUEZ
             (Path(td) / "f").write_bytes(data)
             q = shlex.quote
             self.adb.shell(f"mkdir -p {q(posixpath.dirname(custom))}" + (
-                f"; grep -q ' {target} ' /proc/mounts || [ -f {orig} ] || cp {target} {orig}" if orig else ""))
+                f"; grep -qF {q(f' {target} ')} /proc/mounts || [ -f {q(orig)} ] || cp {q(target)} {q(orig)}" if orig else ""))
             self.adb.push(Path(td) / "f", custom)
         self._ensure_hook()
         q = shlex.quote
-        _, err, rc = self.adb.shell(f"grep -q ' {target} ' /proc/mounts || mount --bind {q(custom)} {q(target)}", check=False)
+        _, err, rc = self.adb.shell(f"grep -qF {q(f' {target} ')} /proc/mounts || mount --bind {q(custom)} {q(target)}", check=False)
         if rc != 0:
             raise AdbError(err.strip() or "не удалось подменить файл")
 
     def _remove_override(self, custom, target):
         q = shlex.quote
-        self.adb.shell(f"grep -q ' {target} ' /proc/mounts && {{ umount {q(target)} || umount -l {q(target)}; }}; "
+        self.adb.shell(f"grep -qF {q(f' {target} ')} /proc/mounts && {{ umount {q(target)} || umount -l {q(target)}; }}; "
                        f"rm -f {q(custom)}; [ -d {OVR_DIR} ] && find {OVR_DIR} -depth -type d -exec rmdir {{}} \\; 2>/dev/null; true")
         self._drop_hook_if_unused()
 
@@ -2627,19 +2974,20 @@ echo @@BLUEZ
         """Стандартный файл, даже когда поверх смонтирован свой: bind его папки без вложенных монтирований
         (mount --bind не рекурсивный) показывает то, что лежит под подменой."""
         q = shlex.quote
-        out, _, _ = self.adb.shell(f"grep -q ' {target} ' /proc/mounts && echo mounted; true", check=False)
+        out, _, _ = self.adb.shell(f"grep -qF {q(f' {target} ')} /proc/mounts && echo mounted; true", check=False)
         if "mounted" not in out:
             return self.adb.read_bytes(target)
         tmp = "/tmp/webpanel_orig.bin"
+        q_tmp = q(tmp)
         _, err, rc = self.adb.shell(
             f"d=/tmp/webpanel_orig.d; mkdir -p $d && mount --bind {q(posixpath.dirname(target))} $d && "
-            f"cp $d/{q(posixpath.basename(target))} {tmp}; rc=$?; umount $d 2>/dev/null; rmdir $d; exit $rc", check=False)
+            f"cp $d/{q(posixpath.basename(target))} {q_tmp}; rc=$?; umount $d 2>/dev/null; rmdir $d; exit $rc", check=False)
         if rc:
             raise AdbError(err.strip() or "не удалось прочитать стандартный файл")
         try:
             return self.adb.read_bytes(tmp)
         finally:
-            self.adb.shell(f"rm -f {tmp}", check=False)
+            self.adb.shell(f"rm -f {q_tmp}", check=False)
 
     def boot_install(self, frames):
         if not self.boot_status()["supported"]:
@@ -2758,6 +3106,9 @@ echo @@BLUEZ
         2) готовая сборка своей версии рядом (Docker, архив для Windows);
         3) скачанная с релиза GitHub для этой версии панели — с проверкой SHA256SUMS, как yamd;
         4) готовая сборка другой версии — лучше, чем ничего."""
+        local_prebuilt = ROOT / "bin_cache" / asset
+        if local_prebuilt.exists():
+            return local_prebuilt
         build = src / "build" / name
         go = shutil.which("go")
         if go:
@@ -2771,7 +3122,7 @@ echo @@BLUEZ
                     raise AdbError(f"не удалось собрать программу {what}: " + (r.stderr or r.stdout).strip()[-400:])
             return build
         try:
-            bundled = (src / "build" / "VERSION").read_text().strip()
+            bundled = (src / "build" / "VERSION").read_text(encoding="utf-8").strip()
         except OSError:
             bundled = ""
         if build.exists() and bundled == VERSION:
@@ -2857,10 +3208,21 @@ echo @@BLUEZ
         if strip_ansi(arch).strip() not in ("aarch64", "arm64"):
             raise AdbError(f"ядро колонки {strip_ansi(arch).strip() or '?'}: программа помощника пока собрана "
                            "только под 64-битное (aarch64)")
-        binary = self._assist_binary()
+        max_py = ROOT / "assistant_max.py"
+        if not max_py.exists():
+            max_py = ASSIST_SRC / "assistant_max.py"
+        assistd_wrapper = ASSIST_SRC / "assistantd"
+
         self.adb.shell(f"mkdir -p {ASSIST_DIR}; start-stop-daemon -K -p {ASSIST_SD} 2>/dev/null; true", check=False)
-        self.adb.push(binary, ASSISTD + ".new", timeout=300)
-        self.adb.shell(f"chmod 755 {ASSISTD}.new; mv {ASSISTD}.new {ASSISTD}")
+        if max_py.exists() and assistd_wrapper.exists():
+            self.adb.push(max_py, f"{ASSIST_DIR}/assistant_max.py")
+            self.adb.shell(f"chmod 755 {shlex.quote(f'{ASSIST_DIR}/assistant_max.py')}")
+            self.adb.push(assistd_wrapper, ASSISTD + ".new")
+            self.adb.shell(f"chmod 755 {shlex.quote(ASSISTD + '.new')}; mv {shlex.quote(ASSISTD + '.new')} {shlex.quote(ASSISTD)}")
+        else:
+            binary = self._assist_binary()
+            self.adb.push(binary, ASSISTD + ".new", timeout=300)
+            self.adb.shell(f"chmod 755 {shlex.quote(ASSISTD + '.new')}; mv {shlex.quote(ASSISTD + '.new')} {shlex.quote(ASSISTD)}")
         if not self._assist_config():
             self._assist_write({"enabled": False})
         try:
@@ -2954,9 +3316,10 @@ echo @@BLUEZ
             write_unix(f, json.dumps(over, ensure_ascii=False))
             self.adb.push(f, tmp)
         try:
-            out, _, _ = self.adb.shell(f"chmod 600 {tmp}; {ASSISTD} -dir {ASSIST_DIR} -models {tmp}; true", timeout=60, check=False)
+            q_tmp = shlex.quote(tmp)
+            out, _, _ = self.adb.shell(f"chmod 600 {q_tmp}; {shlex.quote(ASSISTD)} -dir {shlex.quote(ASSIST_DIR)} -models {q_tmp}; true", timeout=60, check=False)
         finally:
-            self.adb.shell(f"rm -f {tmp}", check=False)
+            self.adb.shell(f"rm -f {q_tmp}", check=False)
         line = next((l for l in strip_ansi(out).splitlines() if l.startswith("{")), "")
         try:
             res = json.loads(line)
@@ -2988,23 +3351,53 @@ echo @@BLUEZ
         return {"ok": True}
 
     def say(self, text, voice="alice"):
-        """Произнести текст на колонке: голосом Алисы («Повтори за мной» через её отладочный CLI — без входа
-        в Яндекс, но через её облако) или синтезатором ассистента."""
+        """Произнести текст на колонке: голосом Алисы («Повтори за мной» через Glagol или отладочный CLI)
+        или через TTS / playaudio."""
         text = re.sub(r"[\x00-\x1f]", " ", str(text or "")).strip()
         if not 1 <= len(text) <= 300:
             raise AdbError("текст — от 1 до 300 символов")
         if voice == "assistant":
             return self.assistant_command({"say": text})
-        # текст — файлом: в команду оболочки он не попадает
-        path = "/tmp/webpanel_say.txt"
-        with tempfile.TemporaryDirectory() as td:
-            f = Path(td) / "say"
-            f.write_text("Повтори за мной: " + text + "\n", encoding="utf-8")
-            self.adb.push(f, path)
-        self.detach("say", f"t=$(cat {path}); rm -f {path}; "
-                           f"{{ sleep 2; printf 'q\\n'; sleep 0.5; printf '%s\\n' \"$t\"; sleep 3; printf 'x\\n'; sleep 1; }} "
-                           f"| {QRUN}/maind --cli >/dev/null 2>&1")
-        return {"ok": True}
+
+        # 1. Если Glagol онлайн (пользователь вошёл в Яндекс) — озвучиваем через облако Алисы
+        if getattr(self, "glagol", None) and self.glagol.ws:
+            try:
+                self.glagol.send({"command": "sendText", "text": f"Повтори за мной {text}"})
+                return {"ok": True, "method": "glagol"}
+            except Exception:
+                pass
+
+        # 2. Если на устройстве есть quasar maind --cli (Linux Buildroot)
+        has_maind = False
+        try:
+            out, _, _ = self.adb.shell(f"[ -x {QUASAR}/maind ] && echo 1 || echo 0", check=False)
+            has_maind = out.strip() == "1"
+        except Exception:
+            pass
+
+        if has_maind:
+            path = "/tmp/webpanel_say.txt"
+            with tempfile.TemporaryDirectory() as td:
+                f = Path(td) / "say"
+                f.write_text("Повтори за мной: " + text + "\n", encoding="utf-8")
+                self.adb.push(f, path)
+            self.detach("say", f"t=$(cat {path}); rm -f {path}; "
+                               f"{{ sleep 2; printf 'q\\n'; sleep 0.5; printf '%s\\n' \"$t\"; sleep 3; printf 'x\\n'; sleep 1; }} "
+                               f"| {QRUN}/maind --cli >/dev/null 2>&1")
+            return {"ok": True, "method": "maind"}
+
+        # 3. На Android (Станция Макс, Станция 2) без входа в Яндекс — синтезируем через TTS и играем через playaudio
+        tts_url = "https://translate.google.com/translate_tts?ie=UTF-8&tl=ru&client=tw-ob&q=" + urllib.parse.quote(text)
+        script = (
+            f"python3 -c \"import urllib.request, os; "
+            f"req = urllib.request.Request('{tts_url}', headers={{'User-Agent': 'Mozilla/5.0'}}); "
+            f"data = urllib.request.urlopen(req, timeout=10).read(); "
+            f"open('/data/local/tmp/say.mp3', 'wb').write(data); "
+            f"os.chmod('/data/local/tmp/say.mp3', 0o644)\" && "
+            f"(/odm/bin/playaudio /data/local/tmp/say.mp3 || aplay /data/local/tmp/say.mp3) >/dev/null 2>&1"
+        )
+        self.detach("say", script)
+        return {"ok": True, "method": "tts"}
 
     def assistant_ask(self, text):
         text = str(text or "").strip()
@@ -3810,14 +4203,14 @@ echo @@BLUEZ
     @staticmethod
     def _agent_store():
         try:
-            return json.loads(AGENT_FILE.read_text())
+            return json.loads(AGENT_FILE.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
     @staticmethod
     def _agent_save(store):
         tmp = AGENT_FILE.with_name(AGENT_FILE.name + ".tmp")
-        tmp.write_text(json.dumps(store, ensure_ascii=False, indent=1))
+        tmp.write_text(json.dumps(store, ensure_ascii=False, indent=1), encoding="utf-8")
         try:
             os.chmod(tmp, 0o600)        # токен агента — как токен Яндекса: только владельцу
         except OSError:
@@ -4234,7 +4627,8 @@ echo @@BLUEZ
                 self.adb.push(td / "tz", f"{ALARM_DIR}/localtime")
                 write_unix(td / "tzn", tz_name or "")
                 self.adb.push(td / "tzn", f"{ALARM_DIR}/tzname")
-        self.adb.shell(f"mv {conf}.new {conf}; touch {ALARM_CONF}; chmod 644 {ALARM_DIR}/*; chmod 755 {ALARMD}; "
+        q_conf = shlex.quote(conf)
+        self.adb.shell(f"mv {q_conf}.new {q_conf}; touch {ALARM_CONF}; chmod 644 {ALARM_DIR}/*; chmod 755 {ALARMD}; "
                        f"cd {ALARM_DIR} && for f in [su]_*.wav; do [ -f \"$f\" ] || continue; "
                        f"cat {ALARM_CONF} {SCENES_CONF} 2>/dev/null | grep -qF \"$f\" || rm -f \"$f\"; done; "
                        f"for f in anim_*.sh; do [ -f \"$f\" ] || continue; n=${{f#anim_}}; n=$(echo \"${{n%.sh}}\" | tr '~' /); "
@@ -4417,7 +4811,8 @@ echo @@BLUEZ
 
     def scene_stop(self, sid):
         sid = re.sub(r"[^a-z0-9]", "", str(sid or ""))
-        self.adb.shell(f"p=$(cat {SCENE_RUN}{sid} 2>/dev/null) && kill $p 2>/dev/null; rm -f {SCENE_RUN}{sid} {SCENE_RUN}{sid}.*; "
+        q_run = shlex.quote(f"{SCENE_RUN}{sid}")
+        self.adb.shell(f"p=$(cat {q_run} 2>/dev/null) && kill $p 2>/dev/null; rm -f {q_run} {q_run}.*; "
                        f"killall aplay 2>/dev/null; true", check=False)
         self.ring_reset()
         return self.scenes()
@@ -4451,14 +4846,14 @@ echo @@BLUEZ
         if self.adb.shell(f"[ -f {ALARMD} ] && echo y; true")[0].strip() != "y":
             raise AdbError("будильник не установлен на колонку")
         self._alarm_daemon()
-        self.adb.shell(f"echo {aid} > {ALARM_FIRE}")
+        self.adb.shell(f"echo {shlex.quote(aid)} > {shlex.quote(ALARM_FIRE)}")
         return {"ok": True}
 
     def alarm_cmd(self, action):
         if action == "cancel_snooze":
-            self.adb.shell(f"rm -f {ALARM_DIR}/snooze")
+            self.adb.shell(f"rm -f {shlex.quote(f'{ALARM_DIR}/snooze')}")
         elif action in ("stop", "snooze"):
-            self.adb.shell(f"grep -q ringing {ALARM_STATE} 2>/dev/null && echo {action} > {ALARM_CMD}; true")
+            self.adb.shell(f"grep -q ringing {shlex.quote(ALARM_STATE)} 2>/dev/null && echo {shlex.quote(action)} > {shlex.quote(ALARM_CMD)}; true")
         else:
             raise AdbError("неизвестное действие")
         return {"ok": True}
@@ -4911,7 +5306,8 @@ echo @@BLUEZ
         for s in self._yam2_services_raw():
             if s["package"] == name:
                 self._yam2_svc_stop(s["id"])
-                self.adb.shell(f"rm -f {YAM2_SVC_DIR}/{s['id']}.sh {YAM2_SVC_DIR}/boot/{s['id']}", check=False)
+                sid = s["id"]
+                self.adb.shell(f"rm -f {shlex.quote(f'{YAM2_SVC_DIR}/{sid}.sh')} {shlex.quote(f'{YAM2_SVC_DIR}/boot/{sid}')}", check=False)
         out = self._yam2_check(["remove", name], timeout=120)
         if name == "tangenx/wakeword":
             self._ww_info = None
@@ -4956,7 +5352,7 @@ echo @@BLUEZ
     def _yam2_paths(self):
         """paths.etc/var/run из профиля платформы на колонке."""
         plat = self.yam2_platform()
-        out, _, _ = self.adb.shell(f"cat {YAM2_ROOT}/platforms/{plat}.yaml 2>/dev/null; true", check=False)
+        out, _, _ = self.adb.shell(f"cat {shlex.quote(f'{YAM2_ROOT}/platforms/{plat}.yaml')} 2>/dev/null; true", check=False)
         paths = {"etc": f"{YAM2_ROOT}/etc", "var": f"{YAM2_ROOT}/var", "run": "/tmp/yam"}
         for k in paths:
             m = re.search(rf"(?m)^\s+{k}:\s*(/[A-Za-z0-9/._-]+)\s*$", out)
@@ -5002,15 +5398,18 @@ echo @@BLUEZ
             self.adb.shell(f"mkdir -p {YAM2_SVC_DIR}/boot")
             self.adb.push(Path(td) / "s", f"{YAM2_SVC_DIR}/{sid}.sh")
         pid = f"{YAM2_SVC_PID}{sid}.pid"
-        self.adb.shell(f"p=$(cat {pid} 2>/dev/null) && kill -0 \"$p\" 2>/dev/null || "
-                       f"start-stop-daemon -S -b -m -p {pid} -x /bin/sh -- {YAM2_SVC_DIR}/{sid}.sh")
+        q_pid = shlex.quote(pid)
+        q_sh = shlex.quote(f"{YAM2_SVC_DIR}/{sid}.sh")
+        self.adb.shell(f"p=$(cat {q_pid} 2>/dev/null) && kill -0 \"$p\" 2>/dev/null || "
+                       f"start-stop-daemon -S -b -m -p {q_pid} -x /bin/sh -- {q_sh}")
 
     def _yam2_svc_stop(self, sid):
         # start-stop-daemon -b делает setsid: у скрипта своя группа процессов, гасим её целиком вместе с программой
         pid = f"{YAM2_SVC_PID}{sid}.pid"
-        self.adb.shell(f"p=$(cat {pid} 2>/dev/null) && kill -0 \"$p\" 2>/dev/null && {{ {YAM2_KILL}; "
+        q_pid = shlex.quote(pid)
+        self.adb.shell(f"p=$(cat {q_pid} 2>/dev/null) && kill -0 \"$p\" 2>/dev/null && {{ {YAM2_KILL}; "
                        f"for i in 1 2 3 4 5 6 7 8 9 10; do [ -n \"$g\" ] && kill -0 -- -$g 2>/dev/null || break; sleep 0.5; done; "
-                       f"[ \"${{g:-0}}\" -gt 1 ] && kill -KILL -- -$g 2>/dev/null; }}; rm -f {pid}; true", check=False)
+                       f"[ \"${{g:-0}}\" -gt 1 ] && kill -KILL -- -$g 2>/dev/null; }}; rm -f {q_pid}; true", check=False)
 
     def yam2_service(self, sid, action, stop_legacy=False):
         if not re.fullmatch(r"[a-z0-9._-]+~[a-z0-9._-]+~[a-z0-9._-]+", sid or ""):
@@ -5026,17 +5425,20 @@ echo @@BLUEZ
         elif action == "stop":
             self._yam2_svc_stop(sid)
         elif action in ("boot", "noboot"):
+            q_sh = shlex.quote(f"{YAM2_SVC_DIR}/{sid}.sh")
+            q_boot_sid = shlex.quote(f"{YAM2_SVC_DIR}/boot/{sid}")
+            q_boot_dir = shlex.quote(f"{YAM2_SVC_DIR}/boot")
             if action == "boot":
                 self._yam2_svc(sid)
                 self._ensure_hook()
-                if not self.adb.shell(f"[ -f {YAM2_SVC_DIR}/{sid}.sh ] && echo y; true")[0].strip():
+                if not self.adb.shell(f"[ -f {q_sh} ] && echo y; true")[0].strip():
                     with tempfile.TemporaryDirectory() as td:
                         write_unix(Path(td) / "s", self._yam2_launcher(self._yam2_svc(sid)))
                         self.adb.shell(f"mkdir -p {YAM2_SVC_DIR}/boot")
                         self.adb.push(Path(td) / "s", f"{YAM2_SVC_DIR}/{sid}.sh")
-                self.adb.shell(f"mkdir -p {YAM2_SVC_DIR}/boot && touch {YAM2_SVC_DIR}/boot/{sid}")
+                self.adb.shell(f"mkdir -p {q_boot_dir} && touch {q_boot_sid}")
             else:
-                self.adb.shell(f"rm -f {YAM2_SVC_DIR}/boot/{sid}")
+                self.adb.shell(f"rm -f {q_boot_sid}")
                 self._drop_hook_if_unused()
         else:
             raise AdbError("неизвестное действие")
@@ -5452,7 +5854,7 @@ echo @@BLUEZ
             # в саму колонку, а сторож перестаёт её ждать (иначе раз в 30 с подключал бы её обратно)
             if act in ("disconnect", "remove") and self.adb.shell(f"cat {BTOUT_MAC} 2>/dev/null; true", check=False)[0].strip() == mac:
                 self.btout_off()
-            out, _, _ = self.adb.shell(f"bluetoothctl {act} {mac} 2>&1 | tail -n 2; true", timeout=30, check=False)
+            out, _, _ = self.adb.shell(f"bluetoothctl {shlex.quote(act)} {shlex.quote(mac)} 2>&1 | tail -n 2; true", timeout=30, check=False)
             out = strip_ansi(out)
             if re.search(r"Failed|not available|Error", out):
                 msg = re.sub(r".*(Failed[^\n]*|Error[^\n]*).*", r"\1", out.strip().replace("\n", " "))
@@ -5505,17 +5907,28 @@ echo @@BLUEZ
             if "missing" in out:
                 raise AdbError(f"нет такой папки: {path}")
         if has_links:
-            out, _, _ = self.adb.shell(
-                f"cd {shlex.quote(path)} && for f in * .[!.]*; do [ -L \"$f\" ] && printf '%s\\t%s\\t%s\\n' "
-                f"\"$([ -d \"$f\" ] && echo d || echo f)\" \"$f\" \"$(readlink \"$f\")\"; done; true")
-            links = {}
-            for line in out.splitlines():
-                parts = line.split("\t")
-                if len(parts) == 3:
-                    links[parts[1]] = (parts[0] == "d", parts[2])
-            for e in entries:
-                if e["name"] in links:
-                    e["is_dir"], e["target"] = links[e["name"]]
+            if getattr(self.adb, "is_local", False):
+                for e in entries:
+                    if e["type"] == "link":
+                        full = posixpath.join(path, e["name"])
+                        try:
+                            target = os.readlink(full)
+                            e["target"] = target
+                            e["is_dir"] = os.path.isdir(full)
+                        except OSError:
+                            pass
+            else:
+                out, _, _ = self.adb.shell(
+                    f"cd {shlex.quote(path)} && for f in * .[!.]*; do [ -L \"$f\" ] && printf '%s\\t%s\\t%s\\n' "
+                    f"\"$([ -d \"$f\" ] && echo d || echo f)\" \"$f\" \"$(readlink \"$f\")\"; done; true")
+                links = {}
+                for line in out.splitlines():
+                    parts = line.split("\t")
+                    if len(parts) == 3:
+                        links[parts[1]] = (parts[0] == "d", parts[2])
+                for e in entries:
+                    if e["name"] in links:
+                        e["is_dir"], e["target"] = links[e["name"]]
         for e in entries:
             e.setdefault("is_dir", e["type"] == "dir")
         out, _, _ = self.adb.shell(f"touch {shlex.quote(path)}/.webpanel_w 2>/dev/null && "
@@ -5524,13 +5937,21 @@ echo @@BLUEZ
 
     def fs_read(self, path, limit=512 * 1024):
         path = self.norm(path)
-        # head в /tmp, а потом pull — так работает и для огромных файлов, и для /proc, /sys.
-        tmp = "/tmp/webpanel_preview"
-        _, err, rc = self.adb.shell(f"head -c {limit + 1} {shlex.quote(path)} > {tmp}", check=False)
-        if rc != 0:
-            raise AdbError(err.strip() or "не удалось прочитать файл")
-        data = self.adb.read_bytes(tmp)
-        self.adb.shell(f"rm -f {tmp}")
+        if getattr(self.adb, "is_local", False):
+            try:
+                with open(path, "rb") as f:
+                    data = f.read(limit + 1)
+            except OSError as e:
+                raise AdbError(str(e))
+        else:
+            # head в /tmp, а потом pull — так работает и для огромных файлов, и для /proc, /sys.
+            tmp = "/tmp/webpanel_preview"
+            q_tmp = shlex.quote(tmp)
+            _, err, rc = self.adb.shell(f"head -c {limit + 1} {shlex.quote(path)} > {q_tmp}", check=False)
+            if rc != 0:
+                raise AdbError(err.strip() or "не удалось прочитать файл")
+            data = self.adb.read_bytes(tmp)
+            self.adb.shell(f"rm -f {q_tmp}")
         truncated = len(data) > limit
         data = data[:limit]
         try:
@@ -5618,21 +6039,57 @@ echo @@BLUEZ
 
     # ---------- логи / консоль / система ----------
     def logs_list(self):
-        out, _, _ = self.adb.shell(f"ls {LOGS_DIR}")
-        return ["dmesg"] + sorted(strip_ansi(out).split())
+        items = ["dmesg"]
+        # На Android (Станция Макс): системные логи и логи сервисов Яндекса идут в logcat
+        try:
+            _, _, rc = self.adb.shell("which logcat", check=False, timeout=3)
+            if rc == 0:
+                items.extend(["logcat", "logcat:yandex", "logcat:audio"])
+        except Exception:
+            pass
+
+        # Демоны Quasar на Linux Buildroot (если каталог существует)
+        try:
+            out, _, rc = self.adb.shell(f"[ -d {LOGS_DIR} ] && ls {LOGS_DIR} || true", check=False, timeout=5)
+            if rc == 0 and out.strip():
+                items.extend(sorted(strip_ansi(out).split()))
+        except Exception:
+            pass
+
+        # Логи демонов в /data/local/tmp (yamd.log, sud.log и др.)
+        try:
+            out, _, rc = self.adb.shell("ls /data/local/tmp/*.log 2>/dev/null || true", check=False, timeout=5)
+            if rc == 0 and out.strip():
+                for p in out.strip().split():
+                    fname = posixpath.basename(p.strip())
+                    if fname and fname not in items:
+                        items.append(f"tmp:{fname}")
+        except Exception:
+            pass
+
+        return items
 
     def log(self, name, lines):
         lines = max(10, min(5000, int(lines)))
-        if name == "panel":   # журнал самой панели — на компьютере, не на колонке
+        if name == "panel":   # лог самой панели живёт в процессе сервера, а не на колонке
             return {"text": JOURNAL.text(lines) or "Журнал пуст."}
         if name == "dmesg":
             cmd = f"dmesg | tail -n {lines}"
+        elif name == "logcat":
+            cmd = f"logcat -d -v time -t {lines}"
+        elif name == "logcat:yandex":
+            cmd = f"logcat -d -v time | grep -iE 'yandex|quasar|alice' | tail -n {lines}"
+        elif name == "logcat:audio":
+            cmd = f"logcat -d -v time | grep -iE 'audio|sound|media|alsa' | tail -n {lines}"
+        elif name.startswith("tmp:"):
+            fname = name[4:]
+            cmd = f"tail -n {lines} /data/local/tmp/{shlex.quote(fname)}"
         elif name in self.logs_list():
             cmd = f"tail -n {lines} {LOGS_DIR}/{shlex.quote(name)}"
         else:
-            raise AdbError("нет такого лога")
-        out, _, _ = self.adb.shell(cmd, timeout=20)
-        return {"text": strip_ansi(out)}
+            raise AdbError(f"Лог {name} не найден")
+        out, _, _ = self.adb.shell(cmd, timeout=20, check=False)
+        return {"text": strip_ansi(out) or "Лог пуст или ещё не сформирован."}
 
     def system(self, action):
         if action == "quasar_restart":
@@ -5716,14 +6173,15 @@ class Terminal:
     MAX = 4
     active = 0
     lock = threading.Lock()
-    PS1 = r"\[\e[1;32m\]root@lite2\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]# "
+    PS1 = r"\[\e[1;32m\]root@max\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]# "
 
     def __init__(self, adb, ws, cols, rows):
         self.adb, self.ws = adb, ws
         self.sid = os.urandom(4).hex()
         self.info = f"/tmp/webpanel_term_{self.sid}"
         cols, rows = max(20, min(400, cols)), max(5, min(200, rows))
-        cmd = (f"echo $$ $(tty) > {self.info}; stty rows {rows} cols {cols} 2>/dev/null; "
+        q_info = shlex.quote(self.info)
+        cmd = (f"echo $$ $(tty) > {q_info}; stty rows {rows} cols {cols} 2>/dev/null; "
                f"export TERM=xterm-256color PS1={shlex.quote(self.PS1)}; {YAM_PATH}cd /data 2>/dev/null; exec sh")
         self.proc = adb.popen(cmd, pty=True, cols=cols, rows=rows)
 
@@ -5740,7 +6198,10 @@ class Terminal:
 
     def resize(self, cols, rows):
         cols, rows = max(20, min(400, int(cols))), max(5, min(200, int(rows)))
-        self.adb.shell(f"read p t < {self.info} && stty -F $t rows {rows} cols {cols} && kill -WINCH $p; true",
+        if hasattr(self.proc, "resize"):
+            self.proc.resize(cols, rows)
+        q_info = shlex.quote(self.info)
+        self.adb.shell(f"read p t < {q_info} && stty -F $t rows {rows} cols {cols} && kill -WINCH $p; true",
                        check=False, timeout=10)
 
     def run(self):
@@ -5762,12 +6223,21 @@ class Terminal:
         except OSError:
             pass
         finally:
-            self.proc.terminate()       # adb закрывает соединение — оболочка на колонке получает SIGHUP
             try:
-                self.proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-            self.adb.shell(f"rm -f {self.info}", check=False, timeout=10)
+                self.proc.terminate()
+            except Exception:
+                pass
+            try:
+                self.proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+            if hasattr(self.proc, "close"):
+                self.proc.close()
+            q_info = shlex.quote(self.info)
+            self.adb.shell(f"read p t < {q_info} && kill -9 $p 2>/dev/null; rm -f {q_info}", check=False, timeout=10)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -5968,7 +6438,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"text": redact("\n".join(out)) + "\n"}
 
     # Действия, которые шлются потоком (ползунки, живой предпросмотр): в журнал — только ошибки
-    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd"}
+    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd", "/api/leds/live", "/api/leds/stream", "/api/clock/state"}
     # Что из тела запроса можно показать в журнале: имена и режимы, но не тексты, ключи и пароли
     JOURNAL_KEYS = ("name", "kind", "action", "which", "mode", "enabled", "id", "type")
 
@@ -6062,9 +6532,10 @@ class Handler(BaseHTTPRequestHandler):
     def _offline(self, path):
         """Пока колонки нет, API отвечает одним понятным статусом вместо ошибок adb."""
         # отчёт для Issue нужнее всего как раз тогда, когда колонка не подключается
-        if path.startswith("/api/") and not path.startswith("/api/conn") and path != "/api/report" and not self.panel.conn.online:
-            self._send(503, {"error": "Колонка не подключена", "offline": True})
-            return True
+        if path.startswith("/api/") and not path.startswith("/api/conn") and path != "/api/report":
+            if not self.panel or not getattr(self.panel, "conn", None) or not self.panel.conn.online:
+                self._send(503, {"error": "Колонка не подключена", "offline": True})
+                return True
         return False
 
     def do_GET(self):
@@ -6085,12 +6556,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, f.read_bytes(), "application/x-x509-ca-cert",
                               headers=[("Content-Disposition", 'attachment; filename="stantsiya-panel-ca.crt"')])
         if u.path == "/api/conn":
-            return self._send(200, self.panel.conn.info())
+            info = self.panel.conn.info() if (self.panel and getattr(self.panel, "conn", None)) else {"state": "offline", "online": False}
+            return self._send(200, info)
         if u.path == "/api/conn/find":
             return self._handle(self._conn_find)
-        if u.path == "/api/midi/tests":
-            # The saved owner observations remain readable without the speaker.
-            return self._handle(self.panel.midi_tests)
         if self._offline(u.path):
             return
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
@@ -6098,12 +6567,35 @@ class Handler(BaseHTTPRequestHandler):
             return self._terminal(q)
         if u.path == "/api/wakeword/proxy":
             return self._wakeword_proxy("GET", q.get("path", ""))
+        if u.path == "/api/leds/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                while True:
+                    frame = self.panel.clock_state()
+                    payload = json.dumps(frame)
+                    self.wfile.write(f"data: {payload}\n\n".encode())
+                    self.wfile.flush()
+                    time.sleep(0.045)  # ~22 FPS real-time stream
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
         p = self.panel
+        if p is None:
+            if u.path in ("/", "/index.html"):
+                return self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+            if u.path.startswith("/static/"):
+                f = (STATIC / unquote(u.path[len("/static/"):])).resolve()
+                if f.is_file() and STATIC in f.parents:
+                    return self._send(200, f.read_bytes(), MIME.get(f.suffix, "application/octet-stream"))
+            if u.path.startswith("/api/"):
+                return self._send(503, {"error": "Колонка не подключена", "offline": True})
+            return self._send(404, {"error": "not found"})
         routes = {
             "/api/status": p.status,
-            "/api/midi/hardware": p.midi_hardware,
-            "/api/midi/tests": p.midi_tests,
-            "/api/midi/tests/clock": p.midi_clock_tests,
             "/api/wakeword/status": p.wakeword_status,
             "/api/wakeword/actions": p.wakeword_actions,
             "/api/mute": lambda: {"muted": bool(load_settings().get("mute_before")), "volume": p._volume_level()},
@@ -6158,6 +6650,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/bt": p.bt_state,
             "/api/btout/eq": p.btout_eq_status,
             "/api/metrics": lambda: p.metrics.get(q.get("range", 3600)),
+
         }
         if u.path in routes:
             return self._handle(routes[u.path])
@@ -6190,6 +6683,8 @@ class Handler(BaseHTTPRequestHandler):
                 d = {}
             return self._panel_auth_post(u.path, d)
         if u.path == "/api/conn/retry":
+            if not self.panel or not getattr(self.panel, "conn", None):
+                return self._send(503, {"error": "Колонка не подключена", "offline": True})
             return self._send(200, self.panel.conn.retry_now())
         if u.path == "/api/conn/find":
             return self._handle(lambda: self._conn_find(start=True))
@@ -6203,6 +6698,8 @@ class Handler(BaseHTTPRequestHandler):
         if self._offline(u.path):
             return
         p = self.panel
+        if p is None:
+            return self._send(503, {"error": "Колонка не подключена", "offline": True})
         if u.path == "/api/upload":
             name = unquote(self.headers.get("X-Filename", "upload.bin"))
             body = self._body()
@@ -6243,9 +6740,6 @@ class Handler(BaseHTTPRequestHandler):
                                         str(self._jdata.get("path", "")), self._jdata.get("body"))
         routes = {
             "/api/volume": lambda: p.set_volume(d),
-            "/api/midi/tests/run": lambda: p.midi_test_run(d),
-            "/api/midi/tests/observe": lambda: p.midi_test_observe(d),
-            "/api/midi/tests/restore": p.midi_test_restore,
             "/api/mute": lambda: p.set_mute(bool(d.get("on"))),
             "/api/wakeword/install": p.wakeword_install,
             "/api/wakeword/start": p.wakeword_start,
@@ -6340,6 +6834,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/scenes/run": lambda: p.scene_run(d.get("id")),
             "/api/say": lambda: p.say(d.get("text"), d.get("voice", "alice")),
             "/api/scenes/stop": lambda: p.scene_stop(d.get("id")),
+
         }
         if u.path in routes:
             return self._handle(routes[u.path])
@@ -6350,15 +6845,16 @@ class PanelUpdater:
     """Проверка новых релизов панели на GitHub и обновление — в зависимости от того, как панель установлена:
     zip (Windows-сборка, Download ZIP) — скачать релиз и заменить файлы панели; git — git pull --ff-only;
     docker — только подсказать команду (образ изнутри не обновить)."""
-    FILES = ("server.py", "access.py", "agent.py", "glagol.py", "profiles.py", "midi.py", "managed_yam.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
+    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
     DIRS = ("static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно
 
-    def __init__(self, restart=None):
+    def __init__(self, restart=None, config=None):
         self.restart = restart or restart_self
         self.cache = (0, None)
         self.lock = threading.Lock()
+        self.config = config or get_config()
 
     @staticmethod
     def kind():
@@ -6378,27 +6874,20 @@ class PanelUpdater:
         return (ka[0][:4], ka[1]) > (kb[0][:4], kb[1])
 
     def check(self, refresh=False):
-        at, rel = self.cache
-        err = None
-        if refresh or rel is None or time.time() - at > 6 * 3600:
-            try:
-                req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/releases/latest",
-                                             headers={"User-Agent": f"yapanel-web/{VERSION}",
-                                                      "Accept": "application/vnd.github+json"})
-                with urllib.request.urlopen(req, timeout=15) as r:
-                    rel = json.load(r)
-                self.cache = (time.time(), rel)
-            except urllib.error.HTTPError as e:
-                err = "релизов пока нет или репозиторий закрыт" if e.code == 404 else f"GitHub ответил {e.code}"
-            except (OSError, ValueError) as e:
-                err = f"GitHub недоступен: {e}"
-        res = {"version": VERSION, "install": self.kind(), "repo": f"https://github.com/{REPO}", "checked": self.cache[0] or None}
-        if err and rel is None:
-            return {**res, "error": err}
-        latest = rel.get("tag_name", "").lstrip("v")
-        return {**res, "latest": latest, "latest_date": (rel.get("published_at") or "")[:10],
-                "url": rel.get("html_url"), "update": bool(latest) and self._newer(latest, VERSION),
-                **({"error": err} if err else {})}
+        """Проверка обновлений отключена (локальный форк)."""
+        repo = getattr(self.config.server, "github_repo", REPO) if hasattr(self, "config") and self.config else REPO
+        return {
+            "version": VERSION,
+            "install": self.kind(),
+            "repo": f"https://github.com/{repo}",
+            "checked": time.time(),
+            "latest": VERSION,
+            "latest_date": "",
+            "url": f"https://github.com/{repo}",
+            "update": False,
+            "disabled": True,
+            "message": "Обновления панели отключены (форк)",
+        }
 
     def update(self):
         if not self.lock.acquire(blocking=False):
@@ -6408,7 +6897,7 @@ class PanelUpdater:
             if info.get("error") and not info.get("latest"):
                 raise AdbError(info["error"])
             if not info.get("update"):
-                raise AdbError("уже установлена последняя версия")
+                raise AdbError("уже установлена последняя версия (обновления отключены)")
             kind = info["install"]
             if kind == "docker":
                 raise AdbError("в Docker обновите образ: docker compose pull && docker compose up -d")
@@ -6426,21 +6915,14 @@ class PanelUpdater:
             self.lock.release()
 
     def repair_missing(self):
-        """Обновление из архива копирует только файлы из списка старой версии: новых модулей (managed_yam.py
-        после 0.1.3) после него нет. Докачиваем исходники своей же версии, пока профили их не импортировали."""
-        missing = [f for f in self.FILES if f.endswith(".py") and not (ROOT / f).exists()]
-        if not missing or self.kind() != "zip":
-            return
-        print(f"Нет {', '.join(missing)} — докачиваю файлы версии {VERSION} с GitHub…")
-        try:
-            self._from_zip(VERSION)
-        except (OSError, AdbError, zipfile.BadZipFile) as e:
-            print(f"Не удалось: {e}. Часть функций будет недоступна до следующего обновления.")
+        """Докачивание файлов с внешнего GitHub отключено (форк)."""
+        return
 
     def _from_zip(self, version):
         """Исходники релиза с GitHub → поверх файлов панели. Данные (.yandex_auth.json и пр.), runtime и
         platform-tools не трогаем — их в архиве нет, а заменяем только файлы самой панели."""
-        url = f"https://github.com/{REPO}/archive/refs/tags/v{version}.zip"
+        repo = getattr(self.config.server, "github_repo", REPO) if hasattr(self, "config") and self.config else REPO
+        url = f"https://github.com/{repo}/archive/refs/tags/v{version}.zip"
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "webpanel"}), timeout=120) as r:
             blob = r.read()
         with zipfile.ZipFile(io.BytesIO(blob)) as z:
@@ -6466,30 +6948,22 @@ class PanelUpdater:
             shutil.rmtree(ROOT / name, ignore_errors=True)
 
 
-# Платформа в device-tree (compatible «yandex,plum», модель «Yandex Plum EVT2») → профиль колонки.
-# Имя хоста тут не годится: владелец мог его переименовать.
-# Станция 2 — station-midi/yandexmidi; Миди — cucumber/cucumber-dvt2. Макс пока не поддерживается.
-PLATFORM_MODELS = {"cucumber": "midi", "plum": "lite2", "prune": "lite2nc", "pickle": "mini3pro", "bergamot": "mini3",
-                   "yandexmidi": "station2", "station-midi": "station2", "station-mini2": "mini2",
-                   "station-micro": "lite", "yandexmicro": "lite"}
+# Платформа колонки Станция Макс (Amlogic S905X2 / yandexstation_2).
+PLATFORM_MODELS = {"yandexstation_2": "max", "station_max": "max", "yandexstation": "max"}
 
 
 def detect_model(adb):
-    """(профиль, платформа) подключённой колонки или (None, None), если платформа незнакомая."""
-    out, _, _ = adb.shell("cat /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null | tr '\\000' ' '; true",
+    """(профиль, платформа) подключённой колонки."""
+    out, _, _ = adb.shell("cat /proc/device-tree/compatible /proc/device-tree/model 2>/dev/null | tr '\\000' ' '; "
+                          "getprop ro.product.device 2>/dev/null; getprop ro.board.platform 2>/dev/null; true",
                           check=False, timeout=15)
     text = strip_ansi(out).lower()
     for platform, model in PLATFORM_MODELS.items():
         if re.search(rf"(^|[^a-z0-9]){platform}([^a-z0-9]|$)", text):
-            if model == 'mini2':
-                # Есть ли у этой Мини 2 сегментный дисплей: без него профиль mini2 зовёт несуществующие
-                # светодиоды часов. Не смогли посмотреть (adb моргнул) — не угадываем и остаёмся на mini2.
-                leds, _, rc = adb.shell('ls /sys/class/leds 2>/dev/null', check=False, timeout=15)
-                listing = strip_ansi(leds)
-                if rc == 0 and listing.strip() and 'white:clock' not in listing:
-                    return 'mini2nc', platform
             return model, platform
-    return None, None
+    if "amlogic" in text and "g12a" in text:
+        return "max", "yandexstation_2"
+    return "max", "yandexstation_2"
 
 
 def local_networks():
@@ -6674,44 +7148,55 @@ class TLSServer(ThreadingHTTPServer):
 
 def load_settings():
     try:
-        return json.loads(SETTINGS_FILE.read_text())
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
 
 def save_settings(d):
     try:
-        SETTINGS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=1))
+        SETTINGS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
         pass
 
 
 def main():
-    env = os.environ.get
     import profiles
     ap = argparse.ArgumentParser(description="Веб-панель для Яндекс Станций")
-    ap.add_argument("--device", default=env("ADB_SERIAL"),
+    ap.add_argument("--device", default=None,
                     help="IP колонки (порт 5555 по умолчанию), host:port или серийник USB; запоминается [ADB_SERIAL]")
     ap.add_argument("--find", nargs="?", const="auto", metavar="ПОДСЕТЬ",
                     help="найти колонку в локальной сети (или в заданной подсети, например 192.168.1.0/24) и запомнить")
-    ap.add_argument("--host", default=env("PANEL_HOST", "127.0.0.1"),
+    ap.add_argument("--host", default=None,
                     help="адрес веб-сервера; 0.0.0.0 — доступ из локальной сети [PANEL_HOST]")
-    ap.add_argument("--port", type=int, default=int(env("PANEL_PORT", "8765")), help="порт HTTP [PANEL_PORT]")
-    ap.add_argument("--https-port", type=int, default=int(env("PANEL_HTTPS_PORT", "8766")),
+    ap.add_argument("--port", type=int, default=None, help="порт HTTP [PANEL_PORT]")
+    ap.add_argument("--https-port", type=int, default=None,
                     help="порт HTTPS со своим сертификатом (для установки как приложение с телефона); 0 — выключить [PANEL_HTTPS_PORT]")
-    ap.add_argument("--data-dir", default=env("PANEL_DATA_DIR"),
+    ap.add_argument("--data-dir", default=None,
                     help="где хранить токен, пароль, сертификаты и историю (по умолчанию — рядом с server.py) [PANEL_DATA_DIR]")
-    ap.add_argument("--open", action="store_true", help="открыть панель в браузере после запуска")
-    ap.add_argument("--model", choices=[*profiles.PROFILES, "auto"], default=env("PANEL_MODEL", "auto"),
-                    help="профиль колонки: lite2, lite, mini3pro, mini3, mini2, station2, midi или auto — определить по плате [PANEL_MODEL]")
+    ap.add_argument("--open", action="store_true", default=None, help="открыть панель в браузере после запуска")
+    ap.add_argument("--model", default="max",
+                    help="профиль колонки: max или auto — определить по плате [PANEL_MODEL]")
     args = ap.parse_args()
+
+    # 4-Tier Precedence: CLI > ENV > JSON > Defaults
+    cfg = PanelConfig.load(settings_path=args.data_dir, cli_args=args)
+    set_config(cfg)
+
+    # Assign back to args for 100% downstream code compatibility
+    args.host = cfg.server.host
+    args.port = cfg.server.port
+    args.https_port = cfg.server.https_port
+    args.model = cfg.device.model
+    args.device = cfg.device.serial
+    args.open = cfg.server.open_browser
+
     for stream in (sys.stdout, sys.stderr):   # консоль Windows: русский текст не должен ронять сервер
         try:
             stream.reconfigure(errors="replace", line_buffering=True)
         except (AttributeError, ValueError):
             pass
-    if args.data_dir:
-        set_data_dir(args.data_dir)
+    set_data_dir(cfg.server.data_dir)
 
     # Адрес колонки: из аргумента/окружения, иначе — запомненный, иначе спросим (если есть кому ответить).
     settings = load_settings()
@@ -6730,17 +7215,24 @@ def main():
 
     # Профиль: явный --model или auto — запомненный (до первого подключения — Лайт 2), сверка после подключения.
     auto = args.model == "auto"
-    model = (settings.get("model") if settings.get("model") in profiles.PROFILES else "lite2") if auto else args.model
-    PanelUpdater().repair_missing()
+    model = (settings.get("model") if settings.get("model") in profiles.PROFILES else "max") if auto else (args.model or "max")
+    # PanelUpdater(config=cfg).repair_missing()  # disabled (fork)
     profiles.install(sys.modules[__name__], model, auto=auto)
     global PANEL_PROFILE
     PANEL_PROFILE = (model, auto)
 
-    adb = Adb(find_adb(), device)
-    panel = Panel(adb)
+    adb_bin = "local" if device == "local" else find_adb()
+    adb = Adb(adb_bin, device)
+    panel = Panel(adb, config=cfg)
     panel.auth = glagol.YandexAuth(AUTH_FILE)
     host = device.rpartition(":")[0] if device and ":" in device else None
-    panel.glagol = glagol.Glagol(panel.auth, host, None, GLAGOL_PLATFORM)
+    if adb.is_local and not host:
+        host = "127.0.0.1"
+    panel.glagol = glagol.Glagol(panel.auth, host, None, GLAGOL_PLATFORM, config=cfg.glagol)
+    try:
+        panel.version()
+    except Exception:
+        pass
     panel.wakeword_router_start()
     panel.ymusic = glagol.YandexMusic(panel.auth)
     panel.agent_attach()
@@ -6755,7 +7247,7 @@ def main():
         threading.Thread(target=watch_model, args=(adb, panel.conn, model), daemon=True, name="model").start()
     Handler.panel = panel
     Handler.access = access.PanelAccess(PANEL_AUTH_FILE)
-    Handler.updater = PanelUpdater()
+    Handler.updater = PanelUpdater(config=cfg)
     Handler.ports = {"http": args.port}
     # после перезапуска (обновление) старый процесс может ещё держать порт — подождём
     for attempt in range(20):
@@ -6798,7 +7290,7 @@ def main():
             print(f"HTTPS не запущен ({e}) — панель работает по HTTP")
     if not Handler.access.enabled:
         print("Пароль панели не задан — его можно задать во вкладке «Настройки» → «Доступ».")
-    if args.open:
+    if args.open or cfg.server.open_browser:
         import webbrowser
         threading.Timer(1.0, webbrowser.open, (f"http://{shown}:{args.port}/",)).start()
     # kill (SIGTERM) — как Ctrl+C: выходим через finally и успеваем сохранить историю графиков

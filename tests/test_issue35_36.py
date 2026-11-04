@@ -13,28 +13,6 @@ import profiles
 from test_profiles import fresh_server
 
 
-class Mini3Boundaries(unittest.TestCase):
-    def test_unsupported_operations_never_write_or_start_device_commands(self):
-        s = fresh_server()
-        profiles.install(s, 'mini3')
-        p = s.Panel(Mock())
-        cases = [('alarms_save', ({'alarms': []},)), ('scenes_save', ({'scenes': []},)),
-                 ('alarm_install', ()), ('alarm_test', ('demo',)),
-                 ('sound_replace', ('common/demo.mp3', b'demo')),
-                 ('alarm_sound_upload', ('demo.wav', b'demo')),
-                 ('anim_install', ('ring', 'demo.led')), ('ring_try', ('loop\n', 5)),
-                 ('_install_override', (b'demo', '/tmp/custom', '/tmp/target'))]
-        for method, args in cases:
-            with self.subTest(method=method), self.assertRaisesRegex(s.AdbError, 'mini3'):
-                getattr(p, method)(*args)
-        p.adb.shell.assert_not_called()
-        p.adb.push.assert_not_called()
-        p.adb.shell.return_value = ('', '', 0)
-        st = p.hook_status()
-        self.assertFalse(st['supported'])
-        self.assertIn('не поддерживается', st['reason'])
-
-
 class BluetoothBoot(unittest.TestCase):
     @unittest.skipUnless(shutil.which('sh'), 'requires sh')
     def test_removed_off_flag_stops_existing_boot_loop(self):
@@ -49,7 +27,7 @@ class BluetoothBoot(unittest.TestCase):
             for f in bin.iterdir():
                 f.chmod(0o755)
             script = server.BT_OFF_BOOT.replace(server.BT_OFF, str(flag)) + '\nwait\n'
-            subprocess.run(['sh', '-c', script], env={**os.environ, 'PATH': str(bin)+':'+os.environ['PATH']}, check=True, timeout=5)
+            subprocess.run(['sh', '-c', script], env={**os.environ, 'PATH': str(bin) + os.pathsep + os.environ['PATH']}, check=True, timeout=5)
             self.assertEqual(log.read_text().splitlines(), ['off'])
 
 

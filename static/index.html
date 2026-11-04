@@ -33,7 +33,7 @@
       s.setProperty('--accent-ink', `color-mix(in srgb, ${ac} 72%, var(--text))`);
       s.setProperty('--accent-soft', `color-mix(in srgb, ${ac} 15%, var(--card))`);
     }
-    window.__vizOff = localStorage.getItem('ui.viz') === '0';
+    window.__vizOff = localStorage.getItem('ui.viz') !== '1';
   } catch {}
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -767,7 +767,7 @@
   .mu-ask-form > .btn { min-height:42px;align-self:flex-start; }
   .model-view { position: relative; width: 100%; height: 340px; cursor: grab; touch-action: none; }
   .model-view:active { cursor: grabbing; }
-  @media (hover: none) and (pointer: coarse) { .model-view, .model-view:active { cursor: default; touch-action: pan-y; } }
+  @media (hover: none) and (pointer: coarse) { .model-view, .model-view:active { cursor: grab; touch-action: none; } }
   .model-view canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
   .model-view #model-viz { pointer-events: none; }
 
@@ -1177,7 +1177,8 @@
     <symbol id="i-prev" viewBox="0 0 24 24"><g fill="currentColor"><path d="M18 5.5v13L9 12z"/><rect x="5" y="5" width="2.5" height="14" rx="1"/></g></symbol>
     <symbol id="i-next" viewBox="0 0 24 24"><g fill="currentColor"><path d="M6 5.5v13l9-6.5z"/><rect x="16.5" y="5" width="2.5" height="14" rx="1"/></g></symbol>
     <symbol id="i-shuffle" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M16 4h4v4M4 20L20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/></symbol>
-    <symbol id="i-flow" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M9 6h6M6 9v6a3 3 0 0 0 3 3h6"/></g></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-7 7c0 2.5 1.3 4.7 3.2 6 .8.6 1.3 1.5 1.5 2.5h4.6c.2-1 .7-1.9 1.5-2.5A7 7 0 0 0 12 2z"/></g></symbol>
+    <symbol id="i-flow"  viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M9 6h6M6 9v6a3 3 0 0 0 3 3h6"/></g></symbol>
     <symbol id="i-repeat" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 2l3 3-3 3M3 11V9a4 4 0 0 1 4-4h13M7 22l-3-3 3-3M21 13v2a4 4 0 0 1-4 4H4"/></symbol>
     <symbol id="i-like" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 20s-7-4.4-9-9.2C1.7 7.6 3.8 4.5 7 4.5c2 0 3.3 1.1 5 3 1.7-1.9 3-3 5-3 3.2 0 5.3 3.1 4 6.3C19 15.6 12 20 12 20z"/></symbol>
     <symbol id="i-dislike" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></g></symbol>
@@ -1199,7 +1200,7 @@
   <aside>
     <a class="brand" href="#overview" title="На «Обзор»">
       <svg class="brand-logo" viewBox="-50 -50 100 100" aria-hidden="true"><rect x="-34" y="12" width="10" height="20" rx="5"/><rect x="-19" y="-6" width="10" height="38" rx="5"/><rect x="-5" y="-26" width="10" height="58" rx="5"/><rect x="9" y="-6" width="10" height="38" rx="5"/><rect x="24" y="12" width="10" height="20" rx="5"/></svg>
-      <div><b id="model-name">Станция Лайт 2</b><small>yapanel</small></div>
+      <div><b id="model-name">Станция Макс</b><small>yapanel</small></div>
     </a>
     <nav class="side" id="nav-sheet" aria-label="Разделы">
       <div class="sheet-head" role="presentation"><span></span></div>
@@ -1231,6 +1232,8 @@
   <div class="nav-backdrop" id="nav-backdrop"></div>
   <nav class="mbar" aria-label="Главные разделы">
     <a href="#overview" data-tab="overview"><svg aria-hidden="true"><use href="#i-grid"/></svg><span>Обзор</span></a>
+    <a href="#player" data-tab="player" class="mbar-opt" hidden><svg aria-hidden="true"><use href="#i-music"/></svg><span>Плеер</span></a>
+    <a href="#boot" data-tab="boot" class="mbar-opt" hidden><svg aria-hidden="true"><use href="#i-power"/></svg><span>Анимации</span></a>
     <a href="#alarm" data-tab="alarm"><svg aria-hidden="true"><use href="#i-alarm"/></svg><span>Будильник</span></a>
     <a href="#scenes" data-tab="scenes"><svg aria-hidden="true"><use href="#i-flow"/></svg><span>Сценарии</span></a>
     <button type="button" id="mbar-more" aria-expanded="false" aria-controls="nav-sheet"><svg aria-hidden="true"><use href="#i-more"/></svg><span>Ещё</span></button>
@@ -1613,25 +1616,24 @@
           <div class="set-ctl"><button class="btn sm" id="bk-save"><svg width="18" height="18" aria-hidden="true"><use href="#i-dl"/></svg>Скачать</button>
             <button class="btn sm" id="bk-restore"><svg width="18" height="18" aria-hidden="true"><use href="#i-ul"/></svg>Восстановить…</button></div>
           <input type="file" id="bk-file" accept=".gz,.tgz,application/gzip" hidden></div>
-        <div class="set-item set-danger"><div class="set-label"><b>Удалить всё с колонки</b><small>Вернёт стандартные заставку и звук, удалит будильники и строку автозапуска. Перезагрузка не нужна</small></div>
+        <div class="set-item set-danger"><div class="set-label"><b>Удалить всё с колонки</b><small>Вернёт стандартные заставку и звук, удалит будильники и настройки автозапуска. Перезагрузка не нужна</small></div>
           <div class="set-ctl"><button class="btn sm danger" id="fp-reset" disabled>Удалить всё</button></div></div>
       </section>
 
       <section class="card set-card" id="upd-card">
-        <div class="set-head"><span class="set-ic"><svg width="18" height="18" aria-hidden="true"><use href="#i-up"/></svg></span><div><h2>О панели</h2><p id="upd-sub">Версия и обновления</p></div></div>
+        <div class="set-head"><span class="set-ic"><svg width="18" height="18" aria-hidden="true"><use href="#i-up"/></svg></span><div><h2>О панели</h2><p id="upd-sub">Версия панели (локальный форк)</p></div></div>
         <div class="set-item"><div class="set-label"><b>Колонка: <span id="upd-model">—</span></b><small id="upd-model-how">—</small></div></div>
         <div class="set-item"><div class="set-label"><b>Адрес колонки: <span class="mono" id="set-addr">—</span></b><small>Запоминается — при следующем запуске панель подключится к ней же</small></div>
           <div class="set-ctl"><button class="btn sm" data-finder="set-find-slot">Другая колонка…</button></div></div>
         <div id="set-find-slot"></div>
-        <div class="set-item"><div class="set-label"><b>Версия <span id="upd-version">—</span></b><small id="upd-state">проверяем…</small></div>
-          <div class="set-ctl"><button class="btn sm" id="upd-check">Проверить</button><a class="btn sm" id="upd-repo" href="https://github.com/dimap/yapanel-web" target="_blank" rel="noopener">GitHub ↗</a></div></div>
-        <div class="set-item" id="upd-row" hidden><div class="set-label"><b>Доступна версия <span id="upd-latest">—</span></b><small id="upd-how">—</small></div>
-          <div class="set-ctl"><a class="btn sm" id="upd-notes" target="_blank" rel="noopener">Что нового ↗</a><button class="btn sm primary" id="upd-go">Обновить</button></div></div>
+        <div class="set-item"><div class="set-label"><b>Версия <span id="upd-version">—</span></b><small id="upd-state">обновления отключены (форк)</small></div>
+          <div class="set-ctl"></div></div>
+        <div class="set-item" id="upd-row" hidden></div>
         <pre class="set-cmd" id="upd-cmd" hidden></pre>
         <div class="set-item"><div class="set-label"><b>Что-то не работает?</b><small>Отчёт для Issue: версии панели, adb и прошивки, хук,
           своё на колонке и журнал панели (вкладка «Логи» → «журнал панели»). Токены, ключи, адреса и MAC в нём скрыты — но перед отправкой
           всё равно просмотрите.</small></div>
-          <div class="set-ctl"><button class="btn sm" data-report="set-report">Скопировать отчёт</button><a class="btn sm" href="https://github.com/dimap/yapanel-web/issues/new" target="_blank" rel="noopener">Новое Issue ↗</a></div></div>
+          <div class="set-ctl"><button class="btn sm" data-report="set-report">Скопировать отчёт</button></div></div>
         <textarea class="field mono report-text" id="set-report" readonly hidden aria-label="Отчёт для Issue"></textarea>
       </section>
 
@@ -2474,25 +2476,624 @@
       Копировать — выделить мышью (или Ctrl+C при выделении), вставить — Ctrl+Shift+V. Программы из пакетов yam доступны по имени.</p>
   </main>
 
-  <style>
-    #tab-led .led-tools{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:center;margin-bottom:12px}
-    #tab-led .led-tools label{display:flex;align-items:center;gap:8px;font-size:13px}
-    #tab-led .led-tools input[type=color]{width:38px;height:26px;padding:0;border:none;background:none;cursor:pointer}
-    #tab-led .led-presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
-    #tab-led .led-swatch{width:30px;height:30px;border-radius:7px;border:1px solid rgba(128,128,128,.4);cursor:pointer;padding:0}
-    #tab-led .led-stage{background:#0a0a0a;border:1px solid #242424;border-radius:12px;padding:14px;overflow-x:auto;display:flex;justify-content:center}
-    #tab-led .led-grid{display:grid;grid-template-columns:repeat(15,26px);grid-template-rows:repeat(13,26px);gap:3px}
-    #tab-led .led-cell{width:26px;height:26px;border-radius:6px;background:#1c1c24;box-shadow:inset 0 0 0 1px #33333f;cursor:pointer;touch-action:none;transition:background-color .05s}
-    #tab-led .led-cell.empty{visibility:hidden;cursor:default}
-    #tab-led .led-cell.oknix{outline:1px dashed #4a4a4a;outline-offset:-1px}
-    #tab-led .led-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-    /* телефон: сетка во всю ширину карточки, без горизонтальной прокрутки */
-    @media (max-width: 760px) {
-      #tab-led .led-stage{padding:10px}
-      #tab-led .led-grid{width:100%;grid-template-columns:repeat(15,minmax(0,1fr));grid-template-rows:none;gap:2px}
-      #tab-led .led-cell{width:auto;height:auto;aspect-ratio:1;border-radius:4px}
-    }
-  </style>
+  <main id="tab-charts" data-page hidden>
+    <header class="page-head">
+      <div><h1>Графики</h1><div class="sub">Раз в 10 секунд за последние сутки. История хранится на компьютере</div></div>
+      <div class="actions">
+        <div class="seg" id="ch-range" role="group" aria-label="Период"><button data-v="900">15 мин</button><button data-v="3600">1 ч</button><button data-v="21600">6 ч</button><button data-v="86400">24 ч</button></div>
+        <button class="btn sm" id="ch-csv" title="Скачать данные таблицей"><svg width="14" height="14" aria-hidden="true"><use href="#i-dl"/></svg>CSV</button>
+        <button class="btn sm" id="ch-clear">Очистить</button>
+      </div>
+    </header>
+    <div class="charts" id="ch-grid"></div>
+    <section class="card chart-card">
+      <div class="chart-head"><h2>Воспроизведение</h2><div class="chart-val" id="ch-play-v">—</div></div>
+      <div class="chart-sub" id="ch-play-sub">когда колонка что-то играла (музыка, ответы Алисы, звуки)</div>
+      <svg class="chart-svg strip" id="ch-play" role="img" aria-label="Когда колонка играла звук"></svg>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>События</h2><span class="meta">отмечены на графиках вертикальными линиями</span></div>
+      <div class="ev-list" id="ch-events"><span class="meta">—</span></div>
+    </section>
+  </main>
+
+  <main id="tab-boot" data-page hidden>
+    <header class="page-head"><div><h1>Анимации</h1><div class="sub">Анимации кольца и часов, заставка при включении</div></div></header>
+    <!-- заставка часов -->
+    <section class="card" id="boot-card">
+      <div class="card-head"><h2>Анимации часов</h2>
+        <div class="row anim-pick"><select class="field" id="anim-clock" aria-label="Анимация часов"></select><div class="status-line" id="boot-status">—</div><span class="badge" data-hook-badge>—</span></div></div>
+      <div class="anim-pending" data-anim-pending hidden>
+        <span>Алиса подхватит изменённые анимации только после перезапуска — колонку перезагружать не нужно.</span>
+        <button class="btn sm primary" data-anim-restart>Перезапустить Алису</button>
+      </div>
+      <div class="frames" id="boot-frames" aria-label="Кадры"></div>
+      <div class="boot-grid">
+        <div class="col">
+          <div class="display editable" id="boot-editor"></div>
+          <p class="hint">Нажимайте на сегменты, чтобы зажечь их выбранной яркостью или погасить. Правая кнопка мыши (на телефоне —
+            долгое нажатие) берёт яркость сегмента в ползунок.</p>
+        </div>
+        <div class="col">
+          <div class="row" style="gap:8px">
+            <input type="text" id="boot-text" class="field mono" maxlength="10" placeholder="HI:YA" aria-label="Текст в кадр" style="flex:1;min-width:100px">
+            <button class="btn" id="boot-text-apply" style="min-height:42px">Текст в кадр</button>
+          </div>
+          <div class="row" style="gap:8px">
+            <label for="boot-br" style="min-width:auto">Яркость сегмента</label>
+            <input type="range" id="boot-br" min="1" max="255" value="255" style="flex:1;min-width:100px;width:auto">
+            <span class="mono meta" id="boot-br-v" style="min-width:32px;text-align:right">255</span>
+            <button class="btn sm" id="boot-br-all" title="Все горящие сегменты кадра — этой яркостью">Весь кадр</button>
+          </div>
+          <div class="row" style="gap:8px">
+            <label for="boot-ms" style="min-width:auto">Длительность кадра</label>
+            <input type="number" id="boot-ms" class="field mono" min="10" max="65535" step="10" style="width:100px"><span class="meta">мс</span>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn sm" id="boot-dup">Дублировать кадр</button>
+            <button class="btn sm" id="boot-left" aria-label="Сдвинуть кадр влево">←</button>
+            <button class="btn sm" id="boot-right" aria-label="Сдвинуть кадр вправо">→</button>
+            <button class="btn sm" id="boot-clear">Очистить</button>
+            <button class="btn sm danger" id="boot-del">Удалить кадр</button>
+          </div>
+          <div class="row" style="gap:8px" data-boot-only>
+            <label for="boot-pause" style="min-width:auto">Пауза перед заставкой</label>
+            <input type="number" id="boot-pause" class="field mono" min="0" max="65535" step="100" value="3300" style="width:100px"><span class="meta">мс</span>
+          </div>
+          <p class="hint" id="boot-pause-hint" data-boot-only>В стандартной заставке 3,3 с пустого экрана: в первые секунды загрузки дисплей ещё не показывает картинку, и более ранние кадры не видны.</p>
+          <label class="toggle" data-boot-only>
+            <span>Показывать при каждой загрузке</span>
+            <input type="checkbox" id="boot-always">
+          </label>
+          <p class="hint" data-boot-only>По умолчанию заставка и звук запуска появляются только при первом включении, с этой
+            опцией — при каждом. Свой звук запуска — в «Звуках» на «Обзоре» (boot).</p>
+          <div class="row" style="gap:8px; padding-top:12px; border-top:1px solid var(--line-2)">
+            <button class="btn sm" id="boot-preview"><svg width="14" height="14" aria-hidden="true"><use href="#i-play"/></svg>В браузере</button>
+            <button class="btn sm" id="boot-device"><svg width="14" height="14" aria-hidden="true"><use href="#i-play"/></svg>На колонке</button>
+            <button class="btn sm" id="boot-load-default">Открыть стандартную</button>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn primary" id="boot-install">Установить на колонку</button>
+            <button class="btn danger" id="boot-reset">Вернуть стандартную</button>
+          </div>
+          <div class="row" style="gap:8px" id="boot-del-row" hidden>
+            <button class="btn sm danger" id="boot-del-my">Удалить свою</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- анимации кольца -->
+    <section class="card" id="ring-anim-card">
+      <div class="card-head"><h2>Анимации кольца</h2>
+        <div class="row anim-pick"><select class="field" id="anim-ring" aria-label="Анимация кольца"></select><div class="status-line" id="ra-status">—</div><span class="badge" data-hook-badge>—</span></div></div>
+      <div class="anim-pending" data-anim-pending hidden>
+        <span>Алиса подхватит изменённые анимации только после перезапуска — колонку перезагружать не нужно.</span>
+        <button class="btn sm primary" data-anim-restart>Перезапустить Алису</button>
+      </div>
+      <div class="boot-grid">
+        <div class="col">
+          <div class="ra-preview" id="ra-preview" aria-hidden="true"></div>
+          <label class="toggle"><span>Повторять по кругу</span><input type="checkbox" id="ra-loop"></label>
+          <div class="ra-frames" id="ra-frames"></div>
+          <div class="row" style="gap:8px" id="ra-visual-btns"><button class="btn sm" id="ra-add"><svg width="14" height="14" aria-hidden="true"><use href="#i-plus"/></svg>Кадр</button></div>
+          <p class="hint" id="ra-complex" hidden>В этой анимации есть плавные переходы, градиенты или вращение — их можно править
+            только текстом справа. В браузере они показываются упрощённо.</p>
+        </div>
+        <div class="col">
+          <label for="ra-text">Текст анимации</label>
+          <textarea class="field mono" id="ra-text" rows="12" spellcheck="false"></textarea>
+          <p class="hint">Строка — кадр: цвета точек кольца (RRGGBB) и длительность в мс, например
+            <code>ff0000 00ff00 0000ff 200</code>. <code>loop</code> — повторять по кругу.</p>
+          <div class="row" style="gap:8px; padding-top:12px; border-top:1px solid var(--line-2)">
+            <button class="btn sm" id="ra-preview-btn"><svg width="14" height="14" aria-hidden="true"><use href="#i-play"/></svg>В браузере</button>
+            <button class="btn sm" id="ra-device"><svg width="14" height="14" aria-hidden="true"><use href="#i-play"/></svg>На колонке</button>
+            <button class="btn sm" id="ra-load-default">Открыть стандартную</button>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn primary" id="ra-install">Установить на колонку</button>
+            <button class="btn danger" id="ra-reset">Вернуть стандартную</button>
+          </div>
+          <div class="row" style="gap:8px" id="ra-del-row" hidden>
+            <button class="btn sm danger" id="ra-del-my">Удалить свою</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= ПРИЛОЖЕНИЯ (yam) ================= -->
+  <main id="tab-apps" data-page hidden>
+    <header class="page-head">
+      <div><h1>Приложения</h1><div class="sub">Пакеты для колонки через менеджер yam</div></div>
+    </header>
+
+    <section class="card" id="y2-card">
+      <div class="card-head">
+        <h2>yam 2</h2>
+        <div class="actions"><span class="badge" id="y2-badge">—</span></div>
+      </div>
+      <p class="hint" id="y2-intro">yam 2 — менеджер пакетов прямо на колонке (github.com/nyakokitsu/yam). Панель скачает последний релиз,
+        сверит контрольную сумму и положит его в <code>/data/yam</code> — как их установщик, но не трогая системный раздел.
+        Старый yamd ниже от этого не изменится.</p>
+      <div class="set-item">
+        <div class="set-label"><b>Версия</b><small id="y2-ver">проверяем…</small></div>
+        <div class="set-ctl"><a class="btn sm" id="y2-notes" target="_blank" rel="noopener" hidden>Что нового ↗</a>
+          <button class="btn sm primary" id="y2-install" hidden>Установить yam 2</button>
+          <button class="btn sm primary" id="y2-update" hidden>Обновить</button></div>
+      </div>
+      <div id="y2-ready" hidden>
+        <div class="set-item">
+          <div class="set-label"><b>Каталог пакетов</b><small id="y2-reg">—</small></div>
+          <div class="set-ctl"><button class="btn sm primary" id="y2-reg-add" hidden>Подключить официальный каталог</button></div>
+        </div>
+        <div class="set-item">
+          <div class="set-label"><b>Состояние пакетов</b><small id="y2-doc">ссылки, файлы и база yam</small></div>
+          <div class="set-ctl"><button class="btn sm" id="y2-doctor">Проверить</button>
+            <button class="btn sm primary" id="y2-repair" hidden>Починить</button>
+            <button class="btn sm danger" id="y2-uninstall">Удалить yam 2</button></div>
+        </div>
+        <pre class="out" id="y2-out" hidden style="max-height:220px"></pre>
+        <p class="hint untested-note" id="y2-legacy-note" hidden>Работает старый yamd. Он слушает порт 8099 — тот же, что Luna из
+          каталога yam 2, поэтому вместе они не запустятся: при запуске Luna панель предложит остановить yamd.</p>
+      </div>
+    </section>
+
+    <div id="y2-on" hidden>
+      <div class="cols" style="margin-bottom:14px">
+        <section class="card">
+          <div class="card-head"><h2>Установлено в yam 2</h2><span class="meta" id="y2-count"></span></div>
+          <div id="y2-installed"><div class="empty">Загрузка…</div></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Лог службы</h2><span class="meta mono" id="y2-log-id"></span></div>
+          <pre class="out" id="y2-log" style="min-height:120px;max-height:300px">Нажмите «Лог» у службы.</pre>
+          <p class="hint">Пакет может объявить службы — программы, которые должны работать постоянно (например, Luna).
+            Сам yam их не запускает, это делает панель: «Запустить» — до перезагрузки, «При загрузке» — каждый раз через хук
+            в <code>rootkeeper.sh</code>. Упавшую службу панель перезапускает, но не больше 5 раз подряд.</p>
+        </section>
+      </div>
+      <section class="card" id="y2-cat-card">
+        <div class="card-head">
+          <h2>Каталог yam 2</h2>
+          <div class="row" style="gap:8px">
+            <label class="toggle" style="margin:0"><span class="meta">Все модели</span><input type="checkbox" id="y2-all"></label>
+            <label class="search" style="min-width:220px"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg>
+              <input type="search" id="y2-filter" placeholder="Найти пакет" aria-label="Найти пакет в каталоге yam 2"></label>
+            <button class="btn sm icon" id="y2-refresh" aria-label="Обновить каталог yam 2"><svg width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+          </div>
+        </div>
+        <div class="apps-grid" id="y2-catalog"><div class="empty">Загрузка…</div></div>
+      </section>
+    </div>
+
+    <details class="legacy" id="yam-legacy">
+      <summary><b>Старый yam (yamd, v0.1)</b> <span class="meta" id="yam-legacy-state"></span></summary>
+
+    <section class="card" id="yam-missing" hidden>
+      <h2>yam не установлен</h2>
+      <p class="hint">yam — менеджер пакетов для Станций (github.com/nyakokitsu/yam). Панель скачает последний релиз yamd с GitHub, сверит контрольную сумму, положит его на колонку в /data/quazar/yam и запустит — как официальный установщик.</p>
+      <div class="row"><button class="btn primary" id="yam-install">Установить yam</button></div>
+    </section>
+
+    <section class="card" id="yam-card">
+      <div class="card-head">
+        <h2>yamd</h2>
+        <div class="actions">
+          <span class="badge" id="yam-badge">—</span>
+          <button class="btn sm primary" id="yam-start" hidden><svg width="14" height="14" aria-hidden="true"><use href="#i-play"/></svg>Запустить</button>
+          <a class="btn sm" id="yam-web" target="_blank" rel="noopener" hidden>Веб-интерфейс yam ↗</a>
+        </div>
+      </div>
+      <p class="hint" id="yam-off" hidden>Демон не работает — без него устанавливать и запускать пакеты нельзя.</p>
+      <div class="set-item" id="yam-ver-row">
+        <div class="set-label"><b>Версия</b><small id="yam-ver">проверяем…</small></div>
+        <div class="set-ctl"><a class="btn sm" id="yam-notes" target="_blank" rel="noopener" hidden>Что нового ↗</a>
+          <button class="btn sm primary" id="yam-update" hidden>Обновить yamd</button></div>
+      </div>
+      <div id="yam-update-confirm" hidden class="hint">
+        <p id="yam-update-text"></p>
+        <button class="btn primary" id="yam-update-confirm-btn">Обновить сейчас</button>
+        <button class="btn" id="yam-update-cancel">Отмена</button>
+      </div>
+      <p id="yam-update-result" role="status" class="hint" hidden></p>
+      <label class="toggle"><span>Запускать yamd при загрузке колонки</span>
+        <input type="checkbox" id="yam-autostart"></label>
+    </section>
+
+    <div id="yam-on" hidden>
+      <div class="cols" style="margin-bottom:14px">
+        <section class="card">
+          <div class="card-head"><h2>Установлено</h2><span class="meta" id="yam-count"></span></div>
+          <div id="yam-installed"><div class="empty">Загрузка…</div></div>
+        </section>
+        <section class="card">
+          <h2>Настройки yamd</h2>
+          <label class="toggle"><span>Разрешить бинарные пакеты <span class="meta" style="font-weight:500">— почти все пакеты реестра — программы; без этого они ставятся, но не запускаются</span></span>
+            <input type="checkbox" id="yam-binaries"></label>
+          <p class="hint">У API и веб-интерфейса yamd на порту 8099 нет авторизации — любой в локальной сети может ставить и запускать пакеты.</p>
+          <div class="card-head"><h2 style="font-size:15px">Лог пакета</h2><span class="meta mono" id="yam-log-id"></span></div>
+          <pre class="out" id="yam-log" style="min-height:120px;max-height:300px">Нажмите «Лог» у пакета.</pre>
+          <p class="hint">Разовые пакеты (как fastfetch) пишут результат сюда — он откроется сам после «Запустить».
+            Программы из пакетов можно запускать и в «Консоли» по имени, например <code>fastfetch</code>.</p>
+        </section>
+      </div>
+      <section class="card">
+        <div class="card-head">
+          <h2>Каталог</h2>
+          <div class="row" style="gap:8px">
+            <label class="search" style="min-width:220px"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg>
+              <input type="search" id="yam-filter" placeholder="Найти пакет" aria-label="Найти пакет"></label>
+            <button class="btn sm icon" id="yam-refresh" aria-label="Обновить каталог"><svg width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+          </div>
+        </div>
+        <div class="apps-grid" id="yam-catalog"><div class="empty">Загрузка…</div></div>
+      </section>
+    </div>
+    </details>
+  </main>
+
+  <main id="tab-assistant" data-page hidden>
+    <header class="page-head">
+      <div><h1>Ассистент</h1><div class="sub">Свой голосовой помощник: «Алиса, спроси GPT …» уходит выбранной модели</div></div>
+      <div class="actions"><span class="badge" id="as-badge">—</span></div>
+      <div class="untested" id="as-experimental" role="alert" hidden>
+        <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z"/></svg>
+        <div>
+          <strong>На <span id="as-exp-model">этой модели</span> ассистент не тестировался и может работать не так, как надо</strong>
+          <p>Он проверен только на Станции Лайт 2: читает журнал Алисы и отменяет её ответ через отладочный CLI, а здесь это
+            может быть устроено иначе. При загрузке колонки ассистент запускается через хук автозапуска — если после перезагрузки он не запустился сам, включите его здесь.
+            Заработало или нет — напишите, пожалуйста, в <a href="https://github.com/dimap/yapanel-web/issues" target="_blank" rel="noopener">Issues</a>
+            с моделью и версией прошивки.</p>
+        </div>
+      </div>
+
+    <section class="card" id="as-missing" hidden>
+      <h2>Помощник не установлен</h2>
+      <p class="hint">Небольшая программа ляжет на колонку в /data/quasar/webpanel/assistant и будет работать без компьютера.
+        Как это устроено: Алиса распознаёт фразу, помощник сразу отменяет её собственный ответ, отправляет вопрос модели
+        (любой OpenAI-совместимый API) и озвучивает ответ голосом Алисы или выбранным синтезатором.</p>
+      <div class="row"><button class="btn primary" id="as-install">Установить на колонку</button></div>
+    </section>
+
+    <div id="as-on" hidden>
+      <div class="cols" style="margin-bottom:14px">
+        <section class="card">
+          <div class="card-head"><h2>Помощник</h2>
+            <div class="actions"><button class="btn sm primary" id="as-update" hidden>Обновить программу</button>
+              <button class="btn sm" id="as-restart">Перезапустить</button></div></div>
+          <label class="toggle"><span>Отвечать на фразу <span class="meta" style="font-weight:500">— иначе Алиса работает как обычно</span></span>
+            <input type="checkbox" id="as-enabled"></label>
+          <label class="toggle"><span>Подсвечивать кольцо, пока думает <span class="meta" style="font-weight:500">— видно, что вопрос ушёл ассистенту</span></span>
+            <span class="row" style="gap:10px;flex-wrap:nowrap"><input type="color" id="as-led-color" value="#ff8a00" aria-label="Цвет подсветки"><input type="checkbox" id="as-led"></span></label>
+          <div class="as-form" style="margin-top:12px">
+            <label for="as-triggers">Фразы</label>
+            <input class="field" id="as-triggers" placeholder="спроси gpt, спроси нейросеть">
+            <p class="hint">Через запятую. Говорите: «Алиса, спроси GPT, …». «Алиса, спроси GPT, новый разговор» — забыть контекст.</p>
+          </div>
+          <p class="hint" id="as-error" hidden></p>
+          <p class="as-warn" id="as-privacy" role="note"></p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Проверка</h2></div>
+          <textarea class="field" id="as-question" placeholder="Вопрос текстом — ответ прозвучит на колонке" aria-label="Вопрос"></textarea>
+          <div class="row" style="margin-top:8px">
+            <button class="btn primary" id="as-ask">Спросить</button>
+            <button class="btn" id="as-stop">Остановить</button>
+          </div>
+          <div class="as-hist" id="as-hist"></div>
+        </section>
+      </div>
+
+      <section class="card" style="margin-bottom:14px">
+        <div class="card-head"><h2>Режим ассистента</h2>
+          <div class="actions"><span class="meta" id="as-mode-state">—</span><button class="btn sm primary" id="as-mode-btn">Включить</button></div></div>
+        <p class="hint" style="margin-top:0">Скажите «Алиса, переключись на GPT» — и дальше всё, что вы говорите Алисе, уходит модели, без «спроси GPT».
+          «Алиса, верни Алису» — обратно. Быстрые команды — «стоп», «громче», «тише», «пауза» — работают как обычно, а просьбы вроде
+          «включи музыку» в этом режиме тоже уходят модели.</p>
+        <div class="as-form">
+          <label for="as-mode-enter">Включить фразой</label><input class="field" id="as-mode-enter">
+          <label for="as-mode-exit">Выключить фразой</label><input class="field" id="as-mode-exit">
+          <p class="hint">Через запятую. Сохраняются кнопкой «Сохранить настройки» внизу.</p>
+          <label for="as-mode-timeout">Автоотключение</label>
+          <span class="row" style="gap:8px;flex-wrap:nowrap"><input class="field" id="as-mode-timeout" type="number" min="1" max="240" style="max-width:110px"><span class="meta">мин тишины</span></span>
+        </div>
+        <label class="toggle" style="margin-top:8px"><span>Беседа без «Алисы» <span class="meta" style="font-weight:500">— после ответа колонка несколько секунд слушает следующий вопрос</span></span>
+          <input type="checkbox" id="as-mode-follow"></label>
+      </section>
+
+      <section class="card" style="margin-bottom:14px">
+        <div class="card-head"><h2>Модель</h2>
+          <select class="field" id="as-preset" aria-label="Готовые настройки">
+            <option value="">Готовые адреса…</option>
+            <option value="https://api.openai.com/v1">OpenAI</option>
+            <option value="https://openrouter.ai/api/v1">OpenRouter</option>
+            <option value="https://api.groq.com/openai/v1">Groq</option>
+            <option value="https://generativelanguage.googleapis.com/v1beta/openai">Google Gemini</option>
+            <option value="https://api.commandcode.ai/provider/v1">Command Code</option>
+            <option value="http://IP-компьютера:11434/v1">Ollama на компьютере</option>
+            <option value="http://IP-компьютера:1234/v1">LM Studio на компьютере</option>
+          </select></div>
+        <div class="as-form">
+          <label for="as-url">Адрес API</label><input class="field" id="as-url" placeholder="https://…/v1">
+          <p class="hint">OpenAI-совместимый: помощник обращается к …/chat/completions.</p>
+          <label for="as-key">Ключ</label><input class="field" id="as-key" type="password" autocomplete="off" placeholder="не задан">
+          <p class="hint">Хранится только на колонке, свой для каждого адреса API: при смене провайдера ключ прежнего остаётся.
+            Пустое поле — оставить сохранённый.</p>
+          <span></span><div class="as-keys" id="as-keys"></div>
+          <p class="hint as-http" hidden></p>
+          <label for="as-model">Модель</label>
+          <span class="row" style="flex-wrap:nowrap;gap:8px"><input class="field" id="as-model" list="as-models" placeholder="например, gpt-4o-mini" style="flex:1;min-width:0">
+            <button class="btn sm" id="as-models-btn" type="button">Список</button></span>
+          <datalist id="as-models"></datalist>
+          <p class="hint" id="as-models-hint">Список моделей появится после ввода адреса и ключа.</p>
+          <label for="as-prompt">Системный промт</label><textarea class="field" id="as-prompt"></textarea>
+          <label for="as-tokens">Длина ответа</label><input class="field" id="as-tokens" type="number" min="50" max="4000" step="50" style="max-width:140px">
+          <label for="as-history">Помнить реплик</label><input class="field" id="as-history" type="number" min="0" max="20" style="max-width:140px">
+          <p class="hint">Пар «вопрос — ответ». Через 10 минут тишины разговор начинается заново.</p>
+          <label for="as-proxy">Прокси</label><input class="field" id="as-proxy" placeholder="socks5://адрес:порт или http://адрес:порт">
+          <p class="hint">Для запросов к модели и озвучке; остальной трафик колонки не меняется.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Озвучка</h2></div>
+        <div class="as-form">
+          <label for="as-tts">Чем читать</label>
+          <select class="field" id="as-tts">
+            <option value="alice">Голосом Алисы</option>
+            <option value="openai">OpenAI-совместимый синтезатор</option>
+          </select>
+          <p class="hint" id="as-tts-hint"></p>
+          <label for="as-tts-url" data-tts>Адрес API</label><input class="field" id="as-tts-url" data-tts placeholder="https://…/v1">
+          <label for="as-tts-key" data-tts>Ключ</label><input class="field" id="as-tts-key" data-tts type="password" autocomplete="off" placeholder="не задан">
+          <p class="hint as-http" data-tts hidden></p>
+          <label for="as-tts-model" data-tts>Модель</label><input class="field" id="as-tts-model" data-tts placeholder="tts-1">
+          <label for="as-tts-voice" data-tts>Голос</label><input class="field" id="as-tts-voice" data-tts placeholder="например, alloy или ru_RU-irina-medium">
+          <label for="as-tts-speed" data-tts>Скорость</label><input class="field" id="as-tts-speed" data-tts type="number" min="0.5" max="2" step="0.1" style="max-width:140px">
+        </div>
+        <div class="row" style="margin-top:14px;justify-content:space-between">
+          <button class="btn primary" id="as-save">Сохранить настройки</button>
+          <button class="btn" id="as-remove">Удалить с колонки</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <main id="tab-wakeword" data-page hidden>
+    <header class="page-head">
+      <div><h1>Активация</h1><div class="sub">Свои слова для колонки. Запись и обучение идут на её микрофонах — говорите у колонки.</div>
+        <div class="sub" id="ww-support"></div></div>
+    </header>
+    <section class="card">
+      <div class="card-head"><h2>Состояние</h2></div>
+      <div class="ww-state-row">
+        <span class="ww-dot" id="ww-dot"></span><span class="ww-state" id="ww-state">Проверяю…</span>
+        <span class="ww-state-actions">
+          <button class="btn sm primary" id="ww-install" hidden>Установить пакет</button>
+          <button class="btn sm" id="ww-start" hidden>Запустить демон</button>
+          <button class="btn sm" id="ww-stop" hidden>Остановить демон</button>
+        </span>
+      </div>
+      <p class="hint" id="ww-hint">Проверяю…</p>
+      <div class="ww-audio" id="ww-audio" hidden>
+        <div class="ww-meter"><span id="ww-meter"></span></div>
+        <span class="meta" id="ww-audio-text">—</span>
+        <button class="btn sm" id="ww-listen">Проверить: «слушаю»</button>
+      </div>
+      <label class="ww-auto" id="ww-autostart-row" hidden><span><b>Запускать при загрузке</b><small>Хук панели поднимет демон после перезагрузки; «Убрать всё» выключит</small></span>
+        <input type="checkbox" class="switch" id="ww-autostart"></label>
+    </section>
+    <section class="card" id="ww-words-card" hidden>
+      <div class="card-head"><h2>Слова</h2><div class="actions"><button class="btn sm primary" id="ww-add">Добавить слово</button></div></div>
+      <div id="ww-words" class="ww-list"></div>
+    </section>
+    <section class="card" id="ww-enroll-card" hidden>
+      <div class="card-head"><h2>Новое слово: <span id="ww-enroll-name"></span></h2><div class="actions"><button class="btn sm" id="ww-cancel">Отмена</button></div></div>
+      <p class="hint">Запись идёт с микрофонов колонки. Говорите рядом с ней.</p>
+      <div class="ww-steps">
+        <div class="ww-step"><div class="ww-step-head"><b>1. Фон</b><span class="meta" id="ww-ambient-state"></span></div>
+          <p>8 секунд обычной тишины комнаты — не говорите.</p><button class="btn sm" id="ww-ambient">Записать фон</button></div>
+        <div class="ww-step"><div class="ww-step-head"><b>2. Слово</b><span class="meta" id="ww-takes-state"></span></div>
+          <p>Скажите слово у колонки. Нужно минимум 6 записей, лучше 10–15.</p>
+          <div class="ww-take-line"><button class="btn sm" id="ww-take">Записать</button><div class="ww-say" id="ww-say" aria-live="polite"></div></div>
+          <div id="ww-takes" class="ww-takes"></div></div>
+        <div class="ww-step"><div class="ww-step-head"><b>3. Обычная речь (по желанию)</b><span class="meta" id="ww-speech-state"></span></div>
+          <p>20 секунд прочитайте вслух текст ниже — чтобы слово не путалось с вашей речью.</p>
+          <div class="ww-reading">Сегодня обещали тёплую погоду, поэтому мы решили погулять в парке. Вечером нужно купить хлеб, молоко и что-нибудь к чаю. Позвоню маме и спрошу, как у неё дела. Завтра рано вставать, так что лягу пораньше и почитаю книгу.</div>
+          <button class="btn sm" id="ww-speech">Читать 20 секунд</button></div>
+        <div class="ww-step"><div class="ww-step-head"><b>4. Обучение</b><span class="meta" id="ww-train-state"></span></div>
+          <p>2–3 минуты на колонке. Сначала нужен фон и минимум 6 записей слова.</p>
+          <button class="btn sm primary" id="ww-train" disabled title="Сначала запишите фон и минимум 6 дублей слова">Обучить</button>
+          <div class="ww-progress"><span id="ww-train-bar"></span></div></div>
+      </div>
+    </section>
+    <section class="card" id="ww-hits-card" hidden>
+      <div class="card-head"><h2>Последние срабатывания</h2></div>
+      <div id="ww-hits" class="ww-hits"></div>
+    </section>
+  </main>
+
+  <main id="tab-radio" data-page hidden>
+    <header class="page-head">
+      <div><h1>Радио</h1><div class="sub">Станции Алисы и свои интернет-радиостанции</div></div>
+    </header>
+
+    <section class="card" id="rd-miss" style="margin-bottom:14px" hidden>
+      <div class="row" style="gap:10px;align-items:center">
+        <div style="flex:1 1 260px;min-width:0"><b>Алиса услышала «<span id="rd-miss-phrase"></span>», но такой станции нет.</b>
+          <div class="hint" style="margin:2px 0 0">Привяжите это название к станции — в следующий раз она найдётся сразу.</div></div>
+        <select class="field" id="rd-miss-station" aria-label="Станция"></select>
+        <button class="btn sm primary" id="rd-miss-bind">Привязать</button>
+        <button class="btn sm" id="rd-miss-skip">Не нужно</button>
+      </div>
+    </section>
+
+    <section class="card" id="rd-now" style="margin-bottom:14px" hidden>
+      <div class="rd-now">
+        <svg width="28" height="28" aria-hidden="true"><use href="#i-radio"/></svg>
+        <div class="rd-name"><b id="rd-now-name">—</b><div class="hint" id="rd-now-title" style="margin:2px 0 0"></div></div>
+        <button class="btn" id="rd-stop">Выключить</button>
+      </div>
+      <p class="rd-note" id="rd-now-note" hidden></p>
+    </section>
+
+    <div class="cols" style="margin-bottom:14px">
+      <section class="card">
+        <div class="card-head"><h2>Станции Алисы</h2></div>
+        <p class="hint" style="margin-top:0">Включает сама Алиса — как «Алиса, включи радио …». Управление и громкость — в «Плеере».</p>
+        <div class="rd-chips" id="rd-alice"></div>
+        <form class="row" id="rd-alice-form" style="margin-top:12px;gap:8px">
+          <input class="field" name="name" placeholder="Другая станция Алисы" style="flex:1;min-width:160px" aria-label="Название станции Алисы">
+          <button class="btn sm">Включить</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Свои станции</h2><span class="meta" id="rd-count"></span></div>
+        <div id="rd-missing" hidden>
+          <p class="hint" style="margin-top:0">Свои станции играет программа панели на колонке — та же, что у «Ассистента».
+            Она работает сама, компьютер с панелью для радио не нужен.</p>
+          <p class="hint" id="rd-unsupported" hidden>Пока только для Станции Лайт 2.</p>
+          <button class="btn primary" id="rd-install">Установить на колонку</button>
+        </div>
+        <p class="rd-note" id="rd-own-off" hidden style="margin:0 0 12px">Свои станции временно отключены: их проигрыватель
+          при переключении станций ломал звук всей колонки (Алиса переставала говорить до перезапуска). Список сохранён —
+          включу, как только найду безопасный способ. Станции Алисы слева работают.</p>
+        <div id="rd-own" hidden>
+          <div class="rd-list" id="rd-list"><div class="empty">Добавьте станцию ниже или найдите в каталоге.</div></div>
+          <form class="row" id="rd-add" style="margin-top:12px;gap:8px">
+            <input class="field" name="name" placeholder="Название — как вы его скажете" style="flex:1 1 160px;min-width:0" aria-label="Название станции" required>
+            <input class="field" name="url" placeholder="http://…/stream.mp3" style="flex:2 1 220px;min-width:0" aria-label="Адрес потока" required>
+            <button class="btn sm">Добавить</button>
+          </form>
+          <label class="toggle" style="margin-top:10px"><span>Включать голосом <span class="meta" style="font-weight:500" id="rd-voice-hint"></span></span>
+            <input type="checkbox" id="rd-voice"></label>
+          <form class="row" id="rd-proxy-form" style="gap:8px;margin-top:12px">
+            <input class="field" name="proxy" placeholder="Прокси для радио: http://адрес:порт" style="flex:1;min-width:180px" aria-label="Прокси для радио">
+            <button class="btn sm">Сохранить</button>
+          </form>
+          <p class="hint">Если провайдер не пускает к некоторым станциям, колонка возьмёт поток через этот HTTP-прокси
+            (можно с логином: http://логин:пароль@адрес:порт). Пусто — напрямую.</p>
+          <p class="hint">Играют потоки MP3, AAC и FLAC по HTTP и HTTPS; OGG Vorbis колонка не умеет. Пока вы говорите с Алисой, радио замолкает и потом
+            продолжает, если вы не попросили её включить что-то своё.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head"><h2>Найти станцию</h2></div>
+      <form class="row" id="rd-search" style="gap:8px">
+        <label class="search" style="flex:1;min-width:200px"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg>
+          <input type="search" name="q" placeholder="Название, например «jazz» или «рок»" aria-label="Название станции"></label>
+        <select class="field" name="country" aria-label="Страна">
+          <option value="">Все страны</option><option value="RU">Россия</option><option value="BY">Беларусь</option>
+          <option value="KZ">Казахстан</option><option value="UA">Украина</option><option value="US">США</option>
+          <option value="GB">Великобритания</option><option value="DE">Германия</option><option value="FR">Франция</option>
+        </select>
+        <button class="btn sm">Найти</button>
+      </form>
+      <p class="hint">Каталог <a href="https://www.radio-browser.info" target="_blank" rel="noopener">radio-browser.info</a> — открытый,
+        десятки тысяч станций. Запрос уходит с компьютера с панелью.</p>
+      <div class="rd-list" id="rd-results"></div>
+    </section>
+  </main>
+
+  <!-- ================= ФАЙЛЫ ================= -->
+  <main id="tab-files" data-page hidden>
+    <header class="page-head">
+      <div><h1>Файлы</h1><div class="sub">Корень (/) только для чтения — писать можно в /data и /tmp</div></div>
+    </header>
+    <div class="files-grid">
+      <section class="card">
+        <div class="row" style="gap:8px">
+          <button class="btn sm icon" id="fs-up" aria-label="Наверх"><svg width="16" height="16" aria-hidden="true"><use href="#i-up"/></svg></button>
+          <button class="btn sm icon" id="fs-refresh" aria-label="Обновить"><svg width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+          <div class="crumbs" id="fs-crumbs"></div>
+          <span class="badge" id="fs-rw"></span>
+        </div>
+        <div class="row" style="gap:8px">
+          <select id="fs-bookmarks" class="field" aria-label="Быстрый переход">
+            <option value="">Быстрый переход…</option>
+            <option>/data/quasar</option>
+            <option>/data/quasar/daemons_logs</option>
+            <option>/system/vendor/quasar</option>
+            <option>/system/vendor/quasar/sounds</option>
+            <option>/tmp</option>
+            <option>/etc</option>
+            <option>/sys/class/leds</option>
+            <option>/</option>
+          </select>
+          <label class="search" style="flex:1;min-width:140px"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg>
+            <input type="search" id="fs-filter" placeholder="Фильтр по имени" aria-label="Фильтр по имени"></label>
+          <label class="row meta" style="gap:6px;font-weight:600"><input type="checkbox" id="fs-hidden" checked> скрытые</label>
+        </div>
+        <div class="row" style="gap:6px">
+          <button class="btn sm" id="fs-upload"><svg width="15" height="15" aria-hidden="true"><use href="#i-ul"/></svg>Загрузить</button>
+          <button class="btn sm" id="fs-mkdir"><svg width="15" height="15" aria-hidden="true"><use href="#i-folder"/></svg>Новая папка</button>
+          <button class="btn sm" id="fs-newfile"><svg width="15" height="15" aria-hidden="true"><use href="#i-file"/></svg>Новый файл</button>
+          <input type="file" id="fs-file" multiple hidden>
+        </div>
+        <div class="fs-wrap" id="fs-wrap">
+          <table class="fs">
+            <thead><tr>
+              <th data-sort="name">Имя</th><th data-sort="size">Размер</th>
+              <th data-sort="mtime" class="hide-sm">Изменён</th><th class="hide-sm">Права</th><th><span class="meta" style="font-weight:600">Действия</span></th>
+            </tr></thead>
+            <tbody id="fs-body"></tbody>
+          </table>
+        </div>
+        <p class="hint">Перетащите файлы на список, чтобы загрузить их в текущую папку.</p>
+      </section>
+      <section class="card" id="fs-preview">
+        <h2>Просмотр</h2><div class="empty">Выберите файл</div>
+      </section>
+    </div>
+  </main>
+
+  <!-- ================= ЛОГИ ================= -->
+  <main id="tab-logs" data-page hidden>
+    <header class="page-head"><div><h1>Логи</h1><div class="sub">Демоны Quasar, журнал ядра и журнал самой панели</div></div></header>
+    <section class="card">
+      <div class="row" style="gap:8px">
+        <select id="log-name" class="field" aria-label="Лог"></select>
+        <select id="log-lines" class="field" aria-label="Строк"><option>100</option><option selected>300</option><option>1000</option></select>
+        <button class="btn sm" id="log-load" style="min-height:42px"><svg width="16" height="16" aria-hidden="true"><use href="#i-refresh"/></svg>Обновить</button>
+        <label class="toggle" style="min-height:42px;gap:8px;font-size:14px"><input type="checkbox" id="log-follow"> авто (3 с)</label>
+        <label class="toggle" style="min-height:42px;gap:8px;font-size:14px" title="Device ID, серийный номер, Wi‑Fi и MAC-адреса, логин, номер аккаунта и токены Яндекса"><input type="checkbox" id="log-mask" checked> скрыть личное</label>
+        <label class="search" style="flex:1;min-width:160px"><svg width="16" height="16" aria-hidden="true"><use href="#i-search"/></svg>
+          <input type="search" id="log-filter" placeholder="Фильтр" aria-label="Фильтр"></label>
+      </div>
+      <pre class="out" id="log-out">—</pre>
+    </section>
+  </main>
+
+  <!-- ================= КОНСОЛЬ ================= -->
+  <main id="tab-console" data-page hidden>
+    <header class="page-head">
+      <div><h1>Консоль</h1><div class="sub">Интерактивная оболочка на колонке, от root</div></div>
+      <div class="actions"><span class="badge" id="term-state">—</span><button class="btn sm" id="term-new">Новый сеанс</button></div>
+    </header>
+    <section class="card term-card"><div class="term" id="term"></div>
+      <div class="term-keys" id="term-keys" aria-label="Дополнительные клавиши">
+        <button type="button" data-k="esc">Esc</button><button type="button" data-k="tab">Tab</button>
+        <button type="button" data-mod="ctrl" aria-pressed="false">Ctrl</button><button type="button" data-mod="alt" aria-pressed="false">Alt</button>
+        <button type="button" data-k="left" aria-label="Влево">←</button><button type="button" data-k="up" aria-label="Вверх">↑</button>
+        <button type="button" data-k="down" aria-label="Вниз">↓</button><button type="button" data-k="right" aria-label="Вправо">→</button>
+        <button type="button" data-k="^C" title="Прервать">^C</button><button type="button" data-k="^D" title="Конец ввода">^D</button>
+        <button type="button" data-k="^Z">^Z</button><button type="button" data-k="^L" title="Очистить экран">^L</button>
+        <button type="button" data-k="home">Home</button><button type="button" data-k="end">End</button>
+        <button type="button" data-k="pgup">PgUp</button><button type="button" data-k="pgdn">PgDn</button>
+        <button type="button" data-t="|">|</button><button type="button" data-t="~">~</button><button type="button" data-t="/">/</button>
+        <button type="button" data-t="-">-</button><button type="button" data-t="&amp;">&amp;</button><button type="button" data-t="&gt;">&gt;</button>
+        <button type="button" data-t="$">$</button><button type="button" data-t="*">*</button>
+        <button type="button" data-k="paste" id="term-paste">Вставить</button>
+      </div></section>
+    <p class="hint term-hint-phone">Клавиши снизу — то, чего нет на клавиатуре телефона. Ctrl и Alt залипают: нажмите Ctrl, затем букву
+      (Ctrl, c — прервать команду). Прокрутка вывода — пальцем по терминалу.</p>
+    <p class="hint term-hint-desk">Работает как обычный терминал: Tab — дополнение, ↑ / ↓ — история, Ctrl+C — прервать, Ctrl+D или <code>exit</code> — закрыть.
+      Копировать — выделить мышью (или Ctrl+C при выделении), вставить — Ctrl+Shift+V. Программы из пакетов yam доступны по имени.</p>
+  </main>
+
   <main id="tab-led" data-page hidden>
     <header class="page-head">
       <div><h1>LED-панель</h1><div class="sub">88 диодов через штатную led-play — рисуй по диодам, запускай эффекты, анимации и свой GIF</div></div>
@@ -2797,6 +3398,42 @@ async function refreshStatus() {
     $('#conn-ip').innerHTML = secret('ip', s.ip_address);
 
     tilesFromStatus(s);
+    if (s.model && $('#model-name')) {
+      const mn = { max: 'Станция Макс', midi: 'Станция Миди', lite: 'Станция Лайт', lite2: 'Станция Лайт 2', station2: 'Станция 2' }[s.model];
+      if (mn) $('#model-name').textContent = mn;
+    }
+    window.__isMatrix = !!(s.matrix && s.matrix.cols === 25);
+    try { localStorage.setItem('is_matrix', window.__isMatrix ? '1' : '0'); } catch {}
+    const extrasEl = document.querySelector('.extras');
+    let matrixChips = $('#matrix-chips');
+    if (window.__isMatrix) {
+      if (extrasEl) extrasEl.style.display = 'none';
+      if (!matrixChips && extrasEl) {
+        matrixChips = document.createElement('div');
+        matrixChips.id = 'matrix-chips';
+        matrixChips.className = 'chips';
+        matrixChips.style.marginTop = '6px';
+        matrixChips.innerHTML = '<span style="font-size:12px;opacity:0.6;margin-right:4px">Символы:</span>' +
+          [':', '°', '-', '+', '*', 'ТЕСТ', 'АЛИСА'].map(x => `<button class="pill sm" type="button" data-sym="${x}">${x}</button>`).join('');
+        extrasEl.parentNode.insertBefore(matrixChips, extrasEl.nextSibling);
+        matrixChips.querySelectorAll('[data-sym]').forEach(b => {
+          b.onclick = () => {
+            const sym = b.dataset.sym;
+            const input = $('#clock-text');
+            if (sym === 'ТЕСТ' || sym === 'АЛИСА') input.value = sym;
+            else input.value = (input.value || '') + sym;
+            clockPreview();
+          };
+        });
+      }
+      if (!window.__matrixInitDone) {
+        window.__matrixInitDone = true;
+        clockPreview();
+      }
+    } else {
+      if (extrasEl) extrasEl.style.display = 'flex';
+      if (matrixChips) matrixChips.remove();
+    }
 
     if (!volDragging) {
       const [m, b] = [s.vol_level, +s.vol_bt || 0];
@@ -3006,6 +3643,138 @@ function segShapes(x) {
     ['G', `M${x + 4} ${m}l6 -${t / 2}h${w - 20}l6 ${t / 2}l-6 ${t / 2}h${-(w - 20)}z`],
   ];
 }
+
+// =========================================================================
+// Station Max 25x16 LED Dot Matrix Display Renderer
+// =========================================================================
+const MAX_FONT_4X7 = {"0": ["0110", "1001", "1001", "1001", "1001", "1001", "0110"], "1": ["0010", "0110", "0010", "0010", "0010", "0010", "0111"], "2": ["0110", "1001", "0001", "0010", "0100", "1000", "1111"], "3": ["1110", "0001", "0001", "0110", "0001", "0001", "1110"], "4": ["1001", "1001", "1001", "1111", "0001", "0001", "0001"], "5": ["1111", "1000", "1000", "1110", "0001", "0001", "1110"], "6": ["0110", "1000", "1000", "1110", "1001", "1001", "0110"], "7": ["1111", "0001", "0010", "0010", "0100", "0100", "0100"], "8": ["0110", "1001", "1001", "0110", "1001", "1001", "0110"], "9": ["0110", "1001", "1001", "0111", "0001", "0001", "0110"], " ": ["00", "00", "00", "00", "00", "00", "00"], ":": ["0", "0", "1", "0", "1", "0", "0"], ".": ["0", "0", "0", "0", "0", "0", "1"], ",": ["0", "0", "0", "0", "0", "1", "1"], "-": ["000", "000", "000", "111", "000", "000", "000"], "+": ["000", "010", "010", "111", "010", "010", "000"], "*": ["0000", "1001", "0110", "1111", "0110", "1001", "0000"], "°": ["110", "110", "000", "000", "000", "000", "000"], "/": ["0001", "0001", "0010", "0100", "0100", "1000", "1000"], "\\": ["1000", "1000", "0100", "0010", "0010", "0001", "0001"], "!": ["1", "1", "1", "1", "0", "0", "1"], "?": ["0110", "1001", "0001", "0010", "0010", "0000", "0010"], "=": ["000", "000", "111", "000", "111", "000", "000"], "_": ["0000", "0000", "0000", "0000", "0000", "0000", "1111"], "%": ["1001", "1001", "0010", "0100", "1001", "1001", "0000"], "(": ["010", "100", "100", "100", "100", "100", "010"], ")": ["010", "001", "001", "001", "001", "001", "010"], "A": ["0110", "1001", "1001", "1111", "1001", "1001", "1001"], "B": ["1110", "1001", "1001", "1110", "1001", "1001", "1110"], "C": ["0111", "1000", "1000", "1000", "1000", "1000", "0111"], "D": ["1110", "1001", "1001", "1001", "1001", "1001", "1110"], "E": ["1111", "1000", "1000", "1110", "1000", "1000", "1111"], "F": ["1111", "1000", "1000", "1110", "1000", "1000", "1000"], "G": ["0111", "1000", "1000", "1011", "1001", "1001", "0111"], "H": ["1001", "1001", "1001", "1111", "1001", "1001", "1001"], "I": ["111", "010", "010", "010", "010", "010", "111"], "J": ["0001", "0001", "0001", "0001", "1001", "1001", "0110"], "K": ["1001", "1010", "1100", "1100", "1010", "1001", "1001"], "L": ["1000", "1000", "1000", "1000", "1000", "1000", "1111"], "M": ["10001", "11011", "10101", "10001", "10001", "10001", "10001"], "N": ["1001", "1101", "1101", "1011", "1011", "1001", "1001"], "O": ["0110", "1001", "1001", "1001", "1001", "1001", "0110"], "P": ["1110", "1001", "1001", "1110", "1000", "1000", "1000"], "Q": ["0110", "1001", "1001", "1001", "1011", "1001", "0111"], "R": ["1110", "1001", "1001", "1110", "1010", "1001", "1001"], "S": ["0111", "1000", "1000", "0110", "0001", "0001", "1110"], "T": ["11111", "00100", "00100", "00100", "00100", "00100", "00100"], "U": ["1001", "1001", "1001", "1001", "1001", "1001", "0110"], "V": ["1001", "1001", "1001", "1001", "1001", "0110", "0100"], "W": ["10001", "10001", "10001", "10101", "10101", "11011", "10001"], "X": ["1001", "1001", "0110", "0110", "0110", "1001", "1001"], "Y": ["1001", "1001", "1001", "0110", "0010", "0010", "0010"], "Z": ["1111", "0001", "0010", "0100", "0100", "1000", "1111"], "А": ["0110", "1001", "1001", "1111", "1001", "1001", "1001"], "Б": ["1111", "1000", "1000", "1110", "1001", "1001", "1110"], "В": ["1110", "1001", "1001", "1110", "1001", "1001", "1110"], "Г": ["1111", "1000", "1000", "1000", "1000", "1000", "1000"], "Д": ["01100", "01100", "01100", "01100", "01100", "11111", "10001"], "Е": ["1111", "1000", "1000", "1110", "1000", "1000", "1111"], "Ё": ["0101", "0000", "1111", "1000", "1110", "1000", "1111"], "Ж": ["10101", "10101", "10101", "01110", "10101", "10101", "10101"], "З": ["1110", "0001", "0001", "0110", "0001", "0001", "1110"], "И": ["1001", "1001", "1011", "1101", "1101", "1001", "1001"], "Й": ["0110", "0000", "1001", "1011", "1101", "1001", "1001"], "К": ["1001", "1010", "1100", "1100", "1010", "1001", "1001"], "Л": ["0111", "1001", "1001", "1001", "1001", "1001", "1001"], "М": ["10001", "11011", "10101", "10001", "10001", "10001", "10001"], "Н": ["1001", "1001", "1001", "1111", "1001", "1001", "1001"], "О": ["0110", "1001", "1001", "1001", "1001", "1001", "0110"], "П": ["1111", "1001", "1001", "1001", "1001", "1001", "1001"], "Р": ["1110", "1001", "1001", "1110", "1000", "1000", "1000"], "С": ["0111", "1000", "1000", "1000", "1000", "1000", "0111"], "Т": ["11111", "00100", "00100", "00100", "00100", "00100", "00100"], "У": ["1001", "1001", "1001", "0111", "0001", "0001", "1110"], "Ф": ["0110", "1001", "1111", "1001", "0110", "0010", "0010"], "Х": ["1001", "1001", "0110", "0110", "0110", "1001", "1001"], "Ц": ["10010", "10010", "10010", "10010", "10010", "11111", "00001"], "Ч": ["1001", "1001", "1001", "0111", "0001", "0001", "0001"], "Ш": ["10101", "10101", "10101", "10101", "10101", "10101", "11111"], "Щ": ["101010", "101010", "101010", "101010", "101010", "111111", "000001"], "Ъ": ["1100", "0100", "0100", "0110", "0101", "0101", "0110"], "Ы": ["10001", "10001", "10001", "11101", "10011", "10011", "11101"], "Ь": ["1000", "1000", "1000", "1110", "1001", "1001", "1110"], "Э": ["1110", "0001", "0001", "0111", "0001", "0001", "1110"], "Ю": ["10110", "10101", "10101", "11101", "10101", "10101", "10110"], "Я": ["0111", "1001", "1001", "0111", "0101", "1001", "1001"]};
+
+function renderMatrixText(text, brightness = 180) {
+  const cols = 25, rows = 16;
+  const grid = new Array(cols * rows).fill(0);
+  const glyphs = [];
+  let totalW = 0;
+  for (const ch of String(text || '')) {
+    const up = ch.toUpperCase();
+    const g = MAX_FONT_4X7[up] || MAX_FONT_4X7[' '];
+    const gw = g[0].length;
+    glyphs.push({ g, gw });
+    totalW += gw + 1;
+  }
+  if (totalW > 0) totalW -= 1;
+  const startX = Math.max(0, Math.floor((cols - totalW) / 2));
+  const startY = Math.max(0, Math.floor((rows - 7) / 2));
+  let curX = startX;
+  for (const { g, gw } of glyphs) {
+    for (let r = 0; r < 7; r++) {
+      for (let c = 0; c < gw; c++) {
+        if (g[r][c] === '1') {
+          const y = startY + r;
+          const x = curX + c;
+          if (y >= 0 && y < rows && x >= 0 && x < cols) {
+            grid[y * cols + x] = Math.max(0, Math.min(255, brightness));
+          }
+        }
+      }
+    }
+    curX += gw + 1;
+  }
+  return grid;
+}
+
+function v36ToMatrix(v) {
+  if (!v || v.length === 400) return v || new Array(400).fill(0);
+  const cols = 25, rows = 16;
+  const grid = new Array(cols * rows).fill(0);
+  const digit_x = [1, 7, 14, 20];
+  for (let d = 0; d < 4; d++) {
+    const x0 = digit_x[d];
+    let b = Math.max(0, Math.min(255, v[d * 8 + 0] || 0));
+    if (b > 0) { for (let x = x0 + 1; x < x0 + 4; x++) grid[3 * cols + x] = b; }
+    b = Math.max(0, Math.min(255, v[d * 8 + 1] || 0));
+    if (b > 0) { for (let y = 4; y < 8; y++) grid[y * cols + x0 + 4] = b; }
+    b = Math.max(0, Math.min(255, v[d * 8 + 2] || 0));
+    if (b > 0) { for (let y = 9; y < 13; y++) grid[y * cols + x0 + 4] = b; }
+    b = Math.max(0, Math.min(255, v[d * 8 + 3] || 0));
+    if (b > 0) { for (let x = x0 + 1; x < x0 + 4; x++) grid[13 * cols + x] = b; }
+    b = Math.max(0, Math.min(255, v[d * 8 + 4] || 0));
+    if (b > 0) { for (let y = 9; y < 13; y++) grid[y * cols + x0] = b; }
+    b = Math.max(0, Math.min(255, v[d * 8 + 5] || 0));
+    if (b > 0) { for (let y = 4; y < 8; y++) grid[y * cols + x0] = b; }
+    b = Math.max(0, Math.min(255, v[d * 8 + 6] || 0));
+    if (b > 0) { for (let x = x0 + 1; x < x0 + 4; x++) grid[8 * cols + x] = b; }
+    b = Math.max(0, Math.min(255, v[d * 8 + 7] || 0));
+    if (b > 0 && x0 + 5 < cols) grid[13 * cols + x0 + 5] = b;
+  }
+  const b_deg = Math.max(0, Math.min(255, v[32] || 0));
+  if (b_deg > 0) {
+    grid[3 * cols + 22] = grid[3 * cols + 23] = b_deg;
+    grid[4 * cols + 21] = grid[4 * cols + 24] = b_deg;
+    grid[5 * cols + 22] = grid[5 * cols + 23] = b_deg;
+  }
+  const b_dh = Math.max(0, Math.min(255, v[33] || 0));
+  if (b_dh > 0) { grid[5 * cols + 12] = grid[6 * cols + 12] = b_dh; }
+  const b_dl = Math.max(0, Math.min(255, v[34] || 0));
+  if (b_dl > 0) { grid[10 * cols + 12] = grid[11 * cols + 12] = b_dl; }
+  const b_dm = Math.max(0, Math.min(255, v[35] || 0));
+  if (b_dm > 0) { for (let x = 11; x < 14; x++) grid[8 * cols + x] = b_dm; }
+  return grid;
+}
+
+function toMatrixFrame(v) {
+  if (!v) return new Array(400).fill(0);
+  if (v.length === 400) return v;
+  if (v.length === 36) return v36ToMatrix(v);
+  const res = new Array(400).fill(0);
+  for (let i = 0; i < Math.min(400, v.length); i++) res[i] = v[i];
+  return res;
+}
+
+function matrixSVG(pixels, { thumb = false } = {}) {
+  pixels = toMatrixFrame(pixels);
+  let s = `<svg viewBox="-4 -4 358 230" class="matrix-display" style="width:100%;${thumb ? '' : 'max-width:380px;'}height:auto;display:block;margin:0 auto;">`;
+  s += '<rect x="-4" y="-4" width="358" height="230" rx="12" fill="#0d0e11"/>';
+  const cols = 25, rows = 16;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      const v = (pixels && pixels[i] != null) ? pixels[i] : 0;
+      const cx = 8 + c * 14.0;
+      const cy = 8 + r * 13.8;
+      const op = v > 0 ? (0.28 + 0.72 * (v / 255)).toFixed(2) : '0.10';
+      const fill = v > 0 ? '#ffffff' : '#23242a';
+      const filter = (!thumb && v > 140) ? ' filter="drop-shadow(0 0 2px rgba(255,255,255,0.8))"' : '';
+      s += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.2" fill="${fill}" fill-opacity="${op}"${filter} data-i="${i}"/>`;
+    }
+  }
+  s += '</svg>';
+  return s;
+}
+
+function updateMatrixSVG(el, pixels) {
+  if (!el || !pixels) return;
+  const key = (pixels.length === 400) ? pixels.join(',') : null;
+  if (key && el._lastKey === key) return;
+  el._lastKey = key;
+
+  let svg = el.querySelector('svg.matrix-display');
+  if (!svg || !el._circles || el._circles.length !== 400) {
+    el.innerHTML = matrixSVG(pixels);
+    svg = el.querySelector('svg.matrix-display');
+    el._circles = svg ? svg.querySelectorAll('circle[data-i]') : null;
+    return;
+  }
+  const circles = el._circles;
+  for (let i = 0; i < 400; i++) {
+    const v = pixels[i] || 0;
+    const c = circles[i];
+    const op = v > 0 ? (0.28 + 0.72 * (v / 255)).toFixed(2) : '0.10';
+    const fill = v > 0 ? '#ffffff' : '#23242a';
+    if (c.getAttribute('fill') !== fill) c.setAttribute('fill', fill);
+    if (c.getAttribute('fill-opacity') !== op) c.setAttribute('fill-opacity', op);
+  }
+}
+
 function clockSVG(v, { thumb = false } = {}) {
   const lvl = i => v[i] / 255;
   const cls = i => v[i] > 0 ? 'seg-on' : 'seg-off';
@@ -3033,7 +3802,19 @@ function clockSVG(v, { thumb = false } = {}) {
 window.clockGeom = { segShapes, DIGIT_X, SEGS, X_DH, X_DL, X_DM, X_DEG };
 const toModel = v => {
   window.modelShow?.(v);
-  if(window.__midiLiveDisplay && Array.isArray(v)) $('#clock-preview').innerHTML=clockSVG(v);
+  if (window.__isMatrix && Array.isArray(v) && v.length === 400) {
+    const el = $('#clock-preview');
+    if (el && Date.now() >= (el._until || 0)) {
+      const isPinned = !!(dispState && dispState.mode);
+      const isEditingText = (document.activeElement === $('#clock-text') && $('#clock-text').value);
+      const isCustomTab = (dispMode !== 'text');
+      if (isPinned || (!isEditingText && !isCustomTab && !$('#clock-text').value)) {
+        updateMatrixSVG(el, v);
+      }
+    }
+  } else if (window.__midiLiveDisplay && Array.isArray(v)) {
+    $('#clock-preview').innerHTML = clockSVG(v);
+  }
 };
 const toRing = leds => window.modelRing?.(leds);
 
@@ -3050,7 +3831,7 @@ function animate(el, frames, { seconds = 10, onFrame } = {}) {
       if (loopAt < 0) return el._animDone?.();
       i = loopAt;
     }
-    el.innerHTML = clockSVG(frames[i].v);
+    el.innerHTML = (window.__isMatrix ? matrixSVG(frames[i].v) : clockSVG(frames[i].v));
     if (el.id === 'clock-preview') toModel(frames[i].v);
     onFrame?.(i);
     el._anim = setTimeout(step, Math.max(16, frames[i++].ms));
@@ -3123,7 +3904,20 @@ function pickColor(hex) {
   $('#ring-preview').style.setProperty('--ring', ringHex);
   $$('#swatches .sw').forEach(s => s.classList.toggle('sel', s.dataset.hex === ringHex));
 }
+function syncRingPreview(leds) {
+  if (!Array.isArray(leds) || !leds.length) return;
+  const isLit = leds.some(c => Array.isArray(c) ? c.some(v => v > 10) : false);
+  if (isLit) {
+    const firstLit = leds.find(c => Array.isArray(c) && c.some(v => v > 10)) || leds[0];
+    const hex = '#' + firstLit.map(x => Math.min(255, Math.max(0, x)).toString(16).padStart(2, '0')).join('');
+    $('#ring-preview').style.setProperty('--ring', hex);
+    $('#ring-preview').classList.remove('off');
+  } else if (!window.__ringUserActive) {
+    $('#ring-preview').classList.add('off');
+  }
+}
 const setRing = (btn, rgb, on) => act(btn, async () => {
+  window.__ringUserActive = on;
   await api('/api/ring', { red: rgb[0], green: rgb[1], blue: rgb[2] });
   $('#ring-preview').classList.toggle('off', !on);
   toRing([rgb, rgb, rgb]);
@@ -3132,8 +3926,9 @@ $$('#swatches .sw').forEach(b => b.onclick = () => { pickColor(b.dataset.hex); s
 $('#ring-color').oninput = e => pickColor(e.target.value);
 $('#ring-color').onchange = e => setRing(null, hex2rgb(e.target.value), true);
 $('#ring-set').onclick = e => setRing(e.currentTarget, hex2rgb(ringHex), true);
-$('#ring-off').onclick = e => setRing(e.currentTarget, [0, 0, 0], false);
+$('#ring-off').onclick = e => { window.__ringUserActive = false; setRing(e.currentTarget, [0, 0, 0], false); };
 $('#ring-reset').onclick = e => act(e.currentTarget, async () => {
+  window.__ringUserActive = false;
   const r = await api('/api/ring/reset', {});
   toRing(r.leds);
   $('#ring-preview').classList.toggle('off', r.leds.every(c => c.every(x => !x)));
@@ -3146,6 +3941,7 @@ pickColor(ringHex);
 const pad2 = n => String(n).padStart(2, '0');
 const pcTime = () => { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
 const clockExtras = () => ({ dh: $('#x-dh').checked, dl: $('#x-dl').checked, dm: $('#x-dm').checked, degree: $('#x-degree').checked });
+try { window.__isMatrix = (localStorage.getItem('is_matrix') === '1'); } catch {}
 let dispMode = 'text', dispState = { mode: null }, dispStateAt = 0;
 const DISP_NAMES = { frame: 'текст', date: 'дата', temp: 'температура', timer: 'таймер' };
 function timerSeconds() {
@@ -3163,7 +3959,32 @@ function clockFrame() {
   if (dispMode === 'timer') { const s = timerSeconds(); return textToFrame(`${pad2(Math.min(99, Math.floor(s / 60)))}:${pad2(s % 60)}`, br); }
   return textToFrame($('#clock-text').value || pcTime(), br, clockExtras());
 }
-function clockPreview() { if(window.__midiLiveDisplay)return; const el = $('#clock-preview'); clearTimeout(el._anim); el._until = 0; el.innerHTML = clockSVG(clockFrame()); }
+let __lastMatrixPixels = null;
+function clockPreview() {
+  if (window.__midiLiveDisplay) return;
+  const el = $('#clock-preview');
+  clearTimeout(el._anim);
+  el._until = 0;
+  if (window.__isMatrix) {
+    let px = null;
+    const txt = $('#clock-text').value;
+    const br = +$('#clock-br').value;
+    if (dispMode === 'text' && txt) px = renderMatrixText(txt, br);
+    else if (dispMode === 'timer') { const s = timerSeconds(); px = renderMatrixText(`${pad2(Math.floor(s/60))}:${pad2(s%60)}`, br); }
+    else if (dispMode === 'date') { const d = new Date(); px = renderMatrixText(`${pad2(d.getDate())}.${pad2(d.getMonth()+1)}`, br); }
+    else if (dispMode === 'temp') {
+      const rawT = status?.temp != null ? Number(status.temp) : 48000;
+      const deg = Math.round(rawT > 200 ? rawT / 1000 : rawT);
+      px = renderMatrixText(`${deg}°`, br);
+    }
+    else if (__lastMatrixPixels) px = __lastMatrixPixels;
+    else px = renderMatrixText(pcTime(), br);
+    updateMatrixSVG(el, px);
+    window.modelShow?.(px);
+    return;
+  }
+  el.innerHTML = clockSVG(clockFrame());
+}
 ['#clock-text', '#x-dh', '#x-dl', '#x-dm', '#x-degree', '#timer-val'].forEach(s => $(s).addEventListener('input', clockPreview));
 $('#clock-br').oninput = e => { $('#clock-br-v').textContent = e.target.value; clockPreview(); };
 $$('#disp-mode button').forEach(b => b.onclick = () => {
@@ -3197,19 +4018,40 @@ setInterval(loadDispState, 5000);
 setInterval(() => dispState.mode === 'timer' && renderDispState(), 1000);
 
 $('#disp-pin').onclick = e => act(e.currentTarget, async () => {
-  const body = { mode: dispMode === 'text' ? 'frame' : dispMode, brightness: +$('#clock-br').value };
-  if (dispMode === 'text') body.v = clockFrame();
+  let body = { mode: dispMode, brightness: +$('#clock-br').value };
+  if (window.__isMatrix) {
+    if (dispMode === 'text') {
+      const txt = $('#clock-text').value || pcTime();
+      body = { mode: 'text', text: txt, brightness: +$('#clock-br').value };
+    }
+  } else {
+    if (dispMode === 'text') { body.mode = 'frame'; body.v = clockFrame(); }
+  }
   if (dispMode === 'timer') {
     body.seconds = timerSeconds();
     if (!body.seconds) throw new Error('Время таймера — в виде мм:сс, например 05:00');
   }
+  $('#clock-text').blur();
+  $('#timer-val').blur();
   dispState = await api('/api/display', body);
   dispStateAt = Date.now();
   renderDispState();
+  if (window.__isMatrix) {
+    clockPreview();
+  }
 }, dispMode === 'timer' ? 'Таймер запущен' : 'Закреплено');
 $('#disp-stop').onclick = e => act(e.currentTarget, async () => {
   dispState = await api('/api/display/stop', {});
-  await api('/api/pattern/stop', {}).catch(() => {});   // и анимацию часов, если идёт
+  await api('/api/pattern/stop', {}).catch(() => {});
+  dispMode = 'text';
+  $$('#disp-mode button').forEach(x => x.classList.toggle('active', x.dataset.m === 'text'));
+  $('#dm-text').hidden = false;
+  $('#dm-timer').hidden = true;
+  $('#clock-set').hidden = false;
+  $('#disp-pin').textContent = 'Закрепить';
+  __lastMatrixPixels = null;
+  const el = $('#clock-preview');
+  if (el) { el._lastKey = null; el._circles = null; }
   renderDispState();
   $('#clock-text').value = '';
   clockPreview();
@@ -3217,29 +4059,75 @@ $('#disp-stop').onclick = e => act(e.currentTarget, async () => {
 function sendClock(btn) {
   const text = $('#clock-text').value || pcTime();
   clockPreview();
-  return act(btn, async () => { await api('/api/clock', { v: clockFrame() }); toModel(clockFrame()); dispState = { mode: null }; renderDispState(); },
+  return act(btn, async () => {
+    if (window.__isMatrix) {
+      await api('/api/clock', { text, brightness: +$('#clock-br').value });
+      $('#clock-preview')._until = Date.now() + 5000;
+      const px = renderMatrixText(text, +$('#clock-br').value);
+      toModel(px);
+      $('#clock-preview').innerHTML = matrixSVG(px);
+    } else {
+      await api('/api/clock', { v: clockFrame(), text });
+      toModel(clockFrame());
+    }
+    dispState = { mode: null };
+    renderDispState();
+  },
              'На дисплее: ' + text);
 }
 $('#clock-set').onclick = e => sendClock(e.currentTarget);
 $('#clock-text').onkeydown = e => { if (e.key === 'Enter') sendClock(null); };
 clockPreview();
-setInterval(() => (dispMode !== 'text' || !$('#clock-text').value) && Date.now() > ($('#clock-preview')._until || 0) && clockPreview(), 15000);
+setInterval(() => (dispMode !== 'text' || !$('#clock-text').value) && !(dispState && dispState.mode) && Date.now() > ($('#clock-preview')._until || 0) && clockPreview(), 15000);
 
 // Живое состояние дисплея и кольца для модели, пока «Обзор» на экране. Локальные анимации
 // (запущенные из панели) рисуются по кадрам сами, опрос их не перебивает.
 let ringAnimUntil = 0, ringLit = false, ringTimer;
+let ledStreamSource = null;
+function initRealtimeLedStream() {
+  if (window.EventSource) {
+    try { if (ledStreamSource) ledStreamSource.close(); } catch {}
+    ledStreamSource = new EventSource('/api/leds/stream');
+    ledStreamSource.onmessage = e => {
+      if (document.hidden || $('#tab-overview').hidden) return;
+      try {
+        const s = JSON.parse(e.data);
+        if (s.pixels) {
+          __lastMatrixPixels = s.pixels;
+          if (Date.now() >= ($('#clock-preview')._until || 0)) {
+            toModel(s.pixels);
+          }
+        }
+        else if (s.v && Date.now() >= ($('#clock-preview')._until || 0)) toModel(s.v);
+        if (Array.isArray(s.ring) && s.ring.length && Date.now() >= ringAnimUntil) {
+          toRing(s.ring_all || s.ring);
+          syncRingPreview(s.ring_all || s.ring);
+        }
+      } catch {}
+    };
+    ledStreamSource.onerror = () => {
+      try { ledStreamSource.close(); } catch {}
+      ledStreamSource = null;
+      setTimeout(initRealtimeLedStream, 3000);
+    };
+  }
+}
+initRealtimeLedStream();
+
 async function pollLeds() {
-  try {
-    if (!document.hidden && !$('#tab-overview').hidden) {
-      const s = await api('/api/clock/state');
-      if (Array.isArray(s.v) && Date.now() >= ($('#clock-preview')._until || 0)) toModel(s.v);
-      if (Array.isArray(s.ring) && s.ring.length) {
-        if (Date.now() >= ringAnimUntil) toRing(s.ring);
-        ringLit = s.ring.some(c => c.some(x => x > 0));
+  if (!ledStreamSource) {
+    try {
+      if (!document.hidden && !$('#tab-overview').hidden) {
+        const s = await api('/api/clock/state');
+        if (Array.isArray(s.v) && Date.now() >= ($('#clock-preview')._until || 0)) toModel(s.pixels || s.v);
+        if (Array.isArray(s.ring) && s.ring.length && Date.now() >= ringAnimUntil) {
+          toRing(s.ring_all || s.ring);
+          syncRingPreview(s.ring_all || s.ring);
+        }
       }
-    }
-  } catch {}
-  setTimeout(pollLeds, ringLit ? 400 : 1500);   // пока кольцо светится (например, Алиса слушает), чаще
+    } catch {}
+  }
+  setTimeout(pollLeds, ledStreamSource ? 2000 : 50); // 20 FPS fallback
 }
 pollLeds();
 // Быстрый поток — только пока «Обзор» на экране, визуализатор включён и музыка играет.
@@ -3249,24 +4137,23 @@ const isSpectrum = v => [0, 1, 2, 3].every(p => !v[p * 8 + 1] && !v[p * 8 + 2] &
 async function liveLeds() {
   const want = online && !document.hidden && (!$('#tab-overview').hidden || (!$('#tab-player').hidden && plMobile()))
     && !window.__vizOff && !!muState()?.playing;
-  if (want) {
+  const sseActive = ledStreamSource && ledStreamSource.readyState === 1;
+  if (want && !sseActive) {
     try {
       const r = await api('/api/leds/live');
       const liveBands = r.spectrum?.bands?.length === 4;
-      // Живой спектр с колонки (vizd) свежее эквалайзера Quasar — он и так идёт всё время, пока играет музыка.
       if (liveBands) window.__spectrum = { bands: r.spectrum.bands, t: performance.now() };
       if (r.v) {
         const v = r.v;
         if (!liveBands && isSpectrum(v)) window.__spectrum = { bands: [0, 1, 2, 3].map(p => (v[p * 8] + v[p * 8 + 3] + v[p * 8 + 6]) / 756), t: performance.now() };
-        if (Date.now() >= ($('#clock-preview')._until || 0)) toModel(v);
+        if (Date.now() >= ($('#clock-preview')._until || 0)) toModel(r.pixels || v);
       }
-      if (Array.isArray(r.ring) && r.ring.length && Date.now() >= ringAnimUntil) toRing(r.ring);
+      if (Array.isArray(r.ring) && r.ring.length && Date.now() >= ringAnimUntil) toRing(r.ring_all || r.ring);
     } catch {}
   }
-  // Эквалайзер Quasar держит на часах ~15 с после старта трека, потом снова часы: пока он есть — 10 раз
-  // в секунду, без него — реже, только чтобы не пропустить следующий. Живой спектр читаем 20 раз в секунду.
   const spectrumNow = window.__spectrum && performance.now() - window.__spectrum.t < 2500;
-  setTimeout(liveLeds, want ? (spectrumNow ? 50 : 700) : 500);
+  const delay = want ? (sseActive ? 1000 : (spectrumNow ? 50 : 700)) : 500;
+  setTimeout(liveLeds, delay);
 }
 setTimeout(liveLeds, 1000);   // первый запуск — когда весь скрипт уже загружен
 function animateRing({ frames, loop }, seconds) {
@@ -3303,8 +4190,10 @@ function setBootFrames(frames) {
   checkPause();
 }
 function bootFull() {
+  const isM = window.__isMatrix;
+  const blank = isM ? () => new Array(400).fill(0) : blankFrame;
   const pause = isBootAnim() ? clamp(+$('#boot-pause').value || 0, 0, 65535) : 0;
-  return pause ? [{ flag: 0, v: blankFrame(), ms: pause }, ...boot.frames] : boot.frames;
+  return pause ? [{ flag: 0, v: blank(), ms: pause }, ...boot.frames] : boot.frames;
 }
 // Свои анимации — «my/имя»: отдельные файлы, встроенные не трогают. Встроенная, заменённая своей версией, — «изменена».
 const isMy = n => String(n || '').startsWith('my/');
@@ -3348,14 +4237,20 @@ $('#boot-always').onchange = e => act(e.target, async () => {
   finally { renderBootStatus(); }
 }, e.target.checked ? 'Заставка и звук будут при каждой загрузке' : 'Заставка и звук — только когда Quasar сам решит');
 function renderBoot() {
-  if (!boot.frames.length) boot.frames = [{ flag: 0, v: blankFrame(), ms: 1000 }];
+  const isM = window.__isMatrix;
+  const blank = isM ? () => new Array(400).fill(0) : blankFrame;
+  const drawSVG = (v, opts) => isM ? matrixSVG(v, opts) : clockSVG(v, opts);
+
+  if (!boot.frames.length) boot.frames = [{ flag: 0, v: blank(), ms: 1000 }];
   boot.sel = clamp(boot.sel, 0, boot.frames.length - 1);
+  if (isM) bootCur().v = toMatrixFrame(bootCur().v);
+
   $('#boot-frames').innerHTML = boot.frames.map((f, i) =>
-    `<button class="frame-thumb ${i === boot.sel ? 'sel' : ''}" data-k="${i}" aria-label="Кадр ${i + 1}">${clockSVG(f.v, { thumb: true })}<span>${i + 1} · ${f.ms} мс</span></button>`).join('')
+    `<button class="frame-thumb ${i === boot.sel ? 'sel' : ''}" data-k="${i}" aria-label="Кадр ${i + 1}">${drawSVG(f.v, { thumb: true })}<span>${i + 1} · ${f.ms} мс</span></button>`).join('')
     + `<button class="frame-add" id="boot-add" aria-label="Добавить кадр">${icon('i-plus', 18)}</button>`;
   $$('#boot-frames .frame-thumb').forEach(b => b.onclick = () => { boot.sel = +b.dataset.k; renderBoot(); });
-  $('#boot-add').onclick = () => { boot.frames.splice(boot.sel + 1, 0, { flag: 0, v: blankFrame(), ms: 500 }); boot.sel++; renderBoot(); };
-  $('#boot-editor').innerHTML = clockSVG(bootCur().v);
+  $('#boot-add').onclick = () => { boot.frames.splice(boot.sel + 1, 0, { flag: 0, v: blank(), ms: 500 }); boot.sel++; renderBoot(); };
+  $('#boot-editor').innerHTML = drawSVG(bootCur().v);
   $('#boot-ms').value = bootCur().ms;
 }
 function renderBootStatus() {
@@ -3365,10 +4260,22 @@ function renderBootStatus() {
   // своё сохранено, а строки автозапуска нет — после перезагрузки заставка и звук не подменятся
   const needHook = s.custom || s.sound_custom || s.always;
   const needHookAll = needHook || animCustom.clock.length || animCustom.ring.length;
+  if (window.__isMatrix) {
+    const cardHead = $('#boot-card .card-head h2');
+    if (cardHead) cardHead.textContent = 'Анимации LED-экрана 25×16';
+    const sub = $('#tab-boot .page-head .sub');
+    if (sub) sub.textContent = 'Анимации кольца и LED-экрана 25×16, заставка при включении';
+    const hint = $('#boot-card .hint');
+    if (hint) hint.textContent = 'Нажимайте на точки матрицы 25×16, чтобы зажечь их выбранной яркостью или погасить. Правая кнопка мыши (на телефоне — долгое нажатие) берёт яркость точки в ползунок.';
+    const brLabel = $('label[for="boot-br"]');
+    if (brLabel) brLabel.textContent = 'Яркость точки';
+    $('#boot-text').placeholder = 'HI : YA';
+    $('#boot-text').maxLength = 20;
+  }
   $$('[data-hook-badge]').forEach(b => {
     b.textContent = s.hook ? 'хук подключён' : needHookAll ? 'хук не подключён' : 'хук не нужен';
     b.className = 'badge' + (s.hook ? ' ok' : needHookAll ? ' bad' : '');
-    b.title = s.hook ? 'Хук автозапуска (строка в rootkeeper.sh или скрипт в /etc/init.d) подключает свои анимации и звуки при каждой загрузке колонки.'
+    b.title = s.hook ? 'Хук автозапуска подключает свои анимации и звуки при каждой загрузке колонки.'
       : needHookAll ? 'Свои анимации или звуки сохранены, но хук автозапуска не подключён — после перезагрузки вернутся стандартные. Сохраните их ещё раз — панель подключит хук.'
       : 'Хук понадобится, когда появится что-то своё: без него после перезагрузки вернутся стандартные.';
   });
@@ -3412,6 +4319,10 @@ async function loadClockAnim() {
     boot.def = orig.frames || [];
     setBootFrames(cur);
   }
+  if (window.__isMatrix) {
+    boot.frames.forEach(f => { f.v = toMatrixFrame(f.v); });
+    boot.def.forEach(f => { f.v = toMatrixFrame(f.v); });
+  }
   renderClockStatus(); renderBoot();
 }
 $('#anim-clock').onchange = e => {
@@ -3423,27 +4334,84 @@ $('#anim-clock').onchange = e => {
 const bootBrush = () => clamp(+$('#boot-br').value || 255, 1, +$('#boot-br').max);
 const setBrush = x => { $('#boot-br').value = x; $('#boot-br-v').textContent = bootBrush(); };
 $('#boot-br').oninput = () => setBrush($('#boot-br').value);
+let bootPainting = false;
+function handleEditorDot(e, isDrag = false) {
+  const el = e.target.closest('[data-i]');
+  if (!el) return;
+  const i = +el.dataset.i;
+  const v = window.__isMatrix ? toMatrixFrame(bootCur().v) : bootCur().v;
+  bootCur().v = v;
+  const brush = bootBrush();
+  if (isDrag) {
+    if (v[i] !== brush) {
+      v[i] = brush;
+      renderBoot();
+    }
+  } else {
+    v[i] = v[i] === brush ? 0 : brush;
+    renderBoot();
+  }
+}
+$('#boot-editor').onmousedown = e => {
+  if (e.button === 0) {
+    bootPainting = true;
+    handleEditorDot(e, false);
+  }
+};
+window.addEventListener('mouseup', () => { bootPainting = false; });
+$('#boot-editor').onmousemove = e => {
+  if (bootPainting && e.buttons === 1 && window.__isMatrix) {
+    handleEditorDot(e, true);
+  }
+};
+$('#boot-editor').ontouchmove = e => {
+  if (!window.__isMatrix) return;
+  const touch = e.touches[0];
+  const el = document.elementFromPoint(touch.clientX, touch.clientY);
+  const circle = el?.closest?.('[data-i]');
+  if (circle) {
+    const i = +circle.dataset.i;
+    const v = toMatrixFrame(bootCur().v);
+    bootCur().v = v;
+    const brush = bootBrush();
+    if (v[i] !== brush) {
+      v[i] = brush;
+      renderBoot();
+    }
+  }
+};
 $('#boot-editor').onclick = e => {
-  const i = e.target.closest('[data-i]')?.dataset.i;
-  if (i === undefined) return;
-  const v = bootCur().v;
-  v[i] = v[i] === bootBrush() ? 0 : bootBrush();
-  renderBoot();
+  if (!window.__isMatrix) handleEditorDot(e, false);
 };
 $('#boot-editor').oncontextmenu = e => {
   const i = e.target.closest('[data-i]')?.dataset.i;
   if (i === undefined) return;
   e.preventDefault();
-  const x = bootCur().v[i];
+  const v = window.__isMatrix ? toMatrixFrame(bootCur().v) : bootCur().v;
+  const x = v[i];
   if (x > 0) setBrush(x);
 };
-$('#boot-br-all').onclick = () => { bootCur().v = bootCur().v.map(x => x > 0 ? bootBrush() : 0); renderBoot(); };
+$('#boot-br-all').onclick = () => {
+  const v = window.__isMatrix ? toMatrixFrame(bootCur().v) : bootCur().v;
+  bootCur().v = v.map(x => x > 0 ? bootBrush() : 0);
+  renderBoot();
+};
 $('#boot-ms').onchange = e => { bootCur().ms = clamp(+e.target.value || 100, 10, 65535); renderBoot(); };
-const applyBootText = () => { bootCur().v = textToFrame($('#boot-text').value).map(x => x > 0 ? bootBrush() : 0); renderBoot(); };
+const applyBootText = () => {
+  if (window.__isMatrix) {
+    bootCur().v = renderMatrixText($('#boot-text').value, bootBrush());
+  } else {
+    bootCur().v = textToFrame($('#boot-text').value).map(x => x > 0 ? bootBrush() : 0);
+  }
+  renderBoot();
+};
 $('#boot-text-apply').onclick = applyBootText;
 $('#boot-text').onkeydown = e => { if (e.key === 'Enter') applyBootText(); };
 $('#boot-dup').onclick = () => { boot.frames.splice(boot.sel + 1, 0, structuredClone(bootCur())); boot.sel++; renderBoot(); };
-$('#boot-clear').onclick = () => { bootCur().v = blankFrame(); renderBoot(); };
+$('#boot-clear').onclick = () => {
+  bootCur().v = window.__isMatrix ? new Array(400).fill(0) : blankFrame();
+  renderBoot();
+};
 $('#boot-del').onclick = () => { boot.frames.splice(boot.sel, 1); renderBoot(); };
 const moveFrame = d => {
   const j = boot.sel + d;
@@ -3638,6 +4606,10 @@ function renderBt() {
   for (const el of [$('#bt-pair-row'), $('#bt-list'), card.querySelector('.vol-bt'), $('#bt-out-row')]) el.hidden = !d.powered;
   // при выводе на Bluetooth-колонку ползунка громкости нет: остаются громкость Алисы и сама колонка
   if (d.out?.on && d.out.state === 'bt') card.querySelector('.vol-bt').hidden = true;
+  if (d.out?.supported === false) {
+    if (card.querySelector('.vol-bt')) card.querySelector('.vol-bt').hidden = true;
+    if ($('#bt-out-row')) $('#bt-out-row').hidden = true;
+  }
   if (!d.powered) $('#bt-out-pick').hidden = true;
   $('#bt-badge').textContent = !d.powered ? 'выключен' : conn.length ? 'подключено' : 'включён';
   $('#bt-badge').className = 'badge' + (d.powered ? ' ok' : '');
@@ -4889,7 +5861,7 @@ $('#mu-oauth-go').onclick = e => act(e.currentTarget, async () => {
     requestAnimationFrame(frame);
     if (document.hidden || !cv.offsetParent || !cw || now - last < 33) return;   // ~30 к/с и только на экране
     last = now;
-    if (window.__vizOff) { if (energy) { ctx.clearRect(0, 0, cw, ch); energy = 0; } return; }
+    if (window.__vizOff) { cv.style.display = 'none'; if (energy) { ctx.clearRect(0, 0, cw, ch); energy = 0; } return; } else { cv.style.display = 'block'; }
     const t = now / 1000;
     // фон в покое: пока музыка не играет, символы медленно переливаются (выключается в «Настроить»)
     const idle = window.__vizIdleOff ? 0 : 1 - energy, ti = reduced.matches ? 0 : t;
@@ -5641,7 +6613,7 @@ function applyUI() {
   for (const [k, v] of [['--accent', accent], ['--accent-ink', accent && `color-mix(in srgb, ${accent} 72%, var(--text))`],
                         ['--accent-soft', accent && `color-mix(in srgb, ${accent} 15%, var(--card))`]])
     v ? root.style.setProperty(k, v) : root.style.removeProperty(k);
-  window.__vizOff = store.get('ui.viz') === '0';
+  window.__vizOff = store.get('ui.viz') !== '1';
   window.__vizStyle = store.get('ui.vizStyle') || 'rays';
   $$('#set-theme button').forEach(b => b.classList.toggle('active', b.dataset.v === theme));
   const glow = store.get('ui.glow') || 'cursor';
@@ -6172,7 +7144,7 @@ $('#privacy-on').onchange = e => {
 };
 $('#fp-reset').onclick = e => {
   if (!confirm('Удалить с колонки всё, что поставила панель?\n\n• своя заставка и звук запуска — вернутся стандартные;\n'
-    + '• будильники и их звуки;\n• голосовой помощник и его ключи;\n• блокировка аналитики;\n• флаги автозапуска;\n• строка в rootkeeper.sh и копии оригиналов.\n\nКолонку перезагружать не нужно.')) return;
+    + '• будильники и их звуки;\n• голосовой помощник и его ключи;\n• блокировка аналитики;\n• флаги автозапуска;\n• настройки автозапуска и копии оригиналов.\n\nКолонку перезагружать не нужно.')) return;
   act(e.currentTarget, async () => {
     footprint = await api('/api/footprint/reset', {});
     await loadFootprint();
@@ -7083,7 +8055,7 @@ $('#al-update').onclick = e => act(e.currentTarget, async () => { alarmsData = a
 $('#al-uninstall').onclick = e => {
   const n = alarmsData?.alarms.length || 0;
   if (!confirm('Удалить будильник с колонки?' + (n ? ` Все будильники (${n}) и загруженные звуки будут удалены.` : '')
-               + ' Строка автозапуска уберётся из rootkeeper.sh, если она больше ничему не нужна.')) return;
+               + ' Строка автозапуска уберётся, если она больше ничему не нужна.')) return;
   act(e.currentTarget, async () => { alarmsData = await api('/api/alarms/uninstall', {}); renderAlarms(); }, 'Будильник удалён с колонки');
 };
 $('#al-snooze-cancel').onclick = e => act(e.currentTarget, async () => { await api('/api/alarms/cmd', { action: 'cancel_snooze' }); await loadAlarms(); }, 'Отложенный будильник отменён');
@@ -7113,6 +8085,26 @@ async function loadPanelModel() {
   try { p = await api('/api/profile'); } catch { return; }
   // LED-панель (88 диодов через led-play) есть только у Станции 2 — пункт меню по флагу профиля
   $('nav.side a[data-tab="led"]').hidden = !p.ledpanel;
+  // Скрываем разделы, не поддерживаемые моделью
+  if (p.alarms === false) {
+    $$('a[data-tab="alarm"]').forEach(el => el.hidden = true);
+    if (location.hash === '#alarm') location.hash = '#overview';
+  }
+  if (p.scenes === false) {
+    $$('a[data-tab="scenes"]').forEach(el => el.hidden = true);
+    if (location.hash === '#scenes') location.hash = '#overview';
+  }
+  if (p.assistant === false) {
+    $$('a[data-tab="assistant"]').forEach(el => el.hidden = true);
+    if (location.hash === '#assistant') location.hash = '#overview';
+  }
+  if (p.apps === false) {
+    $$('a[data-tab="apps"]').forEach(el => el.hidden = true);
+    if (location.hash === '#apps') location.hash = '#overview';
+  }
+  if (p.alarms === false && p.scenes === false) {
+    $$('.mbar-opt').forEach(el => el.hidden = false);
+  }
   if (!p.ledpanel && location.hash === '#led') location.hash = '#overview';
   if (p.clock_max) {
     const slider = $('#clock-br');
@@ -7139,32 +8131,38 @@ async function loadPanelVersion(refresh) {
 function renderPanelVersion() {
   const v = panelVer; if (!v) return;
   const date = d => d ? new Date(d).toLocaleDateString('ru-RU') : '';
-  $('#upd-version').textContent = v.version;
-  $('#upd-repo').href = v.repo;
+  const uv = $('#upd-version'); if (uv) uv.textContent = v.version;
+  const ur = $('#upd-repo'); if (ur) ur.href = v.repo;
   const checked = v.checked ? ' · проверено ' + new Date(v.checked * 1000).toLocaleTimeString('ru-RU') : '';
-  $('#upd-state').textContent = v.error ? 'Не удалось проверить: ' + v.error
-    : v.update ? 'Доступна версия ' + v.latest + checked
-    : v.latest ? 'Установлена последняя версия' + checked : 'Нет данных о релизе';
-  $('#upd-state').classList.toggle('warn', !!v.update || !!v.error);
-  $('#upd-row').hidden = !v.update;
-  if (v.update) {
-    $('#upd-latest').textContent = v.latest + (v.latest_date ? ` от ${date(v.latest_date)}` : '');
-    $('#upd-how').textContent = v.multi ? 'Обновятся шлюз и все процессы колонок; данные сохранятся.' : (UPD_HOW[v.install] || '');
-    $('#upd-notes').href = v.url || v.repo;
-    $('#upd-go').hidden = v.install === 'docker' || v.install === 'android';
+  const us = $('#upd-state');
+  if (us) {
+    us.textContent = v.error ? 'Не удалось проверить: ' + v.error
+      : v.update ? 'Доступна версия ' + v.latest + checked
+      : v.latest ? 'Установлена последняя версия' + checked : 'Нет данных о релизе';
+    if (us.classList && us.classList.toggle) us.classList.toggle('warn', !!v.update || !!v.error);
   }
-  $('#upd-cmd').hidden = !(v.update && v.install === 'docker');
-  $('#upd-cmd').textContent = 'docker compose pull && docker compose up -d';
-  $('#ov-update').hidden = !v.update || store.get('upd.hide') === v.latest;
-  $('#ov-update-text').textContent = `Доступна новая версия панели — ${v.latest}`;
+  const row = $('#upd-row'); if (row) row.hidden = !v.update;
+  if (v.update) {
+    const ul = $('#upd-latest'); if (ul) ul.textContent = v.latest + (v.latest_date ? ` от ${date(v.latest_date)}` : '');
+    const uh = $('#upd-how'); if (uh) uh.textContent = v.multi ? 'Обновятся шлюз и все процессы колонок; данные сохранятся.' : (typeof UPD_HOW !== 'undefined' && UPD_HOW[v.install] ? UPD_HOW[v.install] : '');
+    const un = $('#upd-notes'); if (un) un.href = v.url || v.repo;
+    const ug = $('#upd-go'); if (ug) ug.hidden = v.install === 'docker' || v.install === 'android';
+  }
+  const cmd = $('#upd-cmd');
+  if (cmd) {
+    cmd.hidden = !(v.update && v.install === 'docker');
+    cmd.textContent = 'docker compose pull && docker compose up -d';
+  }
+  const ov = $('#ov-update'); if (ov) ov.hidden = !v.update || (typeof store !== 'undefined' && store.get && store.get('upd.hide') === v.latest);
+  const ot = $('#ov-update-text'); if (ot) ot.textContent = `Доступна новая версия панели — ${v.latest}`;
 }
-$('#ov-update-hide').onclick = () => { store.set('upd.hide', panelVer?.latest || ''); renderPanelVersion(); };
-$('#upd-check').onclick = e => act(e.currentTarget, async () => {
-  const btn = e.currentTarget; btn.textContent = 'Проверяю…'; $('#upd-state').textContent = 'Проверяю релизы на GitHub…';
+if ($('#ov-update-hide')) $('#ov-update-hide').onclick = () => { store.set('upd.hide', panelVer?.latest || ''); renderPanelVersion(); };
+if ($('#upd-check')) $('#upd-check').onclick = e => act(e.currentTarget, async () => {
+  const btn = e.currentTarget; btn.textContent = 'Проверяю…'; if ($('#upd-state')) $('#upd-state').textContent = 'Проверяю релизы на GitHub…';
   try { await loadPanelVersion(true); if (!panelVer.error && !panelVer.update) toast('Проверено: установлена последняя версия'); }
   finally { btn.textContent = 'Проверить'; }
 });
-$('#upd-go').onclick = e => {
+if ($('#upd-go')) $('#upd-go').onclick = e => {
   if (!confirm(`Обновить панель до ${panelVer.latest}? Сервер перезапустится, страница обновится сама.`)) return;
   const btn = e.currentTarget;
   return act(btn, async () => {
@@ -7172,7 +8170,6 @@ $('#upd-go').onclick = e => {
     try {
       const updated = await api('/api/panel/update', {});
       toast('Обновлено, перезапускаемся…');
-      // ждём, пока сервер поднимется именно с новой версией, и перезагружаем страницу
       const until = Date.now() + 60000;
       await new Promise(r => setTimeout(r, 2500));
       while (Date.now() < until) {
@@ -7184,7 +8181,7 @@ $('#upd-go').onclick = e => {
   });
 };
 loadPanelVersion().catch(() => {});
-setInterval(() => !document.hidden && loadPanelVersion().catch(() => {}), 6 * 3600 * 1000);
+// Updates disabled: no periodic check
 
 // ---------- подключение ----------
 // Сервер сам переподключается к колонке; страница только показывает состояние и после
@@ -7799,6 +8796,7 @@ $('#ww-hits').addEventListener('click', e => {
 
 wwLoad();
 wwActionsLoad();
+
 </script>
 <script src="static/vendor/qrcode.js"></script>
 <script src="static/vendor/xterm/xterm.js"></script>

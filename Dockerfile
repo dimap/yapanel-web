@@ -26,7 +26,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY server.py access.py agent.py glagol.py profiles.py midi.py managed_yam.py multi.py pyadb.py speakers.example.json VERSION ./
+COPY server.py access.py agent.py glagol.py profiles.py max_profile.py assistant_max.py config.py multi.py pyadb.py speakers.example.json VERSION ./
 COPY static ./static
 COPY device ./device
 COPY --from=assistant /out/assistantd /out/VERSION ./device/assistant/build/

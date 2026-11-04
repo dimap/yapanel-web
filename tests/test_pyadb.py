@@ -128,7 +128,7 @@ class PyAdbTests(unittest.TestCase):
         r = self.run_adb("-s", self.serial, "shell", "echo привет")
         self.assertEqual(r.stdout.decode(), "привет\r\n")
         self.assertIn(self.serial, self.run_adb("devices", "-l").stdout.decode())
-        self.assertEqual(subprocess.run(["true"]).returncode, 0)     # чужие программы — как обычно
+        self.assertEqual(subprocess.run([sys.executable, "-c", "exit(0)"]).returncode, 0)     # чужие программы — как обычно
 
     def test_push_pull_ls_big_file(self):
         self.run_adb("connect", self.serial)

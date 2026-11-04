@@ -13,6 +13,15 @@
 .tls/
 data/
 speakers.json
+bulbs*.json
+strip_config*.json
+party_settings*.json
+party.py
+bin_cache/
+movies/
+.env
+.env.*
+*.local.json
 
 # окружение
 __pycache__/

@@ -25,6 +25,7 @@ class Worker(BaseHTTPRequestHandler):
         self.send_response(200);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
 
 class TestGateway(gateway.Gateway):
+    __test__ = False
     def _allowed(self,path):return not server.Handler._guard(self,path)
 
 class GatewayTests(unittest.TestCase):

@@ -90,7 +90,8 @@ class AssistantDownload(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.blob = b"\x7fELF assistantd"
         self.sums = f"{hashlib.sha256(self.blob).hexdigest()}  assistantd-linux-arm64\n".encode()
-        self.patches = [patch.object(server, "DATA_DIR", self.tmp), patch.object(server, "ASSIST_SRC", self.tmp / "src"),
+        self.patches = [patch.object(server, "ROOT", self.tmp),
+                        patch.object(server, "DATA_DIR", self.tmp), patch.object(server, "ASSIST_SRC", self.tmp / "src"),
                         patch.object(server.shutil, "which", lambda name: None)]
         for p in self.patches:
             p.start()

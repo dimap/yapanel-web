@@ -29,7 +29,6 @@ jobs:
           # продолжало обновляться
           images: |
             ghcr.io/${{ github.repository }}
-            ghcr.io/dimap/yandex-lite2-web
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}

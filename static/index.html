@@ -1332,7 +1332,7 @@
     <div class="cols">
       <div class="col wzone" id="wz-left">
         <!-- 3D-модель -->
-        <div class="model-view" id="model-view" data-widget="model" data-title="3D-модель" role="img" aria-label="3D-модель колонки: дисплей и кольцо повторяют настоящие"><canvas id="model-viz" aria-hidden="true"></canvas></div>
+        <section class="model-widget" data-widget="model" data-title="3D-модель"><div class="model-view" id="model-view" role="img" aria-label="3D-модель колонки: дисплей и кольцо повторяют настоящие"><canvas id="model-viz" aria-hidden="true"></canvas></div><div id="model-color-panel" class="model-color-panel" hidden></div></section>
         <section class="card" data-widget="alice" data-title="Управление Алисой" hidden>
           <div class="card-head"><h2>Управление Алисой</h2></div>
           <form class="row mu-ask-form" style="gap:8px;align-items:stretch">
@@ -2809,15 +2809,15 @@ async function refreshStatus() {
     $('#ffmpeg-hint').textContent = s.ffmpeg ? 'ffmpeg найден — подходят любые форматы.' : 'ffmpeg не найден — подходят только WAV.';
 
 
-    window.__deviceColor = s.color;
-    window.modelColor?.(s.color);
+    if (window.__modelColorController) void window.__modelColorController.updateStatus(s);
+    else { window.__deviceColor = s.color; window.modelColor?.(s.color); }
     $('#dev-info').innerHTML = [
       ['Quasar', s.quasar === 'running' ? 'работает' : 'остановлен'],
       ['Версия', s.quasar_version], ['Device ID', { html: secret('id', s.device_id) }], ['Хост', { html: hostHtml(s.hostname) }],
       ['Ядро', s.kernel], ['MAC', { html: secret('mac', s.address) }], ['Время', s.date],
     ].map(([k, v]) => `<dt>${k}</dt><dd>${v?.html ?? esc(v ?? '—')}</dd>`).join('');
     updateSub();
-  } catch {}   // о потере связи расскажет экран подключения
+  } catch { window.__modelColorController?.updateStatus(null); }   // о потере связи расскажет экран подключения
 }
 function updateSub() {
   if (!status) return;

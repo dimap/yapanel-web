@@ -16,3 +16,6 @@ runtime
 dist
 tools
 device/assistant/build
+
+.model_colors.json
+.model-colors-*

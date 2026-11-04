@@ -2,6 +2,7 @@
 import * as T from 'three';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import {modelSettings} from './model-settings.js';
+import {modelPalette} from './model-colors.js';
 import {CONCEPTS} from './model-concepts.js';
 import * as G from './clock-geometry.js';
 export function createModel(profile){
@@ -10,7 +11,7 @@ view.setAttribute('role','group');view.setAttribute('aria-label','3D-модел�
 // Preserve upstream visualizer canvas and the references held by its animation loop.
 // Лайт первого поколения: цвета как в её ledconfigs (purple, yellow, green, pink, red, beige).
 // Мини 2: четыре официальных цвета; третий элемент — пластик в цвет корпуса (крышка, задняя планка, ярлык, ободок).
-const palette=concept?concept.colors:lite?{purple:['Фиолетовый','#6a3fe6'],yellow:['Жёлтый','#f0c43a'],green:['Зелёный','#59b96d'],pink:['Розовый','#ec2c7c'],red:['Красный','#d9473f'],beige:['Бежевый','#d8c6ab']}:mini2?{white:['Белый','#dcd8d1','#e8e5df'],black:['Чёрный','#2b2b2f','#232326'],red:['Красный','#6e2634','#601f2d'],blue:['Синий','#2d4070','#273863']}:profile.id==='mini3'?{black:['Чёрный','#34343a'],grey:['Серый','#a0a2a8'],violet:['Лиловый','#9b8eaa'],teal:['Бирюзовый','#6aa6a7']}:mini?{black:['Графит','#34343a'],grey:['Серый','#888b91'],blue:['Синий','#355d82']}:{black:['Антрацит','#3b3c40'],blue:['Кобальт','#485c85'],copper:['Медный','#a66d5d'],sand:['Песочный','#c5baaa'],red:['Рубин','#8c3447']};
+const palette=modelPalette(profile.id)||concept?.colors;
 let renderer;
 try{renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});}catch(e){view.insertAdjacentHTML('beforeend','<p class="studio-error">Для объёмной модели включите WebGL в браузере.</p>');throw e;}
 renderer.domElement.className='studio-canvas';renderer.domElement.setAttribute('aria-label',profile.name+' — вращаемая 3D-модель');
@@ -222,7 +223,7 @@ window.modelRing=leds=>{if(!leds?.length)return;
   m.emissive.copy(color);m.emissiveIntensity=.55;});dirty=true;};
 function paint(key){key=palette[key]?key:fallback;const[,body,trim]=palette[key];fabric.color.set(body);if(trim)plastic.color.set(trim);else plastic.color.copy(fabric.color).multiplyScalar(.65);for(const m of trimMaterials)m.color.copy(plastic.color);dirty=true;}
 let preference=null;
-window.modelColor=key=>{if(!preference)paint(key);};
+window.modelColor=key=>{if(window.__modelColorController||!preference)paint(key);};
 paint(window.__deviceColor||fallback);
 // Gallery-only bodies differ widely in size: frame each one by its bounding sphere.
 if(concept?.lying)group.rotation.z=Math.PI/2;

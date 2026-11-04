@@ -26,12 +26,20 @@ fi
 
 IDENTITY_PROBE = r'''
 if command -v device_id >/dev/null 2>&1; then
-  model_color_id=$(device_id -r 2>/dev/null | tail -n 1)
+  model_color_output=$(device_id -r 2>/dev/null)
 else
-  model_color_id=$(LD_LIBRARY_PATH=/system/vendor/quasar/libs /system/vendor/quasar/maind --device-id 2>/dev/null | tail -n 1)
+  model_color_output=$(LD_LIBRARY_PATH=/system/vendor/quasar/libs /system/vendor/quasar/maind --device-id 2>/dev/null)
 fi
-printf 'model_color_device_id=%s\n' "$model_color_id"
+printf '%s\n' "$model_color_output" | while IFS= read -r model_color_line; do
+  printf 'model_color_identity_line=%s\n' "$model_color_line"
+done
 '''
+
+
+def probe_identity(output):
+    """Проверяем все строки ответа, включая ID перед завершающими логами maind."""
+    prefix = "model_color_identity_line="
+    return identity("\n".join(line[len(prefix):] for line in output.splitlines() if line.startswith(prefix)))
 
 
 def palette(model):

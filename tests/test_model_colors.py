@@ -33,6 +33,18 @@ class ProbeTests(unittest.TestCase):
                 fields = dict(line.split('=', 1) for line in result.stdout.splitlines())
                 self.assertEqual(fields, {'color': raw, 'color_read': read})
 
+    def test_identity_probe_keeps_id_before_trailing_daemon_logs(self):
+        # Execute the real fallback pipeline, replacing only the absolute daemon path.
+        with tempfile.TemporaryDirectory() as directory:
+            tool = Path(directory) / 'maind'
+            tool.write_text('#!/bin/sh\nprintf "starting\\nDevice ID: TEST0000000001\\n[info] stopped\\n"\n')
+            tool.chmod(0o700)
+            probe = colors.IDENTITY_PROBE.replace('/system/vendor/quasar/maind', str(tool))
+            result = subprocess.run(['/bin/sh', '-c', probe], env={'PATH': directory},
+                                    capture_output=True, text=True, check=True)
+            self.assertEqual(colors.probe_identity(result.stdout), A)
+            self.assertIn('[info] stopped', result.stdout)
+
     def test_native_identity_formats_and_invalid_output(self):
         for value in (A, 'Device ID: ' + A, 'a' * 32):
             self.assertIsNotNone(colors.identity(value))
@@ -114,7 +126,7 @@ class FakeAdb:
 
     def shell(self, command, **kwargs):
         self.calls.append(command)
-        return (f'model_color_device_id={self.device}\ncolor={self.color}\ncolor_read={self.read}\n', '', 0)
+        return (f'model_color_identity_line={self.device}\ncolor={self.color}\ncolor_read={self.read}\n', '', 0)
 
 
 class ColorHttpTests(unittest.TestCase):

@@ -43,7 +43,22 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 import access
 import agent as agentlink
 import glagol
-import model_colors
+# Старый ZIP-обновлятор ещё не знает новый модуль. main() сначала восстановит файлы.
+try:
+    import model_colors
+except ModuleNotFoundError as exc:
+    if exc.name != "model_colors":
+        raise
+    model_colors = None
+
+
+def load_model_colors():
+    global model_colors
+    if model_colors is None:
+        import importlib
+        importlib.invalidate_caches()
+        model_colors = importlib.import_module("model_colors")
+    return model_colors
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -1908,7 +1923,8 @@ echo @@BLUEZ
                 st[k] = v.strip()
         st.update(self.version())
         st["color_detection"] = model_colors.diagnostic(st.get("color"), st.pop("color_read", None))
-        st["model_color_device_id"] = model_colors.identity(st.get("model_color_device_id"))
+        st.pop("model_color_identity_line", None)
+        st["model_color_device_id"] = model_colors.probe_identity(strip_ansi(out))
         st["ffmpeg"] = bool(self.ffmpeg)
         st["vol_level"] = alsa_to_level(st.get("vol_master"))
         st["muted"] = bool(load_settings().get("mute_before")) and st["vol_level"] == 0
@@ -1928,7 +1944,7 @@ echo @@BLUEZ
                 raise ValueError("обновите сведения о колонке перед сохранением цвета")
         out, _, _ = self.adb.shell(model_colors.IDENTITY_PROBE + model_colors.COLOR_PROBE, timeout=15)
         fields = dict(line.split("=", 1) for line in strip_ansi(out).splitlines() if "=" in line)
-        device = model_colors.identity(fields.get("model_color_device_id"))
+        device = model_colors.probe_identity(strip_ansi(out))
         detection = model_colors.diagnostic(fields.get("color"), fields.get("color_read"))
         store = model_colors.ColorStore(DATA_DIR / ".model_colors.json")
         if change is not None:
@@ -6816,6 +6832,7 @@ def main():
     auto = args.model == "auto"
     model = (settings.get("model") if settings.get("model") in profiles.PROFILES else "lite2") if auto else args.model
     PanelUpdater().repair_missing()
+    load_model_colors()
     profiles.install(sys.modules[__name__], model, auto=auto)
     global PANEL_PROFILE
     PANEL_PROFILE = (model, auto)

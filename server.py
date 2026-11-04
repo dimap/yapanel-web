@@ -2067,6 +2067,8 @@ echo @@BLUEZ
     def sound_replace(self, name, body):
         if len(body) > self.SOUND_UPLOAD_LIMIT:
             raise AdbError("файл слишком большой")
+        if not self.ffmpeg:
+            raise AdbError("для замены звука нужен ffmpeg на компьютере")
         target, custom = self._sound_paths(name)
         if target == SOUND_TARGET:
             self.boot_sound_install(name, body)
@@ -4240,8 +4242,13 @@ echo @@BLUEZ
 
     def _alarm_sounds_ready(self, sys_needed):
         # не ls: у busybox он раскрашивает имена даже в не-терминал
-        have = set(self.adb.shell(f"mkdir -p {ALARM_DIR}; for f in {ALARM_DIR}/*; do echo \"${{f##*/}}\"; done",
+        have = set(self.adb.shell(f"for f in {ALARM_DIR}/*; do echo \"${{f##*/}}\"; done",
                                   check=False)[0].split())
+        missing = ({"default.wav"} | set(sys_needed)) - have
+        if missing and not self.ffmpeg:
+            raise AdbError("для подготовки звуков будильника нужен ffmpeg на компьютере")
+        if missing:
+            self.adb.shell(f"mkdir -p {ALARM_DIR}")
         # запасной звук — штатный звук таймера: на него переключаемся, если чего-то не хватает
         if "default.wav" not in have:
             self._alarm_wav(self.adb.read_bytes(f"{SOUNDS_DIR}/{self._alarm_default_path()}"), "default.wav")

@@ -14,6 +14,8 @@ import sys
 import time
 import math
 import json
+import re
+import hashlib
 import struct
 import socket
 import select
@@ -1935,7 +1937,7 @@ class PartyManager:
                 pass
 
     def _resolve_path(self, override, candidates):
-        if override and os.path.exists(override):
+        if override:
             return str(override)
         for c in candidates:
             if c and os.path.exists(str(c)):
@@ -2302,6 +2304,368 @@ class PartyManager:
             except Exception as e:
                 print(f"[Party] Error saving bulb position: {e}")
         return {"status": "ok", "id": bulb_id, "pos_x": float(pos_x), "pos_y": float(pos_y)}
+
+    def save_bulb_ip(self, dev_id, new_ip):
+        """Updates IP address in bulbs.json when dynamic auto-healing discovers a changed IP."""
+        if not self.bulbs_config_path or not os.path.exists(self.bulbs_config_path):
+            return
+        try:
+            with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            changed = False
+            for item in data:
+                if item.get("id") == dev_id and item.get("ip") != new_ip:
+                    item["ip"] = new_ip
+                    changed = True
+                    break
+            if changed:
+                with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
+                print(f"[Party] Saved updated IP for {dev_id}: {new_ip}")
+        except Exception as e:
+            print(f"[Party] Error saving bulb IP: {e}")
+
+    def get_bulbs(self):
+        """Returns full list of configured bulbs with connectivity status."""
+        bulbs_list = []
+        raw_items = []
+        if self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
+            try:
+                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
+                    raw_items = json.load(f)
+            except Exception as e:
+                print(f"[Party] Error reading bulbs config: {e}")
+
+        # If bulbs.json was missing or empty, but workers exist, fallback to workers
+        if not raw_items and self.workers:
+            for b_id, w in self.workers.items():
+                raw_items.append({
+                    "id": b_id,
+                    "name": w.name,
+                    "ip": w.ip,
+                    "key": getattr(w, "key", ""),
+                    "ver": getattr(w, "ver", 3.5),
+                    "role": w.role,
+                    "side": getattr(w, "side", ""),
+                    "pos_x": getattr(w, "pos_x", 0.0),
+                    "pos_y": getattr(w, "pos_y", 0.0),
+                    "enabled": True
+                })
+
+        for item in raw_items:
+            b_id = str(item.get("id") or "").strip()
+            if not b_id:
+                continue
+            w = self.workers.get(b_id)
+            bulbs_list.append({
+                "id": b_id,
+                "name": item.get("name") or (w.name if w else "Лампа"),
+                "ip": item.get("ip") or (w.ip if w else ""),
+                "key": item.get("key") or (getattr(w, "key", "") if w else ""),
+                "ver": float(item.get("ver", getattr(w, "ver", 3.5) if w else 3.5)),
+                "role": item.get("role") or (w.role if w else "kick"),
+                "side": item.get("side") or (getattr(w, "side", "") if w else ""),
+                "pos_x": float(item.get("pos_x", getattr(w, "pos_x", 0.0) if w else 0.0)),
+                "pos_y": float(item.get("pos_y", getattr(w, "pos_y", 0.0) if w else 0.0)),
+                "enabled": bool(item.get("enabled", True)),
+                "connected": bool(w.connected) if w else False,
+                "val": w.current_val if w else None
+            })
+        return bulbs_list
+
+    def add_bulb(self, data):
+        """Adds or updates a bulb in bulbs.json and spawns/reloads worker dynamically."""
+        if not isinstance(data, dict):
+            return {"error": "Invalid payload, dict expected"}
+        b_id = str(data.get("id") or "").strip()
+        if not b_id:
+            return {"error": "Device ID (id) is required"}
+        ip = str(data.get("ip") or "").strip()
+        key = str(data.get("key") or "").strip()
+        name = str(data.get("name") or "").strip() or f"Лампа {ip or b_id[:6]}"
+        role = str(data.get("role", "kick")).strip().lower()
+        if role not in ["kick", "snare", "ambient"]:
+            role = "kick"
+        side = str(data.get("side", "")).strip().lower()
+        if side not in ["left", "right"]:
+            side = ""
+        pos_x = float(data.get("pos_x", -1.0 if side == "left" else (1.0 if side == "right" else 0.0)))
+        pos_y = float(data.get("pos_y", 0.0))
+        try:
+            ver = float(data.get("ver", 3.5))
+        except (ValueError, TypeError):
+            ver = 3.5
+        enabled = bool(data.get("enabled", True))
+
+        entry = {
+            "id": b_id,
+            "name": name,
+            "ip": ip,
+            "key": key,
+            "ver": ver,
+            "role": role,
+            "side": side,
+            "pos_x": pos_x,
+            "pos_y": pos_y,
+            "enabled": enabled
+        }
+
+        items = []
+        if self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
+            try:
+                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
+                    items = json.load(f)
+            except Exception:
+                items = []
+
+        found = False
+        for i, it in enumerate(items):
+            if it.get("id") == b_id:
+                items[i] = entry
+                found = True
+                break
+        if not found:
+            items.append(entry)
+
+        try:
+            p = Path(self.bulbs_config_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
+                json.dump(items, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            return {"error": f"Failed to save bulbs configuration: {e}"}
+
+        # Dynamically reload worker
+        old_w = self.workers.get(b_id)
+        if old_w:
+            old_w.stop(timeout=0.3)
+            del self.workers[b_id]
+
+        if self.running and enabled:
+            new_w = BulbWorker(entry, self)
+            self.workers[b_id] = new_w
+            new_w.start()
+
+        return {"status": "ok", "bulb": entry}
+
+    def delete_bulb(self, bulb_id):
+        """Removes bulb from bulbs.json and terminates its worker."""
+        b_id = str(bulb_id or "").strip()
+        if not b_id:
+            return {"error": "Bulb ID required"}
+
+        items = []
+        if self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
+            try:
+                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
+                    items = json.load(f)
+            except Exception:
+                items = []
+
+        new_items = [it for it in items if it.get("id") != b_id]
+        try:
+            p = Path(self.bulbs_config_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
+                json.dump(new_items, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            return {"error": f"Failed to update bulbs configuration: {e}"}
+
+        w = self.workers.get(b_id)
+        if w:
+            w.stop(timeout=0.3)
+            del self.workers[b_id]
+
+        return {"status": "ok", "id": b_id}
+
+    def import_bulbs(self, list_data, overwrite=False):
+        """Batch import bulbs from list or tinytuya devices export."""
+        if isinstance(list_data, dict):
+            if "bulbs" in list_data and isinstance(list_data["bulbs"], list):
+                raw_list = list_data["bulbs"]
+            elif "devices" in list_data and isinstance(list_data["devices"], list):
+                raw_list = list_data["devices"]
+            else:
+                raw_list = [list_data]
+        elif isinstance(list_data, list):
+            raw_list = list_data
+        else:
+            return {"error": "Expected list of bulbs or dict with devices"}
+
+        existing = {}
+        if not overwrite and self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
+            try:
+                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
+                    for it in json.load(f):
+                        if it.get("id"):
+                            existing[it["id"]] = it
+            except Exception:
+                pass
+
+        count_added = 0
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            b_id = str(item.get("id") or item.get("dev_id") or item.get("gwId") or "").strip()
+            if not b_id:
+                continue
+            key = str(item.get("key") or item.get("local_key") or "").strip()
+            ip = str(item.get("ip") or "").strip()
+            name = str(item.get("name") or f"Лампа {ip or b_id[:6]}").strip()
+            role = str(item.get("role", "kick")).strip().lower()
+            if role not in ["kick", "snare", "ambient"]:
+                role = "kick"
+            side = str(item.get("side", "")).strip().lower()
+            pos_x = float(item.get("pos_x", -1.0 if side == "left" else (1.0 if side == "right" else 0.0)))
+            pos_y = float(item.get("pos_y", 0.0))
+            try:
+                ver = float(item.get("ver", item.get("version", 3.5)))
+            except (ValueError, TypeError):
+                ver = 3.5
+            enabled = bool(item.get("enabled", True))
+
+            existing[b_id] = {
+                "id": b_id,
+                "name": name,
+                "ip": ip,
+                "key": key or (existing.get(b_id, {}).get("key") or ""),
+                "ver": ver,
+                "role": role,
+                "side": side,
+                "pos_x": pos_x,
+                "pos_y": pos_y,
+                "enabled": enabled
+            }
+            count_added += 1
+
+        final_items = list(existing.values())
+        try:
+            p = Path(self.bulbs_config_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
+                json.dump(final_items, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            return {"error": f"Failed to save bulbs: {e}"}
+
+        if self.running:
+            for w in list(self.workers.values()):
+                w.stop(timeout=0.3)
+            self.workers.clear()
+            self.load_bulbs()
+
+        return {"status": "ok", "count": count_added, "total": len(final_items)}
+
+    @staticmethod
+    def _parse_tuya_udp_packet(data, udp_key=None):
+        if not data or len(data) < 16:
+            return None
+        # 1. Plaintext JSON
+        try:
+            m = re.search(rb'\{.*\}', data)
+            if m:
+                return json.loads(m.group(0).decode("utf-8", "ignore"))
+        except Exception:
+            pass
+
+        # 2. AES-128-ECB decrypted JSON
+        if udp_key is None:
+            udp_key = hashlib.md5(b"yGAdlopoPVldABfn").digest()
+        payload = None
+        if len(data) >= 24 and data[:4] == b'\x00\x00\x55\xaa':
+            payload = data[16:-8]
+        elif len(data) >= 16:
+            payload = data
+
+        if payload and len(payload) >= 16 and len(payload) % 16 == 0:
+            try:
+                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+                cipher = Cipher(algorithms.AES(udp_key), modes.ECB())
+                dec = cipher.decryptor()
+                plain = dec.update(payload) + dec.finalize()
+                pad = plain[-1]
+                if isinstance(pad, int) and 1 <= pad <= 16:
+                    plain = plain[:-pad]
+                m = re.search(rb'\{.*\}', plain)
+                if m:
+                    return json.loads(m.group(0).decode("utf-8", "ignore"))
+            except Exception:
+                pass
+
+        # 3. Binary regex for gwId / id
+        m = re.search(rb'"gwId"\s*:\s*"([a-zA-Z0-9_-]+)"', data)
+        if m:
+            return {"gwId": m.group(1).decode("ascii", "ignore")}
+        return None
+
+    def scan_network(self, timeout=3.0):
+        """Scans LAN for Tuya smart bulbs via UDP broadcasts & optional tinytuya scan."""
+        found = {}
+        if tinytuya and hasattr(tinytuya, "deviceScan"):
+            try:
+                res = tinytuya.deviceScan(verbose=False, maxretry=1)
+                if isinstance(res, dict):
+                    for ip, dev in res.items():
+                        if isinstance(dev, dict):
+                            d_id = dev.get("gwId") or dev.get("id") or ""
+                            if d_id:
+                                found[ip] = {
+                                    "ip": ip,
+                                    "id": d_id,
+                                    "ver": str(dev.get("version", "3.3")),
+                                    "product_key": dev.get("productKey", "")
+                                }
+            except Exception as e:
+                print(f"[Party] tinytuya scan error: {e}")
+
+        udp_key = hashlib.md5(b"yGAdlopoPVldABfn").digest()
+        for port in [6666, 6667]:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if hasattr(socket, "SO_BROADCAST"):
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                s.bind(('', port))
+                s.settimeout(0.4)
+                t_end = time.time() + (timeout / 2.0)
+                while time.time() < t_end:
+                    try:
+                        data, addr = s.recvfrom(2048)
+                        ip = addr[0]
+                        parsed = self._parse_tuya_udp_packet(data, udp_key)
+                        if parsed:
+                            dev_id = parsed.get("gwId") or parsed.get("id")
+                            if dev_id:
+                                found[ip] = {
+                                    "ip": ip,
+                                    "id": dev_id,
+                                    "ver": str(parsed.get("version", "3.3")),
+                                    "product_key": parsed.get("productKey", "")
+                                }
+                    except socket.timeout:
+                        continue
+                    except Exception:
+                        break
+                s.close()
+            except Exception:
+                pass
+
+        res_list = []
+        for ip, dev in found.items():
+            matched_worker = None
+            for w in self.workers.values():
+                if w.ip == ip or w.dev_id == dev["id"]:
+                    matched_worker = w
+                    break
+            res_list.append({
+                "ip": dev["ip"],
+                "id": dev["id"],
+                "ver": dev.get("ver", "3.3"),
+                "product_key": dev.get("product_key", ""),
+                "name": matched_worker.name if matched_worker else f"Лампа {ip}",
+                "is_paired": matched_worker is not None
+            })
+        res_list.sort(key=lambda x: x["ip"])
+        return res_list
 
     def test_bulb(self, bulb_id=None, action="solo", color="white"):
         """Individual bulb testing for spatial calibration:

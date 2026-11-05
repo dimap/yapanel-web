@@ -2267,9 +2267,93 @@
       <div class="card-head">
         <h2>Лампы в комнате</h2>
         <div class="actions">
+          <button class="btn sm primary" id="party-bulb-add-btn" type="button"><svg width="14" height="14" aria-hidden="true"><use href="#i-plus"/></svg>Добавить лампу</button>
+          <button class="btn sm" id="party-bulbs-scan-btn" type="button"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg>Поиск в Wi-Fi</button>
+          <button class="btn sm" id="party-bulbs-import-btn" type="button">Импорт JSON</button>
           <span class="badge" id="party-bulbs-count">—</span>
         </div>
       </div>
+      <!-- Редактор / Добавление лампы -->
+      <div id="party-bulb-editor" hidden style="margin-top:14px; padding:16px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
+        <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 id="party-bulb-ed-title" style="margin:0; font-size:15px; font-weight:600;">➕ Привязать умную лампу Tuya</h3>
+          <button class="btn sm" type="button" id="party-bulb-cancel-x" title="Закрыть">✕</button>
+        </div>
+        <form id="party-bulb-form" onsubmit="return false;">
+          <input type="hidden" id="party-bulb-edit-mode" value="add">
+          <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+            <label class="f">Название лампы
+              <input type="text" class="field" id="party-bulb-name" required placeholder="Например: Люстра центр">
+            </label>
+            <label class="f">IP-адрес в Wi-Fi
+              <input type="text" class="field" id="party-bulb-ip" required placeholder="192.168.1.105">
+            </label>
+            <label class="f">ID устройства (Device ID)
+              <input type="text" class="field" id="party-bulb-id" required placeholder="20–22 знака (bf...)">
+            </label>
+            <label class="f">Локальный ключ (Local Key)
+              <input type="text" class="field" id="party-bulb-key" required placeholder="16-значный ключ из Tuya Cloud">
+            </label>
+            <label class="f">Роль в светомузыке
+              <select class="field" id="party-bulb-role">
+                <option value="kick">🥁 Люстра — Бас / Kick (50–120 Гц)</option>
+                <option value="snare">🔔 Бра — Снэр / Snare (1 кГц)</option>
+                <option value="ambient">✨ Фон — Мягкий эмбиент</option>
+              </select>
+            </label>
+            <label class="f">Панорама (Слева / Центр / Справа)
+              <select class="field" id="party-bulb-side">
+                <option value="">По центру (0.0)</option>
+                <option value="left">Слева (-1.0)</option>
+                <option value="right">Справа (+1.0)</option>
+              </select>
+            </label>
+            <label class="f">Версия протокола Tuya
+              <select class="field" id="party-bulb-ver">
+                <option value="3.5" selected>3.5 (Новые лампы 2024–2026)</option>
+                <option value="3.3">3.3 (Стандартные лампы Tuya)</option>
+                <option value="3.1">3.1 (Старый протокол 3.1)</option>
+              </select>
+            </label>
+          </div>
+          <div class="row" style="gap:10px; margin-top:14px;">
+            <button class="btn primary" type="button" id="party-bulb-save-btn">Сохранить лампу</button>
+            <button class="btn" type="button" id="party-bulb-cancel-btn">Отмена</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Панель Wi-Fi сканирования ламп -->
+      <div id="party-scan-panel" hidden style="margin-top:14px; padding:16px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
+        <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0; font-size:15px; font-weight:600;">🔍 Поиск ламп Tuya в локальной сети Wi-Fi</h3>
+          <button class="btn sm" type="button" id="party-scan-close-btn" title="Закрыть">✕</button>
+        </div>
+        <p class="hint" style="margin-bottom:12px;">Служба слушает сетевые анонсы устройств Tuya/Smart Life (UDP 6666/6667) для быстрого авто-определения IP и Device ID.</p>
+        <div class="row" style="gap:10px; margin-bottom:12px; align-items:center;">
+          <button class="btn primary sm" type="button" id="party-scan-start-btn"><svg width="14" height="14" aria-hidden="true"><use href="#i-search"/></svg>Сканировать сеть (3 сек)</button>
+          <span class="meta" id="party-scan-status"></span>
+        </div>
+        <div id="party-scan-results" style="display:flex; flex-direction:column; gap:8px;">
+          <!-- Найденные устройства -->
+        </div>
+      </div>
+
+      <!-- Панель импорта JSON -->
+      <div id="party-import-panel" hidden style="margin-top:14px; padding:16px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
+        <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0; font-size:15px; font-weight:600;">📋 Импорт ламп из JSON</h3>
+          <button class="btn sm" type="button" id="party-import-close-btn" title="Закрыть">✕</button>
+        </div>
+        <p class="hint" style="margin-bottom:10px;">Вставьте сюда список из <code>devices.json</code> (tinytuya wizard) или массив ламп в формате <code>[{"name": "...", "ip": "...", "id": "...", "key": "..."}]</code>.</p>
+        <textarea id="party-import-text" class="field" style="width:100%; height:120px; font-family:monospace; font-size:12px; margin-bottom:10px;" placeholder='[&#10;  {&#10;    "name": "Люстра",&#10;    "ip": "192.168.1.105",&#10;    "id": "bf0123456789abcdef",&#10;    "key": "0123456789abcdef",&#10;    "role": "kick"&#10;  }&#10;]'></textarea>
+        <div class="row" style="gap:10px;">
+          <button class="btn primary" type="button" id="party-import-apply-btn">Импортировать</button>
+          <button class="btn" type="button" id="party-import-export-btn">Экспорт текущих</button>
+          <button class="btn" type="button" id="party-import-cancel-btn">Отмена</button>
+        </div>
+      </div>
+
       <div id="party-bulbs-list" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
         <!-- Динамический список ламп -->
       </div>
@@ -5277,6 +5361,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ---- Светомузыка (Party Mode) ----
 let partyTimer = null;
 let partyData = null;
+let partyBulbsConfig = [];
 let partyEventsBound = false;
 
 async function loadParty() {
@@ -5284,6 +5369,7 @@ async function loadParty() {
   initPartyEvents();
   try {
     partyData = await api('/api/party/status');
+    try { partyBulbsConfig = await api('/api/party/bulbs'); } catch {}
     renderParty();
   } catch (e) {
     if (!e.offline) {
@@ -5398,7 +5484,12 @@ function renderParty() {
   });
 
   // Bulbs list & count
-  const bulbs = d.bulbs || [];
+  const cfgList = Array.isArray(partyBulbsConfig) ? partyBulbsConfig : [];
+  const statusBulbs = (d && Array.isArray(d.bulbs)) ? d.bulbs : [];
+  const bulbs = cfgList.length > 0 ? cfgList.map(b => {
+    const live = statusBulbs.find(x => x.id === b.id);
+    return live ? { ...b, connected: live.connected, val: live.val } : b;
+  }) : statusBulbs;
   let onlineCount = 0;
   const listEl = $('#party-bulbs-list');
   if (listEl) {
@@ -5414,18 +5505,23 @@ function renderParty() {
         html += `
           <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
             <div>
-              <div style="font-weight:600; font-size:14px;">${esc(b.name)}</div>
+              <div style="font-weight:600; font-size:14px; display:flex; align-items:center; gap:6px;">
+                <span>${esc(b.name)}</span>
+                <span class="${dotClass}" title="${esc(statusTxt)}"></span>
+              </div>
               <div class="meta" style="font-size:12px; margin-top:2px;">${esc(b.ip)} • ${esc(roleTxt)}</div>
             </div>
             <div style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:500;">
-              <span class="${dotClass}"></span><span>${esc(statusTxt)}</span>
+              <button class="btn sm" type="button" data-party-test="${esc(b.id)}" title="Мигнуть 3 раза зелёным светом">💡 Тест</button>
+              <button class="btn sm" type="button" data-party-edit="${esc(b.id)}" title="Редактировать">✏️</button>
+              <button class="btn sm danger" type="button" data-party-del="${esc(b.id)}" title="Удалить лампу">🗑️</button>
             </div>
           </div>
         `;
       });
       listEl.innerHTML = html;
     } else {
-      listEl.innerHTML = '<div class="empty">Лампы не настроены или служба выключена</div>';
+      listEl.innerHTML = '<div class="empty" style="text-align:center; padding:16px;">Лампы пока не привязаны.<br>Нажмите <b>«➕ Добавить лампу»</b> или <b>«🔍 Поиск в Wi-Fi»</b>, чтобы подключить умные лампы Tuya/Smart Life к колонке.</div>';
     }
   }
 
@@ -5589,6 +5685,223 @@ function initPartyEvents() {
         await new Promise(r => setTimeout(r, 1200));
         await loadParty();
       }, 'Лампы переподключены');
+    };
+  }
+
+  // --- Bulb pairing & management handlers ---
+  const bulbsList = $('#party-bulbs-list');
+  if (bulbsList) {
+    bulbsList.onclick = async e => {
+      const btnTest = e.target.closest('[data-party-test]');
+      if (btnTest) {
+        const id = btnTest.dataset.partyTest;
+        act(btnTest, async () => {
+          await api('/api/party/bulbs/test', { id, action: 'flash' });
+        }, 'Проверка лампы: тройная вспышка');
+        return;
+      }
+      const btnDel = e.target.closest('[data-party-del]');
+      if (btnDel) {
+        const id = btnDel.dataset.partyDel;
+        if (!confirm('Удалить эту лампу из светомузыки?')) return;
+        act(btnDel, async () => {
+          await api('/api/party/bulbs/delete', { id });
+          await loadParty();
+        }, 'Лампа удалена');
+        return;
+      }
+      const btnEdit = e.target.closest('[data-party-edit]');
+      if (btnEdit) {
+        const id = btnEdit.dataset.partyEdit;
+        let b = (Array.isArray(partyBulbsConfig) ? partyBulbsConfig : []).find(x => x.id === id);
+        if (!b && partyData && Array.isArray(partyData.bulbs)) {
+          b = partyData.bulbs.find(x => x.id === id);
+        }
+        if (!b) return;
+        $('#party-bulb-ed-title').textContent = '✏️ Редактирование лампы';
+        $('#party-bulb-edit-mode').value = 'edit';
+        $('#party-bulb-name').value = b.name || '';
+        $('#party-bulb-ip').value = b.ip || '';
+        $('#party-bulb-id').value = b.id || '';
+        $('#party-bulb-key').value = b.key || '';
+        $('#party-bulb-role').value = b.role || 'kick';
+        $('#party-bulb-side').value = b.side || '';
+        $('#party-bulb-ver').value = String(b.ver || 3.5);
+        $('#party-bulb-editor').hidden = false;
+        $('#party-bulb-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        return;
+      }
+    };
+  }
+
+  // Add Bulb Button
+  const btnAddBulb = $('#party-bulb-add-btn');
+  if (btnAddBulb) {
+    btnAddBulb.onclick = () => {
+      $('#party-bulb-ed-title').textContent = '➕ Привязать умную лампу Tuya';
+      $('#party-bulb-edit-mode').value = 'add';
+      $('#party-bulb-name').value = '';
+      $('#party-bulb-ip').value = '';
+      $('#party-bulb-id').value = '';
+      $('#party-bulb-key').value = '';
+      $('#party-bulb-role').value = 'kick';
+      $('#party-bulb-side').value = '';
+      $('#party-bulb-ver').value = '3.5';
+      $('#party-bulb-editor').hidden = false;
+      $('#party-bulb-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+  }
+
+  const cancelBulbEdit = () => { $('#party-bulb-editor').hidden = true; };
+  if ($('#party-bulb-cancel-btn')) $('#party-bulb-cancel-btn').onclick = cancelBulbEdit;
+  if ($('#party-bulb-cancel-x')) $('#party-bulb-cancel-x').onclick = cancelBulbEdit;
+
+  // Save Bulb
+  const btnSaveBulb = $('#party-bulb-save-btn');
+  if (btnSaveBulb) {
+    btnSaveBulb.onclick = () => {
+      const b_id = $('#party-bulb-id').value.trim();
+      const ip = $('#party-bulb-ip').value.trim();
+      const key = $('#party-bulb-key').value.trim();
+      const name = $('#party-bulb-name').value.trim() || `Лампа ${ip || b_id.slice(0, 6)}`;
+      const role = $('#party-bulb-role').value;
+      const side = $('#party-bulb-side').value;
+      const ver = parseFloat($('#party-bulb-ver').value) || 3.5;
+
+      if (!b_id) return toast('Укажите ID устройства (Device ID)', true);
+      if (!ip) return toast('Укажите IP-адрес лампы в Wi-Fi', true);
+      if (!key) return toast('Укажите локальный ключ (Local Key)', true);
+
+      const pos_x = side === 'left' ? -1.0 : (side === 'right' ? 1.0 : 0.0);
+
+      act(btnSaveBulb, async () => {
+        await api('/api/party/bulbs/add', { id: b_id, name, ip, key, role, side, pos_x, ver, enabled: true });
+        $('#party-bulb-editor').hidden = true;
+        await loadParty();
+      }, `Лампа «${name}» успешно сохранена`);
+    };
+  }
+
+  // Wi-Fi Scan Panel
+  const btnScanBulbs = $('#party-bulbs-scan-btn');
+  if (btnScanBulbs) {
+    btnScanBulbs.onclick = () => {
+      const p = $('#party-scan-panel');
+      if (p) {
+        p.hidden = !p.hidden;
+        if (!p.hidden) p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    };
+  }
+  if ($('#party-scan-close-btn')) {
+    $('#party-scan-close-btn').onclick = () => { $('#party-scan-panel').hidden = true; };
+  }
+
+  const btnScanStart = $('#party-scan-start-btn');
+  if (btnScanStart) {
+    btnScanStart.onclick = () => {
+      const stat = $('#party-scan-status');
+      const resContainer = $('#party-scan-results');
+      if (stat) stat.textContent = 'Идёт поиск ламп Tuya в сети...';
+      if (resContainer) resContainer.innerHTML = '<div class="meta" style="padding:10px 0;">Слушаем UDP анонсы на портах 6666/6667...</div>';
+      act(btnScanStart, async () => {
+        const found = await api('/api/party/bulbs/scan?timeout=3');
+        if (stat) stat.textContent = `Найдено устройств: ${found.length}`;
+        if (resContainer) {
+          if (!found.length) {
+            resContainer.innerHTML = '<div class="empty">Устройства Tuya не ответили за 3 сек. Убедитесь, что лампы включены в розетку и подключены к тому же роутеру Wi-Fi.</div>';
+          } else {
+            resContainer.innerHTML = found.map(dev => `
+              <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--card); border:1px solid var(--border); border-radius:10px; gap:8px; flex-wrap:wrap;">
+                <div>
+                  <div style="font-weight:600; font-size:14px;">${esc(dev.name || 'Умная лампа Tuya')}</div>
+                  <div class="meta" style="font-size:12px; margin-top:2px;">IP: ${esc(dev.ip)} • ID: <span class="mono">${esc(dev.id)}</span> • v${esc(dev.ver)}</div>
+                </div>
+                <div>
+                  ${dev.is_paired ? '<span class="badge ok">Уже привязана</span>' : `<button class="btn sm primary" type="button" data-party-pair-ip="${esc(dev.ip)}" data-party-pair-id="${esc(dev.id)}" data-party-pair-ver="${esc(dev.ver)}">➕ Привязать</button>`}
+                </div>
+              </div>
+            `).join('');
+          }
+        }
+      });
+    };
+  }
+
+  // Pre-fill from scan results
+  const scanResults = $('#party-scan-results');
+  if (scanResults) {
+    scanResults.onclick = e => {
+      const pairBtn = e.target.closest('[data-party-pair-id]');
+      if (!pairBtn) return;
+      const ip = pairBtn.dataset.partyPairIp || '';
+      const id = pairBtn.dataset.partyPairId || '';
+      const ver = pairBtn.dataset.partyPairVer || '3.5';
+      $('#party-bulb-ed-title').textContent = '➕ Привязать найденную лампу';
+      $('#party-bulb-edit-mode').value = 'add';
+      $('#party-bulb-name').value = `Лампа ${ip}`;
+      $('#party-bulb-ip').value = ip;
+      $('#party-bulb-id').value = id;
+      $('#party-bulb-ver').value = ver;
+      $('#party-bulb-key').value = '';
+      $('#party-bulb-role').value = 'kick';
+      $('#party-bulb-side').value = '';
+      $('#party-bulb-editor').hidden = false;
+      $('#party-bulb-key').focus();
+      $('#party-bulb-editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      toast('Параметры лампы подставлены. Введите Local Key для завершения');
+    };
+  }
+
+  // Import JSON Panel
+  const btnImportBulbs = $('#party-bulbs-import-btn');
+  if (btnImportBulbs) {
+    btnImportBulbs.onclick = () => {
+      const p = $('#party-import-panel');
+      if (p) {
+        p.hidden = !p.hidden;
+        if (!p.hidden) p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    };
+  }
+  if ($('#party-import-close-btn')) {
+    $('#party-import-close-btn').onclick = () => { $('#party-import-panel').hidden = true; };
+  }
+  if ($('#party-import-cancel-btn')) {
+    $('#party-import-cancel-btn').onclick = () => { $('#party-import-panel').hidden = true; };
+  }
+
+  const btnImportApply = $('#party-import-apply-btn');
+  if (btnImportApply) {
+    btnImportApply.onclick = () => {
+      const text = ($('#party-import-text')?.value || '').trim();
+      if (!text) return toast('Вставьте JSON список ламп', true);
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        return toast('Ошибка синтаксиса JSON: ' + e.message, true);
+      }
+      act(btnImportApply, async () => {
+        const r = await api('/api/party/bulbs/import', parsed);
+        $('#party-import-panel').hidden = true;
+        await loadParty();
+        toast(`Импортировано ламп: ${r.count || 0}`);
+      });
+    };
+  }
+
+  const btnImportExport = $('#party-import-export-btn');
+  if (btnImportExport) {
+    btnImportExport.onclick = () => {
+      act(btnImportExport, async () => {
+        const list = await api('/api/party/bulbs');
+        const txt = $('#party-import-text');
+        if (txt) {
+          txt.value = JSON.stringify(list, null, 2);
+          toast('Текущий список ламп выгружен в окно');
+        }
+      });
     };
   }
 

@@ -4175,6 +4175,44 @@ echo @@BLUEZ
             raise AdbError("Служба светомузыки не инициализирована")
         return self.party.set_ambilight_frame(data)
 
+    def party_bulbs_get(self):
+        pm = self.get_party(start=False)
+        if not pm:
+            return []
+        return pm.get_bulbs()
+
+    def party_bulb_add(self, data):
+        pm = self.get_party(start=False)
+        if not pm:
+            raise AdbError("Служба светомузыки не инициализирована")
+        return pm.add_bulb(data)
+
+    def party_bulb_update(self, data):
+        pm = self.get_party(start=False)
+        if not pm:
+            raise AdbError("Служба светомузыки не инициализирована")
+        return pm.add_bulb(data)
+
+    def party_bulb_delete(self, bulb_id):
+        pm = self.get_party(start=False)
+        if not pm:
+            raise AdbError("Служба светомузыки не инициализирована")
+        return pm.delete_bulb(bulb_id)
+
+    def party_bulbs_import(self, data):
+        pm = self.get_party(start=False)
+        if not pm:
+            raise AdbError("Служба светомузыки не инициализирована")
+        payload = data.get("bulbs") if isinstance(data, dict) and "bulbs" in data else (data.get("devices") if isinstance(data, dict) and "devices" in data else data)
+        overwrite = bool(data.get("overwrite", False)) if isinstance(data, dict) else False
+        return pm.import_bulbs(payload, overwrite=overwrite)
+
+    def party_bulbs_scan(self, timeout=3.0):
+        pm = self.get_party(start=False)
+        if not pm:
+            return []
+        return pm.scan_network(timeout=timeout)
+
     def wakeword_proxy(self, method, path, body=None, timeout=90):
         """Прокси к API демона для вкладки: JSON и WAV отдаются как есть."""
         method = str(method or "GET").upper()
@@ -6659,7 +6697,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"text": redact("\n".join(out)) + "\n"}
 
     # Действия, которые шлются потоком (ползунки, живой предпросмотр): в журнал — только ошибки
-    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd", "/api/leds/live", "/api/leds/stream", "/api/clock/state", "/api/party/status", "/api/party/cinema/status", "/api/party/cinema/sync_tv", "/api/dsp"}
+    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd", "/api/leds/live", "/api/leds/stream", "/api/clock/state", "/api/party/status", "/api/party/bulbs", "/api/party/cinema/status", "/api/party/cinema/sync_tv", "/api/dsp"}
     # Что из тела запроса можно показать в журнале: имена и режимы, но не тексты, ключи и пароли
     JOURNAL_KEYS = ("name", "kind", "action", "which", "mode", "enabled", "id", "type")
 
@@ -6872,6 +6910,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/btout/eq": p.btout_eq_status,
             "/api/metrics": lambda: p.metrics.get(q.get("range", 3600)),
             "/api/party/status": p.party_status,
+            "/api/party/bulbs": p.party_bulbs_get,
+            "/api/party/bulbs/scan": lambda: p.party_bulbs_scan(float(q.get("timeout", 3.0))),
             "/api/party/cinema/status": p.party_cinema_status,
             "/api/party/cinema/sync_tv": p.party_cinema_sync_tv,
             "/api/dsp": p.dsp_status,
@@ -7070,6 +7110,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/dsp": lambda: p.dsp_action(d),
             "/api/party/bulbs/position": lambda: p.party_bulb_position(d.get("id"), d.get("pos_x"), d.get("pos_y", 0.0), d.get("name")),
             "/api/party/bulbs/test": lambda: p.party_bulb_test(d.get("id"), d.get("action", "solo"), d.get("color", "white")),
+            "/api/party/bulbs/add": lambda: p.party_bulb_add(d),
+            "/api/party/bulbs/update": lambda: p.party_bulb_update(d),
+            "/api/party/bulbs/delete": lambda: p.party_bulb_delete(d.get("id")),
+            "/api/party/bulbs/import": lambda: p.party_bulbs_import(d),
             "/api/party/ambilight/frame": lambda: p.party_ambilight_frame(d),
 
         }

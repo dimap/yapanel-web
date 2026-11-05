@@ -1,0 +1,22 @@
+[
+  {
+    "id": "bf1234567890abcdef",
+    "ip": "192.168.1.55",
+    "key": "0123456789abcdef",
+    "name": "Торшер слева",
+    "role": "ambient",
+    "enabled": true,
+    "pos_x": -0.8,
+    "pos_y": 0.0
+  },
+  {
+    "id": "bf9876543210fedcba",
+    "ip": "192.168.1.56",
+    "key": "fedcba9876543210",
+    "name": "Торшер справа",
+    "role": "ambient",
+    "enabled": true,
+    "pos_x": 0.8,
+    "pos_y": 0.0
+  }
+]

@@ -14,6 +14,7 @@
 data/
 speakers.json
 bulbs*.json
+!bulbs.example.json
 strip_config*.json
 party_settings*.json
 bin_cache/

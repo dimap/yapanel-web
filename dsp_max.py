@@ -520,7 +520,7 @@ class MaxDSP:
             return {"ok": True, "profile": profile_name}
         return {"ok": False, "error": "Ошибка записи в I2C драйвер SY6045S"}
 
-    def set_filter(self, filter_id: str, enabled: bool) -> Dict[str, Any]:
+    def set_filter(self, filter_id: str, enabled: bool, save: bool = True) -> Dict[str, Any]:
         """Toggle an individual filter on or off."""
         if filter_id not in self.filters:
             return {"ok": False, "error": f"Неизвестный фильтр: {filter_id}"}
@@ -529,7 +529,7 @@ class MaxDSP:
         self.active_profile = "custom"
         return self._apply_custom_state(save=save)
 
-    def set_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def set_params(self, params: Dict[str, Any], save: bool = True) -> Dict[str, Any]:
         """Update custom parameters (bass_gain, treble_gain, subsonic_freq)."""
         if "bass_gain" in params:
             self.params["bass_gain"] = round(max(-6.0, min(8.0, float(params["bass_gain"]))), 1)

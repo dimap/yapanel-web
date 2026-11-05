@@ -125,7 +125,30 @@ class TestDSPMath(unittest.TestCase):
         st = dsp.status()
         self.assertTrue(st["supported"])
         self.assertEqual(st["active_profile"], "custom")
-        self.assertEqual(len(st["profiles"]), 5)
+        self.assertEqual(len(st["profiles"]), 6)
+
+        # Test apply profile club
+        res = dsp.action({"profile": "club"})
+        self.assertTrue(res["ok"])
+        self.assertEqual(dsp.active_profile, "club")
+        self.assertEqual(dsp.params["bass_gain"], 6.5)
+        self.assertEqual(dsp.params["subsonic_freq"], 40)
+        self.assertEqual(dsp.params["treble_gain"], 2.5)
+        self.assertTrue(dsp.filters["subsonic"])
+        self.assertTrue(dsp.filters["notch120"])
+        self.assertTrue(dsp.filters["phase"])
+        self.assertTrue(dsp.filters["treble"])
+
+        # Test set_params with bass_gain and clamping
+        res = dsp.action({"action": "set_params", "bass_gain": 4.5})
+        self.assertTrue(res["ok"])
+        self.assertEqual(dsp.active_profile, "custom")
+        self.assertEqual(dsp.params["bass_gain"], 4.5)
+
+        dsp.action({"action": "set_params", "bass_gain": 15.0})
+        self.assertEqual(dsp.params["bass_gain"], 8.0)
+        dsp.action({"action": "set_params", "bass_gain": -20.0})
+        self.assertEqual(dsp.params["bass_gain"], -6.0)
 
 
 if __name__ == "__main__":

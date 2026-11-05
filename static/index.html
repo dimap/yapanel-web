@@ -1401,6 +1401,7 @@
             <button class="pill" data-dsp-profile="stock" type="button" title="Заводской звук: без фильтрации, с корпусным бубнением и вибрацией стола">📦 Заводской сток</button>
             <button class="pill" data-dsp-profile="night" type="button" title="Ночной режим: глубокий срез НЧ (65 Гц), чтобы вибрация не передавалась соседям">🌙 Ночной</button>
             <button class="pill" data-dsp-profile="bass" type="button" title="Deep Punch: энергичный плотный бас (65 Гц) с защитой пассивных излучателей">💥 Deep Punch</button>
+            <button class="pill" data-dsp-profile="club" type="button" title="Club Bass: мощный клубный бас (+6.5 дБ @ 60 Гц) со срезом инфразвука на 40 Гц">🔥 Club Bass</button>
           </div>
 
           <!-- Интерактивная кривая АЧХ (SVG) -->
@@ -1459,6 +1460,16 @@
                 <span style="color:var(--accent, #ffcc00)">■ Система</span>
               </div>
             </div>
+          </div>
+
+          <!-- Интерактивный регулятор мощности баса -->
+          <div class="dsp-slider-row" style="display:flex; align-items:center; gap:12px; padding:10px 14px; background:var(--field, #151515); border-radius:12px; margin-top:6px;">
+            <div style="flex:none; font-size:13px; font-weight:700; display:flex; align-items:center; gap:6px;">
+              <span>💥</span>
+              <span>Мощность баса</span>
+            </div>
+            <input type="range" id="dsp-slider-bass" min="-6" max="8" step="0.5" value="0" style="flex:1; accent-color:var(--accent, #ffcc00); cursor:pointer;">
+            <span id="dsp-slider-bass-val" class="mono" style="flex:none; min-width:58px; text-align:right; font-size:13px; font-weight:800; color:var(--accent, #ffcc00);">0.0 дБ</span>
           </div>
 
           <!-- Фильтры и тумблеры -->
@@ -4798,6 +4809,13 @@ function renderDSP() {
     btn.classList.toggle('active', btn.dataset.dspProfile === dspState.active_profile);
   });
 
+  // Регулятор мощности баса
+  const bg = dspState.params?.bass_gain ?? 0;
+  const sl = $('#dsp-slider-bass');
+  const slVal = $('#dsp-slider-bass-val');
+  if (sl && sl !== document.activeElement) sl.value = bg;
+  if (slVal) slVal.textContent = (bg > 0 ? '+' : '') + Number(bg).toFixed(1) + ' дБ';
+
   // Чекбоксы фильтров
   if (dspState.filters) {
     if ($('#dsp-filter-subsonic')) $('#dsp-filter-subsonic').checked = !!dspState.filters.subsonic;
@@ -4980,6 +4998,51 @@ document.addEventListener('DOMContentLoaded', () => {
       toast(`Режим звука: ${btn.textContent.trim()}`);
     });
   });
+
+  // Привязка регулятора мощности баса
+  const sl = $('#dsp-slider-bass');
+  const slVal = $('#dsp-slider-bass-val');
+  if (sl) {
+    sl.oninput = () => {
+      const v = parseFloat(sl.value);
+      if (slVal) slVal.textContent = (v > 0 ? '+' : '') + v.toFixed(1) + ' дБ';
+      if (dspState && dspState.response && dspState.response.freqs) {
+        const baseGain = (dspState.params && dspState.params.bass_gain !== undefined) ? dspState.params.bass_gain : 0;
+        const diff = v - baseGain;
+        const previewResp = {
+          freqs: dspState.response.freqs,
+          woofer_db: dspState.response.woofer_db.map((val, i) => {
+            const f = dspState.response.freqs[i];
+            const shelfFactor = 1.0 / (1.0 + Math.pow(f / 60.0, 2));
+            return val + diff * shelfFactor;
+          }),
+          tweeter_db: [...dspState.response.tweeter_db],
+          system_db: dspState.response.system_db.map((val, i) => {
+            const f = dspState.response.freqs[i];
+            const shelfFactor = 1.0 / (1.0 + Math.pow(f / 60.0, 2));
+            return val + diff * shelfFactor;
+          })
+        };
+        renderDSPCurve(previewResp);
+      }
+    };
+    sl.onchange = async () => {
+      const v = parseFloat(sl.value);
+      try {
+        const res = await api('/api/dsp', { action: 'set_params', bass_gain: v });
+        if (res && res.supported !== undefined) {
+          dspState = res;
+        } else if (dspState && dspState.params) {
+          dspState.params.bass_gain = v;
+          dspState.active_profile = 'custom';
+        }
+        renderDSP();
+        toast(`Мощность баса: ${(v > 0 ? '+' : '') + v.toFixed(1)} дБ`);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
 
   // Привязка чекбоксов фильтров
   ['subsonic', 'notch120', 'phase', 'treble'].forEach(id => {

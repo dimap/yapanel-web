@@ -204,6 +204,12 @@ class MaxDSP:
             "desc": "Энергичный плотный бас (65 Гц) с защитой пассивных диффузоров от разбалтывания и очищенным пластиковым гулом",
         },
         {
+            "id": "club",
+            "name": "Club Bass",
+            "badge": "Club",
+            "desc": "Мощный клубный бас (+6.5 дБ @ 60 Гц) со срезом инфразвука на 40 Гц и чистым вокалом",
+        },
+        {
             "id": "custom",
             "name": "Пользовательский",
             "badge": "Custom",
@@ -422,6 +428,33 @@ class MaxDSP:
             self.params["treble_gain"] = 2.0
             self.params["subsonic_freq"] = 45
 
+        elif profile_name == "club":
+            # Subsonic at 40 Hz + notch 120Hz + Low Shelf 60Hz (+6.5dB) + Air 13.5kHz (+2.5dB)
+            s1 = calc_hpf_stage(40, 0.5412)
+            s2 = calc_hpf_stage(40, 1.3065)
+            notch = calc_notch(120, 2.5, -4.5)
+            bass_boost = calc_low_shelf(60, 0.85, 6.5)
+            apf = calc_apf2(260, 0.7071)
+            treble = calc_high_shelf(13500, 0.7, 2.5)
+
+            cmds.append((WOOFER_SYS, ADDR_WOOFER, f"3A {notch}"))
+            cmds.append((WOOFER_SYS, ADDR_WOOFER, f"3B {s1}"))
+            cmds.append((WOOFER_SYS, ADDR_WOOFER, f"3C {s2}"))
+            cmds.append((WOOFER_SYS, ADDR_WOOFER, f"3D {bass_boost}"))
+
+            cmds.append((TWEETER_SYS, ADDR_TWEETER, f"38 {apf}"))
+            cmds.append((TWEETER_SYS, ADDR_TWEETER, f"3C {treble}"))
+
+            self.filters = {
+                "subsonic": True,
+                "notch120": True,
+                "phase": True,
+                "treble": True,
+            }
+            self.params["bass_gain"] = 6.5
+            self.params["treble_gain"] = 2.5
+            self.params["subsonic_freq"] = 40
+
         cmds.extend(self._build_unmute_cmds())
 
         ok = self._write_i2c_batch(cmds)
@@ -444,11 +477,11 @@ class MaxDSP:
     def set_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Update custom parameters (bass_gain, treble_gain, subsonic_freq)."""
         if "bass_gain" in params:
-            self.params["bass_gain"] = max(-12.0, min(8.0, float(params["bass_gain"])))
+            self.params["bass_gain"] = round(max(-6.0, min(8.0, float(params["bass_gain"]))), 1)
         if "treble_gain" in params:
-            self.params["treble_gain"] = max(-12.0, min(8.0, float(params["treble_gain"])))
+            self.params["treble_gain"] = round(max(-6.0, min(8.0, float(params["treble_gain"]))), 1)
         if "subsonic_freq" in params:
-            self.params["subsonic_freq"] = max(30, min(80, int(params["subsonic_freq"])))
+            self.params["subsonic_freq"] = int(max(30, min(80, float(params["subsonic_freq"]))))
 
         self.active_profile = "custom"
         return self._apply_custom_state()
@@ -478,8 +511,8 @@ class MaxDSP:
 
         # 3. Bass boost / shelf
         bgain = self.params.get("bass_gain", 0.0)
-        if abs(bgain) > 0.2:
-            bass_biquad = calc_low_shelf(65, 0.8, bgain)
+        if abs(bgain) > 0.1:
+            bass_biquad = calc_low_shelf(60, 0.85, bgain)
         else:
             bass_biquad = BYPASS_HEX
         cmds.append((WOOFER_SYS, ADDR_WOOFER, f"3D {bass_biquad}"))
@@ -538,7 +571,7 @@ class MaxDSP:
         subsonic_on = self.filters.get("subsonic", True)
         sub_f0 = self.params.get("subsonic_freq", 48)
         notch_on = self.filters.get("notch120", True)
-        bass_gain = self.params.get("bass_gain", 0.0) if self.active_profile in ("bass", "custom") else 0.0
+        bass_gain = float(self.params.get("bass_gain", 0.0))
 
         treble_on = self.filters.get("treble", True)
         treble_gain = self.params.get("treble_gain", 3.0) if treble_on else 0.0
@@ -563,10 +596,10 @@ class MaxDSP:
             cos_w0 = math.cos(w0)
             w_filters.append((1.0 + alpha * A, -2.0 * cos_w0, 1.0 - alpha * A, 1.0 + alpha / A, -2.0 * cos_w0, 1.0 - alpha / A))
 
-        if abs(bass_gain) > 0.2:
+        if abs(bass_gain) > 0.1:
             A = 10.0 ** (bass_gain / 40.0)
-            w0 = 2.0 * math.pi * 65.0 / FS
-            alpha = math.sin(w0) / (2.0 * 0.8)
+            w0 = 2.0 * math.pi * 60.0 / FS
+            alpha = math.sin(w0) / (2.0 * 0.85)
             beta = 2.0 * math.sqrt(A) * alpha
             cos_w0 = math.cos(w0)
             w_filters.append((

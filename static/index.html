@@ -1404,8 +1404,18 @@
           </div>
 
           <!-- Интерактивная кривая АЧХ (SVG) -->
-          <div class="dsp-graph-wrap">
-            <svg id="dsp-svg" viewBox="0 0 400 110" style="width:100%; height:100%; display:block;" preserveAspectRatio="none">
+          <div class="dsp-graph-wrap" style="position:relative; width:100%; height:135px; background:var(--field, #151515); border-radius:14px; padding:10px 10px 24px; box-sizing:border-box;">
+            <svg id="dsp-svg" viewBox="0 0 400 110" style="width:100%; height:100%; display:block; overflow:visible; cursor:crosshair;" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="dsp-grad-system" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="var(--accent, #ffcc00)" stop-opacity="0.22"/>
+                  <stop offset="100%" stop-color="var(--accent, #ffcc00)" stop-opacity="0.0"/>
+                </linearGradient>
+                <filter id="dsp-glow" x="-10%" y="-10%" width="120%" height="120%">
+                  <feGaussianBlur stdDeviation="1.2" result="blur"/>
+                  <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+                </filter>
+              </defs>
               <!-- Сетка -->
               <line x1="0" y1="30" x2="400" y2="30" stroke="var(--line, #333)" stroke-dasharray="3,3" stroke-width="1"/>
               <line x1="0" y1="17" x2="400" y2="17" stroke="var(--line, #282828)" stroke-dasharray="2,2" stroke-width="0.8"/>
@@ -1429,15 +1439,25 @@
               <text x="228" y="104" fill="var(--muted, #777)" font-size="8" font-family="monospace">1kHz</text>
               <text x="355" y="104" fill="var(--muted, #777)" font-size="8" font-family="monospace">10kHz</text>
 
-              <!-- Кривые АЧХ -->
-              <path id="dsp-curve-woofer" d="" fill="none" stroke="#00e5ff" stroke-width="1.8" opacity="0.6"/>
-              <path id="dsp-curve-tweeter" d="" fill="none" stroke="#d500f9" stroke-width="1.8" opacity="0.6"/>
-              <path id="dsp-curve-system" d="" fill="none" stroke="var(--accent, #ffcc00)" stroke-width="2.5"/>
+              <!-- Мягкая градиентная область под результирующей кривой -->
+              <path id="dsp-curve-area" d="" fill="url(#dsp-grad-system)"/>
+
+              <!-- Сглаженные кривые АЧХ -->
+              <path id="dsp-curve-woofer" d="" fill="none" stroke="#00e5ff" stroke-width="1.8" opacity="0.65" stroke-linecap="round" stroke-linejoin="round"/>
+              <path id="dsp-curve-tweeter" d="" fill="none" stroke="#d500f9" stroke-width="1.8" opacity="0.65" stroke-linecap="round" stroke-linejoin="round"/>
+              <path id="dsp-curve-system" d="" fill="none" stroke="var(--accent, #ffcc00)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#dsp-glow)"/>
+
+              <!-- Интерактивный визир курсора при наведении -->
+              <line id="dsp-cursor-line" x1="0" y1="0" x2="0" y2="110" stroke="rgba(255,255,255,0.45)" stroke-dasharray="2,2" stroke-width="1" style="display:none; pointer-events:none;"/>
+              <circle id="dsp-cursor-dot" cx="0" cy="0" r="3.5" fill="var(--accent, #ffcc00)" stroke="#fff" stroke-width="1.2" style="display:none; pointer-events:none;"/>
             </svg>
-            <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:-18px; font-size:10px; font-weight:600; padding-right:6px;">
-              <span style="color:#00e5ff">■ Сабвуфер</span>
-              <span style="color:#d500f9">■ Твитеры</span>
-              <span style="color:var(--accent, #ffcc00)">■ Система</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:-14px; font-size:10px; font-weight:600; padding:0 6px;">
+              <div id="dsp-inspect-val" style="color:var(--muted); font-family:monospace; font-size:10.5px;">20Hz – 20kHz</div>
+              <div style="display:flex; gap:10px;">
+                <span style="color:#00e5ff">■ Сабвуфер</span>
+                <span style="color:#d500f9">■ Твитеры</span>
+                <span style="color:var(--accent, #ffcc00)">■ Система</span>
+              </div>
             </div>
           </div>
 
@@ -4799,7 +4819,12 @@ function renderDSP() {
   }
 }
 
+let dspCurveCurrent = null;
+let dspCurveAnimId = null;
+let dspInspectorInited = false;
+
 function renderDSPCurve(resp) {
+  if (!resp || !resp.freqs || !resp.woofer_db) return;
   const freqs = resp.freqs;
   const toX = f => (Math.log10(Math.max(f, 20) / 20) / 3.0) * 400;
   const toY = db => {
@@ -4807,18 +4832,136 @@ function renderDSPCurve(resp) {
     return 30 - (clamped * 2.2);
   };
 
-  const makePath = arr => {
+  const makeLinePath = arr => {
     if (!arr || !arr.length) return '';
     return arr.map((db, i) => `${i === 0 ? 'M' : 'L'} ${toX(freqs[i]).toFixed(1)} ${toY(db).toFixed(1)}`).join(' ');
+  };
+
+  const makeAreaPath = arr => {
+    if (!arr || !arr.length) return '';
+    const line = arr.map((db, i) => `${i === 0 ? 'M' : 'L'} ${toX(freqs[i]).toFixed(1)} ${toY(db).toFixed(1)}`).join(' ');
+    const lastX = toX(freqs[arr.length - 1]).toFixed(1);
+    const firstX = toX(freqs[0]).toFixed(1);
+    return `${line} L ${lastX} 110 L ${firstX} 110 Z`;
   };
 
   const pWoofer = $('#dsp-curve-woofer');
   const pTweeter = $('#dsp-curve-tweeter');
   const pSystem = $('#dsp-curve-system');
+  const pArea = $('#dsp-curve-area');
 
-  if (pWoofer) pWoofer.setAttribute('d', makePath(resp.woofer_db));
-  if (pTweeter) pTweeter.setAttribute('d', makePath(resp.tweeter_db));
-  if (pSystem) pSystem.setAttribute('d', makePath(resp.system_db));
+  const targetW = resp.woofer_db;
+  const targetT = resp.tweeter_db;
+  const targetS = resp.system_db;
+
+  const applyFrame = (wArr, tArr, sArr) => {
+    if (pWoofer) pWoofer.setAttribute('d', makeLinePath(wArr));
+    if (pTweeter) pTweeter.setAttribute('d', makeLinePath(tArr));
+    if (pSystem) pSystem.setAttribute('d', makeLinePath(sArr));
+    if (pArea) pArea.setAttribute('d', makeAreaPath(sArr));
+  };
+
+  initDSPInspector(freqs, toX, toY);
+
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  if (!dspCurveCurrent || reducedMotion) {
+    if (dspCurveAnimId) cancelAnimationFrame(dspCurveAnimId);
+    dspCurveCurrent = { w: [...targetW], t: [...targetT], s: [...targetS] };
+    applyFrame(targetW, targetT, targetS);
+    return;
+  }
+
+  // Smooth animation tween
+  if (dspCurveAnimId) cancelAnimationFrame(dspCurveAnimId);
+
+  const startW = [...dspCurveCurrent.w];
+  const startT = [...dspCurveCurrent.t];
+  const startS = [...dspCurveCurrent.s];
+  const startTime = performance.now();
+  const duration = 380; // 380 ms smooth natural easing
+
+  const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+
+  const step = now => {
+    const elapsed = now - startTime;
+    const progress = Math.min(1.0, elapsed / duration);
+    const ease = easeOutCubic(progress);
+
+    const curW = startW.map((v, i) => v + (targetW[i] - v) * ease);
+    const curT = startT.map((v, i) => v + (targetT[i] - v) * ease);
+    const curS = startS.map((v, i) => v + (targetS[i] - v) * ease);
+
+    dspCurveCurrent = { w: curW, t: curT, s: curS };
+    applyFrame(curW, curT, curS);
+
+    if (progress < 1.0) {
+      dspCurveAnimId = requestAnimationFrame(step);
+    } else {
+      dspCurveAnimId = null;
+      dspCurveCurrent = { w: [...targetW], t: [...targetT], s: [...targetS] };
+      applyFrame(targetW, targetT, targetS);
+    }
+  };
+
+  dspCurveAnimId = requestAnimationFrame(step);
+}
+
+function initDSPInspector(freqs, toX, toY) {
+  if (dspInspectorInited) return;
+  const svg = $('#dsp-svg');
+  const line = $('#dsp-cursor-line');
+  const dot = $('#dsp-cursor-dot');
+  const label = $('#dsp-inspect-val');
+  if (!svg || !line || !dot) return;
+  dspInspectorInited = true;
+
+  const handlePointer = e => {
+    if (!dspCurveCurrent?.s || !freqs) return;
+    const rect = svg.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const svgX = ((clientX - rect.left) / rect.width) * 400;
+    if (svgX < 0 || svgX > 400) return;
+
+    let closestIdx = 0;
+    let minDiff = Infinity;
+    for (let i = 0; i < freqs.length; i++) {
+      const diff = Math.abs(toX(freqs[i]) - svgX);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIdx = i;
+      }
+    }
+
+    const f = freqs[closestIdx];
+    const curDb = dspCurveCurrent.s[closestIdx];
+    const xPos = toX(f);
+    const yPos = toY(curDb);
+
+    line.setAttribute('x1', xPos.toFixed(1));
+    line.setAttribute('x2', xPos.toFixed(1));
+    line.style.display = 'block';
+
+    dot.setAttribute('cx', xPos.toFixed(1));
+    dot.setAttribute('cy', yPos.toFixed(1));
+    dot.style.display = 'block';
+
+    if (label) {
+      const fStr = f >= 1000 ? (f / 1000).toFixed(1) + ' kHz' : Math.round(f) + ' Hz';
+      const dbStr = (curDb > 0 ? '+' : '') + curDb.toFixed(1) + ' dB';
+      label.innerHTML = `<span style="color:var(--text)"><b>${fStr}</b></span>: <span style="color:var(--accent, #ffcc00)"><b>${dbStr}</b></span>`;
+    }
+  };
+
+  const handleLeave = () => {
+    line.style.display = 'none';
+    dot.style.display = 'none';
+    if (label) label.textContent = '20Hz – 20kHz';
+  };
+
+  svg.addEventListener('mousemove', handlePointer);
+  svg.addEventListener('touchmove', handlePointer, { passive: true });
+  svg.addEventListener('mouseleave', handleLeave);
+  svg.addEventListener('touchend', handleLeave);
 }
 
 // Привязка кликов по кнопкам пресетов

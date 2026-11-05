@@ -226,6 +226,7 @@ class MaxDSP:
             "notch120": True,
             "phase": True,
             "treble": True,
+            "drc_bypass": False,
         }
         self.params = {
             "bass_gain": 0.0,
@@ -345,6 +346,9 @@ class MaxDSP:
         if profile_name not in valid_ids:
             return {"ok": False, "error": f"Неизвестный профиль: {profile_name}"}
 
+        if profile_name == "custom":
+            return self._apply_custom_state()
+
         cmds: List[Tuple[str, str, str]] = []
         cmds.extend(self._build_mute_cmds())
 
@@ -366,11 +370,13 @@ class MaxDSP:
             for reg, hex_str in GOLDEN_HIFI["tweeter"].items():
                 r = reg.replace("0x", "")
                 cmds.append((TWEETER_SYS, ADDR_TWEETER, f"{r} {hex_str}"))
+            cur_drc = self.filters.get("drc_bypass", False)
             self.filters = {
                 "subsonic": True,
                 "notch120": True,
                 "phase": True,
                 "treble": True,
+                "drc_bypass": cur_drc,
             }
             self.params["bass_gain"] = 0.0
             self.params["treble_gain"] = 3.0
@@ -418,11 +424,13 @@ class MaxDSP:
             cmds.append((TWEETER_SYS, ADDR_TWEETER, f"38 {apf}"))
             cmds.append((TWEETER_SYS, ADDR_TWEETER, f"3C {treble}"))
 
+            cur_drc = self.filters.get("drc_bypass", False)
             self.filters = {
                 "subsonic": True,
                 "notch120": True,
                 "phase": True,
                 "treble": True,
+                "drc_bypass": cur_drc,
             }
             self.params["bass_gain"] = 3.5
             self.params["treble_gain"] = 2.0
@@ -445,15 +453,22 @@ class MaxDSP:
             cmds.append((TWEETER_SYS, ADDR_TWEETER, f"38 {apf}"))
             cmds.append((TWEETER_SYS, ADDR_TWEETER, f"3C {treble}"))
 
+            cur_drc = self.filters.get("drc_bypass", False)
             self.filters = {
                 "subsonic": True,
                 "notch120": True,
                 "phase": True,
                 "treble": True,
+                "drc_bypass": cur_drc,
             }
             self.params["bass_gain"] = 6.5
             self.params["treble_gain"] = 2.5
             self.params["subsonic_freq"] = 40
+
+        # 6. Hardware DRC Compressor (Register 0x60: 00 00 08 00 = Bypass, 00 00 08 01 = Stock protection)
+        drc_val = "00 00 08 00" if self.filters.get("drc_bypass") else "00 00 08 01"
+        cmds.append((WOOFER_SYS, ADDR_WOOFER, f"60 {drc_val}"))
+        cmds.append((TWEETER_SYS, ADDR_TWEETER, f"60 {drc_val}"))
 
         cmds.extend(self._build_unmute_cmds())
 
@@ -534,6 +549,11 @@ class MaxDSP:
         else:
             treble_biquad = BYPASS_HEX
         cmds.append((TWEETER_SYS, ADDR_TWEETER, f"3C {treble_biquad}"))
+
+        # 6. Hardware DRC Compressor (Register 0x60: 00 00 08 00 = Bypass, 00 00 08 01 = Stock protection)
+        drc_val = "00 00 08 00" if self.filters.get("drc_bypass") else "00 00 08 01"
+        cmds.append((WOOFER_SYS, ADDR_WOOFER, f"60 {drc_val}"))
+        cmds.append((TWEETER_SYS, ADDR_TWEETER, f"60 {drc_val}"))
 
         cmds.extend(self._build_unmute_cmds())
 

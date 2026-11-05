@@ -1490,6 +1490,10 @@
               <span>✨ Воздух ВЧ (+3 дБ 13.5 кГц)</span>
               <input type="checkbox" id="dsp-filter-treble" checked>
             </label>
+            <label class="toggle" style="cursor:pointer" title="Отключает аппаратный компрессор-лимитер усилителя (DRC), полностью раскрывая динамический диапазон для треков Яндекс Музыки (ударные без сжатия и пампинга)">
+              <span>🔓 Полный динамический диапазон (DRC Bypass)</span>
+              <input type="checkbox" id="dsp-filter-drc_bypass">
+            </label>
           </div>
 
           <p class="hint" id="dsp-desc">Hi-Fi Studio Flat: чистый студийный звук с устраненным гулом пластикового корпуса и защитой мебели от вибраций на неслышимом инфразвуке.</p>
@@ -4822,6 +4826,7 @@ function renderDSP() {
     if ($('#dsp-filter-notch120')) $('#dsp-filter-notch120').checked = !!dspState.filters.notch120;
     if ($('#dsp-filter-phase')) $('#dsp-filter-phase').checked = !!dspState.filters.phase;
     if ($('#dsp-filter-treble')) $('#dsp-filter-treble').checked = !!dspState.filters.treble;
+    if ($('#dsp-filter-drc_bypass')) $('#dsp-filter-drc_bypass').checked = !!dspState.filters.drc_bypass;
   }
 
   // Описание
@@ -5045,7 +5050,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Привязка чекбоксов фильтров
-  ['subsonic', 'notch120', 'phase', 'treble'].forEach(id => {
+  ['subsonic', 'notch120', 'phase', 'treble', 'drc_bypass'].forEach(id => {
     const chk = $('#dsp-filter-' + id);
     if (chk) {
       chk.onchange = async () => {

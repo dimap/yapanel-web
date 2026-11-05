@@ -150,6 +150,19 @@ class TestDSPMath(unittest.TestCase):
         dsp.action({"action": "set_params", "bass_gain": -20.0})
         self.assertEqual(dsp.params["bass_gain"], -6.0)
 
+        # Test DRC compressor bypass toggle (full uncompressed dynamic range)
+        writes.clear()
+        res = dsp.action({"action": "set_filter", "filter": "drc_bypass", "enabled": True})
+        self.assertTrue(res["ok"])
+        self.assertTrue(dsp.filters["drc_bypass"])
+        self.assertTrue(any(w[2] == "60 00 00 08 00" for w in writes))
+
+        writes.clear()
+        res = dsp.action({"action": "set_filter", "filter": "drc_bypass", "enabled": False})
+        self.assertTrue(res["ok"])
+        self.assertFalse(dsp.filters["drc_bypass"])
+        self.assertTrue(any(w[2] == "60 00 00 08 01" for w in writes))
+
 
 if __name__ == "__main__":
     unittest.main()

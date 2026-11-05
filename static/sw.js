@@ -1,6 +1,6 @@
 // One shell/cache per explicit device base. API responses are never cached.
 const BASE=new URL('./',self.location.href);
-const NAMESPACE='panel-v3:'+BASE.pathname+':';
+const NAMESPACE='panel-v6:'+BASE.pathname+':';
 const CACHE=NAMESPACE+'shell';
 // Кэши прошлых версий для этой же панели: имя оканчивается на «:<base>:shell» при любом panel-vN.
 const CACHE_SUFFIX=':'+BASE.pathname+':shell';

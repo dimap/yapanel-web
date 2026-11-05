@@ -221,6 +221,7 @@ class MaxDSP:
         self.panel = panel
         self.adb = getattr(panel, "adb", None)
         self.active_profile = "hifi"
+        self._restored = False
         self.filters = {
             "subsonic": True,
             "notch120": True,
@@ -234,6 +235,11 @@ class MaxDSP:
             "subsonic_freq": 48,
         }
         self._load_saved_state()
+        if self.is_supported():
+            try:
+                self.restore_hardware_state()
+            except Exception as e:
+                logger.warning(f"[DSP] Error restoring hardware on init: {e}")
 
     def _load_saved_state(self):
         """Load saved DSP state from panel settings."""
@@ -244,6 +250,14 @@ class MaxDSP:
                 s_func = server.load_settings
             s = s_func()
             dsp_conf = s.get("dsp")
+            if not isinstance(dsp_conf, dict):
+                direct_path = Path("/data/yapanel/.panel_settings.json")
+                if direct_path.exists():
+                    try:
+                        s_direct = json.loads(direct_path.read_text(encoding="utf-8"))
+                        dsp_conf = s_direct.get("dsp")
+                    except Exception:
+                        pass
             if isinstance(dsp_conf, dict):
                 self.active_profile = dsp_conf.get("profile", "hifi")
                 if "filters" in dsp_conf and isinstance(dsp_conf["filters"], dict):
@@ -252,6 +266,19 @@ class MaxDSP:
                     self.params.update(dsp_conf["params"])
         except Exception as e:
             logger.warning(f"Error loading DSP settings: {e}")
+
+    def restore_hardware_state(self) -> Dict[str, Any]:
+        """Restore saved DSP configuration to hardware on panel boot/startup."""
+        if not self.is_supported():
+            return {"ok": False, "error": "Hardware not supported"}
+        self._load_saved_state()
+        logger.info(f"[DSP] Restoring hardware: profile={self.active_profile}, params={self.params}, filters={self.filters}")
+        if self.active_profile == "custom":
+            res = self._apply_custom_state(save=False)
+        else:
+            res = self.apply_profile(self.active_profile, save=False)
+        self._restored = True
+        return res
 
     def _save_state(self):
         """Save DSP state to panel settings."""
@@ -314,9 +341,19 @@ class MaxDSP:
                         time.sleep(float(payload))
                         continue
                     line = f"w {addr} {payload}\n"
-                    with open(target_path, "w") as f:
-                        f.write(line)
-                        f.flush()
+                    written = False
+                    for attempt in range(3):
+                        try:
+                            with open(target_path, "w") as f:
+                                f.write(line)
+                                f.flush()
+                            written = True
+                            break
+                        except OSError:
+                            time.sleep(0.008)
+                    if not written:
+                        logger.error(f"Local I2C write failed for {target_path} after 3 attempts")
+                        return False
                 return True
             except Exception as e:
                 logger.error(f"Local I2C write error: {e}")
@@ -340,14 +377,14 @@ class MaxDSP:
             out, err, code = self.adb.shell(full_cmd, check=False)
             return code == 0
 
-    def apply_profile(self, profile_name: str) -> Dict[str, Any]:
+    def apply_profile(self, profile_name: str, save: bool = True) -> Dict[str, Any]:
         """Apply a named DSP profile to hardware."""
         valid_ids = [p["id"] for p in self.PROFILES]
         if profile_name not in valid_ids:
             return {"ok": False, "error": f"Неизвестный профиль: {profile_name}"}
 
         if profile_name == "custom":
-            return self._apply_custom_state()
+            return self._apply_custom_state(save=save)
 
         cmds: List[Tuple[str, str, str]] = []
         cmds.extend(self._build_mute_cmds())
@@ -398,11 +435,13 @@ class MaxDSP:
             cmds.append((TWEETER_SYS, ADDR_TWEETER, f"38 {apf}"))
             cmds.append((TWEETER_SYS, ADDR_TWEETER, f"3C {treble_soft}"))
 
+            cur_drc = self.filters.get("drc_bypass", False)
             self.filters = {
                 "subsonic": True,
                 "notch120": True,
                 "phase": True,
                 "treble": False,
+                "drc_bypass": cur_drc,
             }
             self.params["subsonic_freq"] = 65
             self.params["treble_gain"] = -2.5
@@ -475,8 +514,9 @@ class MaxDSP:
         ok = self._write_i2c_batch(cmds)
         if ok:
             self.active_profile = profile_name
-            self._save_state()
-            self._update_boot_script()
+            if save:
+                self._save_state()
+                self._update_boot_script()
             return {"ok": True, "profile": profile_name}
         return {"ok": False, "error": "Ошибка записи в I2C драйвер SY6045S"}
 
@@ -487,7 +527,7 @@ class MaxDSP:
 
         self.filters[filter_id] = bool(enabled)
         self.active_profile = "custom"
-        return self._apply_custom_state()
+        return self._apply_custom_state(save=save)
 
     def set_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Update custom parameters (bass_gain, treble_gain, subsonic_freq)."""
@@ -499,9 +539,9 @@ class MaxDSP:
             self.params["subsonic_freq"] = int(max(30, min(80, float(params["subsonic_freq"]))))
 
         self.active_profile = "custom"
-        return self._apply_custom_state()
+        return self._apply_custom_state(save=save)
 
-    def _apply_custom_state(self) -> Dict[str, Any]:
+    def _apply_custom_state(self, save: bool = True) -> Dict[str, Any]:
         """Compile and write the custom filter state to hardware."""
         cmds: List[Tuple[str, str, str]] = []
         cmds.extend(self._build_mute_cmds())
@@ -559,8 +599,9 @@ class MaxDSP:
 
         ok = self._write_i2c_batch(cmds)
         if ok:
-            self._save_state()
-            self._update_boot_script()
+            if save:
+                self._save_state()
+                self._update_boot_script()
             return {"ok": True, "profile": self.active_profile, "filters": self.filters, "params": self.params}
         return {"ok": False, "error": "Ошибка применения параметров DSP"}
 

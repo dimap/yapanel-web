@@ -16,7 +16,6 @@ speakers.json
 bulbs*.json
 strip_config*.json
 party_settings*.json
-party.py
 bin_cache/
 movies/
 .env
@@ -43,3 +42,8 @@ device/viz/build/
 # локальные настройки Command Code
 .commandcode/
 .panel_journal.jsonl
+
+.station_ip
+tools/
+*.zip
+yapanel_max.tar.gz

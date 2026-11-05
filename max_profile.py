@@ -1964,6 +1964,8 @@ exit 0
         if not hasattr(self, "_max_dsp"):
             from dsp_max import MaxDSP
             self._max_dsp = MaxDSP(self)
+        elif not getattr(self._max_dsp, "_restored", False):
+            self._max_dsp.restore_hardware_state()
         return self._max_dsp.status()
 
     def max_dsp_action(self, data):
@@ -1980,6 +1982,6 @@ exit 0
         from dsp_max import MaxDSP
         _init_dsp = MaxDSP(s)
         if _init_dsp.is_supported():
-            _init_dsp.apply_profile(_init_dsp.active_profile)
+            _init_dsp.restore_hardware_state()
     except Exception:
         pass

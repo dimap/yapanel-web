@@ -2177,6 +2177,10 @@ class Panel:
         self._ww_connect_at = None
         self._ww_router = None
         self._ww_router_stop = threading.Event()
+        self.party = None
+        self._party_lock = threading.Lock()
+        if self.config and getattr(getattr(self.config, "party", None), "auto_start", False):
+            self.enable_party()
 
     def _configure_glagol(self, device_id):
         # Glagol использует тип устройства из прошивки, а не профиль LED/часов панели.
@@ -3959,6 +3963,217 @@ echo @@BLUEZ
         self._ww_port = None
         self._wakeword_apply_dry_run()
         return self.wakeword_status()
+
+    # ---------- светомузыка (Party Mode) ----------
+    def get_party(self, start=False):
+        """Lazily instantiates PartyManager on explicit request.
+        If start=True, also starts worker threads."""
+        if self.party is None:
+            lock = getattr(self, "_party_lock", None)
+            if lock is None:
+                self._party_lock = threading.Lock()
+                lock = self._party_lock
+            with lock:
+                if self.party is None:
+                    try:
+                        import party
+                        self.party = party.PartyManager(panel=self, config=self.config)
+                    except Exception as e:
+                        JOURNAL.add(f"party init error: {e}", "warn")
+                        self.party = None
+                        return None
+        if start and self.party and not getattr(self.party, "running", False):
+            self.party.start()
+        return self.party
+
+    def enable_party(self):
+        """Explicitly instantiates and starts PartyManager."""
+        return self.get_party(start=True)
+
+    def stop_party(self):
+        """Cleanly stops PartyManager and terminates all worker threads."""
+        if self.party:
+            try:
+                self.party.stop()
+            except Exception as e:
+                JOURNAL.add(f"party stop error: {e}", "warn")
+
+    def party_status(self):
+        if not getattr(self, "party", None):
+            return {"running": False, "master_enabled": False, "workers_count": 0, "bulbs": []}
+        return self.party.get_status()
+
+    def party_settings(self, data):
+        pm = self.get_party(start=False)
+        if not pm:
+            raise AdbError("Служба светомузыки не инициализирована")
+        pm.update_settings(data)
+        return {"status": "ok"}
+
+    def party_reconnect(self):
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        self.party.reconnect_all()
+        return {"status": "ok"}
+
+    def party_restore_white(self):
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        self.party.restore_white()
+        return {"status": "ok"}
+
+    def party_service(self, action):
+        action = str(action or "").lower()
+        if action == "start":
+            pm = self.enable_party()
+            if not pm:
+                raise AdbError("Не удалось запустить службу светомузыки")
+            return pm.get_status()
+        if not getattr(self, "party", None):
+            if action == "stop":
+                return {"running": False, "master_enabled": False, "workers_count": 0, "bulbs": []}
+            raise AdbError("Служба светомузыки не инициализирована")
+        if action == "restart":
+            self.party.restart()
+        elif action == "stop":
+            self.party.stop()
+        return self.party.get_status()
+
+    def party_mode(self, mode, params=None):
+        pm = self.get_party(start=False)
+        if not pm:
+            raise AdbError("Служба светомузыки не инициализирована")
+        pm.set_mode(mode, params)
+        return pm.get_status()
+
+    def party_cinema_status(self):
+        if not getattr(self, "party", None):
+            return {}
+        return self.party.get_status().get("cinema", {})
+
+    def party_cinema_control(self, action, val=None):
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        cinema = self.party.effects.get("cinema")
+        if not cinema:
+            raise AdbError("Эффект кинотеатра не найден")
+        action = str(action or "").lower()
+        if action == "play":
+            cinema.play()
+        elif action == "pause":
+            cinema.pause()
+        elif action == "seek":
+            cinema.seek(float(val or 0))
+        elif action == "offset":
+            cinema.set_offset(float(val or 0))
+        elif action == "sync":
+            cinema.sync_to_cue(float(val or 32.0))
+        elif action == "load":
+            cinema.load_script(str(val or ""))
+        return self.party.get_status().get("cinema", {})
+
+    def party_cinema_spell(self, spell, direction=None):
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        cinema = self.party.effects.get("cinema")
+        if not cinema:
+            raise AdbError("Эффект кинотеатра не найден")
+        cinema.trigger_spell(spell, direction=direction)
+        return {"status": "ok", "spell": spell, "direction": direction}
+
+    def party_cinema_sync_tv(self):
+        """1-click synchronization of Cinema 4D with TV box playback (via Station BT AVRCP or TV box ADB)."""
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        cinema = self.party.effects.get("cinema")
+        if not cinema:
+            raise AdbError("Эффект кинотеатра не найден")
+
+        # Automatically ensure active mode is cinema
+        if self.party.settings.get("active_mode") != "cinema":
+            self.party.set_mode("cinema")
+
+        pos = None
+        playing = True
+        title = None
+        source = "station_bt"
+
+        # Method 1: Query Station 2's native Bluetooth AVRCP media session
+        try:
+            from max_profile import max_bt_info
+            bt = max_bt_info(self.adb)
+            if bt and bt.get("position") is not None and bt.get("position") > 0:
+                pos = float(bt["position"])
+                playing = bool(bt.get("playing", True))
+                title = bt.get("title")
+        except Exception:
+            pass
+
+        # Method 2: Query TV Box ADB as fallback (configurable via PANEL_TV_BOX_SERIAL)
+        tv_box = getattr(getattr(self, "config", None), "device", None) and getattr(self.config.device, "tv_box_serial", None) or os.environ.get("PANEL_TV_BOX_SERIAL")
+        if pos is None and tv_box:
+            try:
+                import subprocess, re
+                cmd = ["adb", "-s", tv_box, "shell", "dumpsys media_session | grep -m 1 PlaybackState ; cat /proc/uptime"]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
+                lines = [l.strip() for l in res.stdout.splitlines() if l.strip()]
+                if len(lines) >= 2:
+                    m_state = re.search(r'state=([0-9]+)', lines[0])
+                    m_pos = re.search(r'position=([0-9]+)', lines[0])
+                    m_speed = re.search(r'speed=([0-9.]+)', lines[0])
+                    m_upd = re.search(r'updated=([0-9]+)', lines[0])
+                    if m_state and m_pos and m_speed and m_upd:
+                        state = int(m_state.group(1))
+                        pos_ms = int(m_pos.group(1))
+                        speed = float(m_speed.group(1))
+                        updated_ms = int(m_upd.group(1))
+                        uptime_sec = float(lines[1].split()[0])
+                        curr_uptime_ms = int(uptime_sec * 1000)
+                        if state == 3:
+                            elapsed = curr_uptime_ms - updated_ms
+                            pos = max(0.0, (pos_ms + elapsed * speed) / 1000.0)
+                            playing = True
+                        else:
+                            pos = max(0.0, pos_ms / 1000.0)
+                            playing = (state == 3)
+                        source = "tv_box_adb"
+            except Exception:
+                pass
+
+        if pos is None:
+            return {"status": "error", "message": "ТВ-бокс или Bluetooth не передают позицию фильма"}
+
+        # Perform seek and state sync
+        cinema.seek(pos, play=playing)
+        if playing:
+            cinema.play()
+        else:
+            cinema.pause()
+
+        st = self.party.get_status().get("cinema", {})
+        return {
+            "status": "ok",
+            "time_sec": pos,
+            "playing": playing,
+            "title": title or "Гарри Поттер",
+            "scene": st.get("scene", ""),
+            "source": source
+        }
+
+    def party_bulb_position(self, bulb_id, pos_x, pos_y=0.0, name=None):
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        return self.party.update_bulb_position(bulb_id, pos_x, pos_y, name)
+
+    def party_bulb_test(self, bulb_id, action="solo", color="white"):
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        return self.party.test_bulb(bulb_id, action, color)
+
+    def party_ambilight_frame(self, data):
+        if not getattr(self, "party", None):
+            raise AdbError("Служба светомузыки не инициализирована")
+        return self.party.set_ambilight_frame(data)
 
     def wakeword_proxy(self, method, path, body=None, timeout=90):
         """Прокси к API демона для вкладки: JSON и WAV отдаются как есть."""
@@ -6444,7 +6659,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"text": redact("\n".join(out)) + "\n"}
 
     # Действия, которые шлются потоком (ползунки, живой предпросмотр): в журнал — только ошибки
-    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd", "/api/leds/live", "/api/leds/stream", "/api/clock/state", "/api/dsp"}
+    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd", "/api/leds/live", "/api/leds/stream", "/api/clock/state", "/api/party/status", "/api/party/cinema/status", "/api/party/cinema/sync_tv", "/api/dsp"}
     # Что из тела запроса можно показать в журнале: имена и режимы, но не тексты, ключи и пароли
     JOURNAL_KEYS = ("name", "kind", "action", "which", "mode", "enabled", "id", "type")
 
@@ -6656,6 +6871,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/bt": p.bt_state,
             "/api/btout/eq": p.btout_eq_status,
             "/api/metrics": lambda: p.metrics.get(q.get("range", 3600)),
+            "/api/party/status": p.party_status,
+            "/api/party/cinema/status": p.party_cinema_status,
+            "/api/party/cinema/sync_tv": p.party_cinema_sync_tv,
             "/api/dsp": p.dsp_status,
 
         }
@@ -6841,7 +7059,18 @@ class Handler(BaseHTTPRequestHandler):
             "/api/scenes/run": lambda: p.scene_run(d.get("id")),
             "/api/say": lambda: p.say(d.get("text"), d.get("voice", "alice")),
             "/api/scenes/stop": lambda: p.scene_stop(d.get("id")),
+            "/api/party/settings": lambda: p.party_settings(d),
+            "/api/party/restore_white": p.party_restore_white,
+            "/api/party/reconnect_all": p.party_reconnect,
+            "/api/party/service": lambda: p.party_service(d.get("action")),
+            "/api/party/mode": lambda: p.party_mode(d.get("mode"), d.get("params")),
+            "/api/party/cinema/control": lambda: p.party_cinema_control(d.get("action"), d.get("value")),
+            "/api/party/cinema/spell": lambda: p.party_cinema_spell(d.get("spell"), d.get("direction")),
+            "/api/party/cinema/sync_tv": lambda: p.party_cinema_sync_tv(),
             "/api/dsp": lambda: p.dsp_action(d),
+            "/api/party/bulbs/position": lambda: p.party_bulb_position(d.get("id"), d.get("pos_x"), d.get("pos_y", 0.0), d.get("name")),
+            "/api/party/bulbs/test": lambda: p.party_bulb_test(d.get("id"), d.get("action", "solo"), d.get("color", "white")),
+            "/api/party/ambilight/frame": lambda: p.party_ambilight_frame(d),
 
         }
         if u.path in routes:
@@ -7309,6 +7538,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        panel.stop_party()
         panel.metrics._save()
 
 

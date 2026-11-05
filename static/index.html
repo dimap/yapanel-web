@@ -261,6 +261,11 @@
   .pill { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--btn-line); background: var(--card); font-weight: 600; font-size: 14px; }
   .pill:hover { border-color: var(--accent); }
   .pill.active, .pill.sel { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+  .mode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+  .mode-card { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px 6px; border-radius: 14px; border: 1px solid var(--btn-line); background: var(--card); cursor: pointer; transition: all .15s ease; user-select: none; -webkit-user-select: none; }
+  .mode-card:hover { border-color: var(--accent); }
+  .mode-card.active { background: var(--accent-soft); border-color: var(--accent); font-weight: 700; }
+  .mode-card.active b { color: var(--accent-ink); }
   .dsp-graph-wrap { position: relative; width: 100%; height: 130px; background: var(--field, #151515); border-radius: 14px; padding: 10px; box-sizing: border-box; }
 
   .chip { min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--field); font-size: 13px; font-weight: 600; color: var(--text-2); }
@@ -1218,6 +1223,7 @@
       <a href="#wakeword" data-tab="wakeword" id="nav-wakeword" hidden><svg width="20" height="20" aria-hidden="true"><use href="#i-wave"/></svg>Активация</a>
       <a href="#assistant" data-tab="assistant"><svg width="20" height="20" aria-hidden="true"><use href="#i-mic"/></svg>Ассистент</a>
       <a href="#boot" data-tab="boot"><svg width="20" height="20" aria-hidden="true"><use href="#i-power"/></svg>Анимации</a>
+      <a href="#party" data-tab="party" id="nav-party"><svg width="20" height="20" aria-hidden="true"><use href="#i-bulb"/></svg>Светомузыка</a>
       <a href="#apps" data-tab="apps"><svg width="20" height="20" aria-hidden="true"><use href="#i-box"/></svg>Приложения</a>
       <a href="#files" data-tab="files"><svg width="20" height="20" aria-hidden="true"><use href="#i-folder"/></svg>Файлы</a>
       <a href="#console" data-tab="console"><svg width="20" height="20" aria-hidden="true"><use href="#i-term"/></svg>Консоль</a>
@@ -1237,6 +1243,7 @@
     <a href="#overview" data-tab="overview"><svg aria-hidden="true"><use href="#i-grid"/></svg><span>Обзор</span></a>
     <a href="#player" data-tab="player" class="mbar-opt" hidden><svg aria-hidden="true"><use href="#i-music"/></svg><span>Плеер</span></a>
     <a href="#boot" data-tab="boot" class="mbar-opt" hidden><svg aria-hidden="true"><use href="#i-power"/></svg><span>Анимации</span></a>
+    <a href="#party" data-tab="party" class="mbar-opt" hidden><svg aria-hidden="true"><use href="#i-bulb"/></svg><span>Светомузыка</span></a>
     <a href="#alarm" data-tab="alarm"><svg aria-hidden="true"><use href="#i-alarm"/></svg><span>Будильник</span></a>
     <a href="#scenes" data-tab="scenes"><svg aria-hidden="true"><use href="#i-flow"/></svg><span>Сценарии</span></a>
     <button type="button" id="mbar-more" aria-expanded="false" aria-controls="nav-sheet"><svg aria-hidden="true"><use href="#i-more"/></svg><span>Ещё</span></button>
@@ -1402,6 +1409,7 @@
             <button class="pill" data-dsp-profile="night" type="button" title="Ночной режим: глубокий срез НЧ (65 Гц), чтобы вибрация не передавалась соседям">🌙 Ночной</button>
             <button class="pill" data-dsp-profile="bass" type="button" title="Deep Punch: энергичный плотный бас (65 Гц) с защитой пассивных излучателей">💥 Deep Punch</button>
             <button class="pill" data-dsp-profile="club" type="button" title="Club Bass: мощный клубный бас (+6.5 дБ @ 60 Гц) со срезом инфразвука на 40 Гц">🔥 Club Bass</button>
+            <button class="pill" data-dsp-profile="custom" type="button" title="Индивидуальная конфигурация: кастомный бас, ВЧ и фильтры">🎛️ Свой (Custom)</button>
           </div>
 
           <!-- Интерактивная кривая АЧХ (SVG) -->
@@ -2094,6 +2102,199 @@
           <div class="row" style="gap:8px" id="ra-del-row" hidden>
             <button class="btn sm danger" id="ra-del-my">Удалить свою</button>
           </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+
+  <!-- ================= СВЕТОМУЗЫКА (PARTY MODE) ================= -->
+  <main id="tab-party" data-page hidden>
+    <header class="page-head">
+      <div>
+        <h1>Светомузыка</h1>
+        <div class="sub">Управление умными лампами (Люстра, Бра, Лента)</div>
+      </div>
+      <div class="actions">
+        <span class="badge" id="party-state-badge">—</span>
+        <button class="btn sm" id="party-toggle-service">Запустить службу</button>
+      </div>
+    </header>
+
+    <!-- Главный рубильник -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Главное управление</h2>
+        <div class="actions">
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;"><span class="dot" id="party-strobe-dot"></span><span id="party-strobe-text">Ожидание</span></span>
+        </div>
+      </div>
+      <div class="ov-opts">
+        <label class="set-item">
+          <div class="set-label">
+            <b>Стробоскоп светомузыки</b>
+            <small>Реакция ламп на бас (люстра) и снэр/хэт (бра) под ритм музыки</small>
+          </div>
+          <div class="set-ctl">
+            <input type="checkbox" class="switch" id="party-master-toggle">
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <!-- Режимы работы ламп -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Режимы работы ламп</h2>
+        <div class="actions">
+          <span class="badge ok" id="party-active-mode-badge">⚡ Светомузыка</span>
+        </div>
+      </div>
+      <p class="hint">Выберите атмосферный эффект для комнаты или клубный стробоскоп под ритм музыки:</p>
+
+      <div class="mode-grid" id="party-modes-grid" style="margin-top:12px;">
+        <button type="button" class="mode-card active" data-mode="party">
+          <span style="font-size:22px;">⚡</span>
+          <b style="font-size:12px; margin-top:2px;">Светомузыка</b>
+          <span class="meta" style="font-size:10px;">Клубный строб</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="fireplace">
+          <span style="font-size:22px;">🔥</span>
+          <b style="font-size:12px; margin-top:2px;">Живой камин</b>
+          <span class="meta" style="font-size:10px;">Очаг и угли</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="aurora">
+          <span style="font-size:22px;">🌌</span>
+          <b style="font-size:12px; margin-top:2px;">Сияние</b>
+          <span class="meta" style="font-size:10px;">Изумруд и индиго</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="synthwave">
+          <span style="font-size:22px;">🌅</span>
+          <b style="font-size:12px; margin-top:2px;">Закат</b>
+          <span class="meta" style="font-size:10px;">Неон 80-х</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="thunderstorm">
+          <span style="font-size:22px;">⛈️</span>
+          <b style="font-size:12px; margin-top:2px;">Гроза</b>
+          <span class="meta" style="font-size:10px;">Шторм и молнии</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="ocean">
+          <span style="font-size:22px;">🌊</span>
+          <b style="font-size:12px; margin-top:2px;">Океан</b>
+          <span class="meta" style="font-size:10px;">Волна лазури</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="lava">
+          <span style="font-size:22px;">🌋</span>
+          <b style="font-size:12px; margin-top:2px;">Лава</b>
+          <span class="meta" style="font-size:10px;">Тёплая магма</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="orbit">
+          <span style="font-size:22px;">💫</span>
+          <b style="font-size:12px; margin-top:2px;">Карусель</b>
+          <span class="meta" style="font-size:10px;">Комета по кругу</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="police">
+          <span style="font-size:22px;">🚨</span>
+          <b style="font-size:12px; margin-top:2px;">Полиция</b>
+          <span class="meta" style="font-size:10px;">Спецсигнал</span>
+        </button>
+      </div>
+
+      <!-- Скорость и Яркость эффекта -->
+      <div class="ov-opts" style="margin-top:16px; border-top:1px solid var(--border); padding-top:12px;">
+        <div class="set-item">
+          <div class="set-label">
+            <b>Скорость эффекта</b>
+            <small>Частота анимации, мерцания или волн света</small>
+          </div>
+          <div class="set-ctl" style="display:flex; align-items:center; gap:10px;">
+            <input type="range" id="party-slider-speed" min="0.2" max="2.5" step="0.1" value="1.0" style="flex:1;">
+            <span class="mono meta" id="party-slider-speed-val" style="min-width:44px; text-align:right;">1.0x</span>
+          </div>
+        </div>
+
+        <div class="set-item">
+          <div class="set-label">
+            <b>Яркость атмосферы</b>
+            <small>Максимальная яркость ламп в активном режиме</small>
+          </div>
+          <div class="set-ctl" style="display:flex; align-items:center; gap:10px;">
+            <input type="range" id="party-slider-brightness" min="10" max="100" step="5" value="80" style="flex:1;">
+            <span class="mono meta" id="party-slider-brightness-val" style="min-width:44px; text-align:right;">80%</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bluetooth ТВ режим -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Звук с ТВ по Bluetooth</h2>
+        <div class="actions"><span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;"><span class="dot" id="party-bt-dot"></span><span id="party-bt-text">Не активен</span></span></div>
+      </div>
+      <p class="hint">Выберите поведение светомузыки при просмотре фильмов и передач с телевизора через Bluetooth:</p>
+      <div class="seg" id="party-bt-mode" role="group" aria-label="Режим Bluetooth ТВ" style="margin-top:12px">
+        <button type="button" data-v="off" class="active">⚪ Выкл (Кино)</button>
+        <button type="button" data-v="party">⚡ Вечеринка</button>
+        <button type="button" data-v="ambilight">🎬 Эмбиент</button>
+      </div>
+    </section>
+
+    <!-- Смена цветовой темы & Синхронизация -->
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+      <section class="card">
+        <div class="card-head"><h2>Смена цветовой темы</h2></div>
+        <p class="hint">Как часто синхронно меняются цвета люстры и бра:</p>
+        <div class="seg" id="party-col-interval" role="group" aria-label="Смена темы" style="margin-top:12px">
+          <button type="button" data-v="32">🧘 Редко (32 бита)</button>
+          <button type="button" data-v="16" class="active">🎵 Норма (16)</button>
+          <button type="button" data-v="4">⚡ Часто (4)</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Синхронизация вспышек</h2></div>
+        <p class="hint">Как лампы реагируют на ритм:</p>
+        <div class="seg" id="party-sync-mode" role="group" aria-label="Синхронизация" style="margin-top:12px">
+          <button type="button" data-v="unison" class="active">🤝 В унисон (6 ламп)</button>
+          <button type="button" data-v="split">🥁 Раздельно (Бас / Снэр)</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Статус ламп в комнате -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Лампы в комнате</h2>
+        <div class="actions">
+          <span class="badge" id="party-bulbs-count">—</span>
+        </div>
+      </div>
+      <div id="party-bulbs-list" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+        <!-- Динамический список ламп -->
+      </div>
+      <div class="row" style="gap:12px; margin-top:16px; flex-wrap:wrap;">
+        <button class="btn sm" id="party-reconnect-btn"><svg width="14" height="14" aria-hidden="true"><use href="#i-refresh"/></svg>Переподключить все лампы</button>
+        <button class="btn sm" id="party-restore-white-btn"><svg width="14" height="14" aria-hidden="true"><use href="#i-bulb"/></svg>Вернуть тёплый свет (3000K)</button>
+      </div>
+      <p class="hint" style="margin-top:10px">🛡 Авто-восстановление связи работает непрерывно. При отключении физического выключателя лампа переподключится сразу после включения.</p>
+    </section>
+
+    <!-- Текущее состояние системы -->
+    <section class="card">
+      <div class="card-head"><h2>Состояние системы</h2></div>
+      <div class="stat-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-top:8px;">
+        <div class="stat-box" style="background:var(--card-sub); border:1px solid var(--border); border-radius:12px; padding:12px;">
+          <div class="meta" style="font-size:12px;">Источник звука</div>
+          <div id="party-stat-src" style="font-weight:600; margin-top:4px; display:flex; align-items:center; gap:6px;">—</div>
+        </div>
+        <div class="stat-box" style="background:var(--card-sub); border:1px solid var(--border); border-radius:12px; padding:12px;">
+          <div class="meta" style="font-size:12px;">Строб в комнате</div>
+          <div id="party-stat-strobe" style="font-weight:600; margin-top:4px; display:flex; align-items:center; gap:6px;">—</div>
+        </div>
+        <div class="stat-box" style="background:var(--card-sub); border:1px solid var(--border); border-radius:12px; padding:12px;">
+          <div class="meta" style="font-size:12px;">Приборов в работе</div>
+          <div id="party-stat-workers" style="font-weight:600; margin-top:4px;">—</div>
         </div>
       </div>
     </section>
@@ -5072,6 +5273,339 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+
+// ---- Светомузыка (Party Mode) ----
+let partyTimer = null;
+let partyData = null;
+let partyEventsBound = false;
+
+async function loadParty() {
+  clearTimeout(partyTimer);
+  initPartyEvents();
+  try {
+    partyData = await api('/api/party/status');
+    renderParty();
+  } catch (e) {
+    if (!e.offline) {
+      const b = $('#party-state-badge');
+      if (b) { b.textContent = 'ошибка'; b.className = 'badge bad'; }
+    }
+  }
+  if ($('#tab-party') && !$('#tab-party').hidden) {
+    partyTimer = setTimeout(loadParty, (partyData && partyData.running) ? 1500 : 4000);
+  }
+}
+
+function renderParty() {
+  const d = partyData;
+  if (!d) return;
+
+  // Service badge & button
+  const badge = $('#party-state-badge');
+  const toggleBtn = $('#party-toggle-service');
+  if (badge && toggleBtn) {
+    if (d.running) {
+      badge.textContent = 'активна';
+      badge.className = 'badge ok';
+      toggleBtn.textContent = 'Остановить службу';
+      toggleBtn.className = 'btn sm danger-soft';
+    } else {
+      badge.textContent = 'остановлена';
+      badge.className = 'badge';
+      toggleBtn.textContent = 'Запустить службу';
+      toggleBtn.className = 'btn sm primary';
+    }
+  }
+
+  // Active Mode Grid & Badge
+  const activeMode = d.active_mode || 'party';
+  const modeBtn = $(`#party-modes-grid button[data-mode="${activeMode}"]`);
+  const activeBadge = $('#party-active-mode-badge');
+  if (activeBadge) {
+    const iconSpan = modeBtn?.querySelector('span')?.textContent || '';
+    const nameB = modeBtn?.querySelector('b')?.textContent || activeMode;
+    activeBadge.textContent = `${iconSpan} ${nameB}`.trim();
+  }
+  $$('#party-modes-grid button').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === activeMode);
+  });
+
+  // Speed & Brightness Sliders
+  const slSpeed = $('#party-slider-speed');
+  const slSpeedVal = $('#party-slider-speed-val');
+  if (slSpeed && slSpeed !== document.activeElement) {
+    const curSpeed = Number(d.speed ?? 1.0);
+    slSpeed.value = curSpeed;
+    if (slSpeedVal) slSpeedVal.textContent = curSpeed.toFixed(1) + 'x';
+  }
+
+  const slBright = $('#party-slider-brightness');
+  const slBrightVal = $('#party-slider-brightness-val');
+  if (slBright && slBright !== document.activeElement) {
+    const curBright = Number(d.brightness ?? 80);
+    slBright.value = curBright;
+    if (slBrightVal) slBrightVal.textContent = curBright + '%';
+  }
+
+  // Master switch
+  const masterSw = $('#party-master-toggle');
+  if (masterSw && masterSw !== document.activeElement) {
+    masterSw.checked = !!d.master_enabled;
+  }
+
+  // Strobe indicator
+  const strDot = $('#party-strobe-dot');
+  const strTxt = $('#party-strobe-text');
+  if (strDot && strTxt) {
+    if (d.strobe_active && !d.in_silence) {
+      strDot.className = 'dot on';
+      strTxt.textContent = 'АКТИВЕН ⚡';
+    } else {
+      strDot.className = 'dot';
+      strTxt.textContent = 'Покой / Белый';
+    }
+  }
+
+  // Bluetooth TV mode buttons
+  const btMode = d.bt_mode || 'off';
+  $$('#party-bt-mode button').forEach(b => {
+    b.classList.toggle('active', b.dataset.v === btMode);
+  });
+
+  // BT badge
+  const btDot = $('#party-bt-dot');
+  const btTxt = $('#party-bt-text');
+  if (btDot && btTxt) {
+    if (d.bt_playing) {
+      btDot.className = 'dot on';
+      btTxt.textContent = 'Играет звук с ТВ';
+    } else {
+      btDot.className = 'dot';
+      btTxt.textContent = 'Ожидание';
+    }
+  }
+
+  // Color interval buttons
+  const colInt = String(d.color_interval || 16);
+  $$('#party-col-interval button').forEach(b => {
+    b.classList.toggle('active', b.dataset.v === colInt);
+  });
+
+  // Sync mode buttons
+  const syncMode = d.sync_mode || 'unison';
+  $$('#party-sync-mode button').forEach(b => {
+    b.classList.toggle('active', b.dataset.v === syncMode);
+  });
+
+  // Bulbs list & count
+  const bulbs = d.bulbs || [];
+  let onlineCount = 0;
+  const listEl = $('#party-bulbs-list');
+  if (listEl) {
+    if (bulbs.length > 0) {
+      let html = '';
+      bulbs.forEach(b => {
+        if (b.connected) onlineCount++;
+        const dotClass = b.connected ? 'dot on' : 'dot off';
+        const statusTxt = b.connected ? 'В сети' : 'Сбой / поиск...';
+        const roleTxt = b.role === 'kick' ? 'Люстра (Kick 50–120 Гц)'
+          : (b.role === 'ambient' ? 'Люстра (Фон)'
+          : (b.side === 'right' ? 'Правая бра (Snare 1 кГц)' : 'Левая бра (Snare 1 кГц)'));
+        html += `
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
+            <div>
+              <div style="font-weight:600; font-size:14px;">${esc(b.name)}</div>
+              <div class="meta" style="font-size:12px; margin-top:2px;">${esc(b.ip)} • ${esc(roleTxt)}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:500;">
+              <span class="${dotClass}"></span><span>${esc(statusTxt)}</span>
+            </div>
+          </div>
+        `;
+      });
+      listEl.innerHTML = html;
+    } else {
+      listEl.innerHTML = '<div class="empty">Лампы не настроены или служба выключена</div>';
+    }
+  }
+
+  const bulbsCountBadge = $('#party-bulbs-count');
+  if (bulbsCountBadge) {
+    if (bulbs.length > 0) {
+      bulbsCountBadge.textContent = `${onlineCount} из ${bulbs.length} в сети`;
+      bulbsCountBadge.className = 'badge' + (onlineCount === bulbs.length ? ' ok' : ' warn');
+    } else {
+      bulbsCountBadge.textContent = 'нет данных';
+      bulbsCountBadge.className = 'badge';
+    }
+  }
+
+  // Live system state
+  const statSrc = $('#party-stat-src');
+  if (statSrc) {
+    if (d.yandex_playing) {
+      statSrc.innerHTML = '<span class="dot on"></span><span>Яндекс Музыка</span>';
+    } else if (d.bt_playing) {
+      statSrc.innerHTML = '<span class="dot on"></span><span>Bluetooth ТВ</span>';
+    } else {
+      statSrc.innerHTML = '<span class="dot"></span><span class="meta">Тишина</span>';
+    }
+  }
+
+  const statStrobe = $('#party-stat-strobe');
+  if (statStrobe) {
+    if (d.strobe_active && !d.in_silence) {
+      statStrobe.innerHTML = '<span class="dot on"></span><span style="color:var(--ok)">Активен ⚡</span>';
+    } else {
+      statStrobe.innerHTML = '<span class="dot"></span><span class="meta">Покой / Белый</span>';
+    }
+  }
+
+  const statWorkers = $('#party-stat-workers');
+  if (statWorkers) {
+    statWorkers.textContent = `${d.workers_count || bulbs.length} ламп + лента`;
+  }
+}
+
+function initPartyEvents() {
+  if (partyEventsBound) return;
+  const tab = $('#tab-party');
+  if (!tab) return;
+  partyEventsBound = true;
+
+  // Mode Selection Clicks
+  const modesGrid = $('#party-modes-grid');
+  if (modesGrid) {
+    modesGrid.onclick = e => {
+      const btn = e.target.closest('button[data-mode]');
+      if (!btn) return;
+      const mode = btn.dataset.mode;
+      $$('#party-modes-grid button').forEach(b => b.classList.toggle('active', b === btn));
+      const activeBadge = $('#party-active-mode-badge');
+      if (activeBadge) {
+        activeBadge.textContent = btn.querySelector('b')?.textContent?.trim() || mode;
+      }
+      act(btn, async () => {
+        await api('/api/party/settings', { active_mode: mode, master_enabled: true });
+        await loadParty();
+        toast(`Режим: ${btn.querySelector('b')?.textContent || mode}`);
+      });
+    };
+  }
+
+  // Speed Slider
+  const slSpeed = $('#party-slider-speed');
+  const slSpeedVal = $('#party-slider-speed-val');
+  if (slSpeed) {
+    slSpeed.oninput = () => {
+      if (slSpeedVal) slSpeedVal.textContent = Number(slSpeed.value).toFixed(1) + 'x';
+    };
+    slSpeed.onchange = async () => {
+      await api('/api/party/settings', { speed: parseFloat(slSpeed.value) });
+      await loadParty();
+    };
+  }
+
+  // Brightness Slider
+  const slBright = $('#party-slider-brightness');
+  const slBrightVal = $('#party-slider-brightness-val');
+  if (slBright) {
+    slBright.oninput = () => {
+      if (slBrightVal) slBrightVal.textContent = slBright.value + '%';
+    };
+    slBright.onchange = async () => {
+      await api('/api/party/settings', { brightness: parseInt(slBright.value, 10) });
+      await loadParty();
+    };
+  }
+
+  const btnService = $('#party-toggle-service');
+  if (btnService) {
+    btnService.onclick = e => {
+      const isRunning = partyData && partyData.running;
+      const action = isRunning ? 'stop' : 'start';
+      return act(e.currentTarget, async () => {
+        await api('/api/party/service', { action });
+        await loadParty();
+      }, isRunning ? 'Служба светомузыки остановлена' : 'Служба светомузыки запущена');
+    };
+  }
+
+  const masterSw = $('#party-master-toggle');
+  if (masterSw) {
+    masterSw.onchange = e => {
+      const enabled = e.target.checked;
+      act(e.target, async () => {
+        await api('/api/party/settings', { master_enabled: enabled });
+        await loadParty();
+      });
+    };
+  }
+
+  const btModeGroup = $('#party-bt-mode');
+  if (btModeGroup) {
+    btModeGroup.onclick = e => {
+      const btn = e.target.closest('button[data-v]');
+      if (!btn) return;
+      const mode = btn.dataset.v;
+      act(btn, async () => {
+        await api('/api/party/settings', { bt_mode: mode });
+        await loadParty();
+      });
+    };
+  }
+
+  const colGroup = $('#party-col-interval');
+  if (colGroup) {
+    colGroup.onclick = e => {
+      const btn = e.target.closest('button[data-v]');
+      if (!btn) return;
+      const val = parseInt(btn.dataset.v, 10);
+      act(btn, async () => {
+        await api('/api/party/settings', { color_interval: val });
+        await loadParty();
+      });
+    };
+  }
+
+  const syncGroup = $('#party-sync-mode');
+  if (syncGroup) {
+    syncGroup.onclick = e => {
+      const btn = e.target.closest('button[data-v]');
+      if (!btn) return;
+      const mode = btn.dataset.v;
+      act(btn, async () => {
+        await api('/api/party/settings', { sync_mode: mode });
+        await loadParty();
+      });
+    };
+  }
+
+  const reconnectBtn = $('#party-reconnect-btn');
+  if (reconnectBtn) {
+    reconnectBtn.onclick = e => {
+      return act(e.currentTarget, async () => {
+        await api('/api/party/reconnect_all', {});
+        await new Promise(r => setTimeout(r, 1200));
+        await loadParty();
+      }, 'Лампы переподключены');
+    };
+  }
+
+  const restoreWhiteBtn = $('#party-restore-white-btn');
+  if (restoreWhiteBtn) {
+    restoreWhiteBtn.onclick = e => {
+      return act(e.currentTarget, async () => {
+        await api('/api/party/restore_white', {});
+        await loadParty();
+      }, 'Включён тёплый свет 3000K');
+    };
+  }
+}
+
+document.addEventListener('DOMContentLoaded', initPartyEvents);
+
+
 // ---- эквалайзер Bluetooth-выхода ----
 const EQ_NAMES = { flat: 'Без изменений', rock: 'Рок', electronic: 'Электроника', vocal: 'Вокал / подкаст', night: 'Ночной', custom: 'Свой' };
 const EQ_DEFAULT = [60, 230, 910, 3600, 14000];
@@ -5448,7 +5982,7 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(PanelContext.storageKey(k), v); } catch {} },
 };
 // 'radio' временно убрана из списка вкладок вместе с пунктом меню; код вкладки остаётся
-const TABS = ['overview', 'player', 'led', 'alarm', 'scenes', 'assistant', 'wakeword', 'charts', 'boot', 'apps', 'files', 'logs', 'console', 'settings'];
+const TABS = ['overview', 'player', 'led', 'alarm', 'scenes', 'assistant', 'wakeword', 'charts', 'boot', 'party', 'apps', 'files', 'logs', 'console', 'settings'];
 let bootLoaded = false;
 let logsLoaded = false;
 let shownTab = null;
@@ -5514,6 +6048,7 @@ function showTab() {
   }
   if (tab === 'console') setTimeout(() => { termConnect(); try { termFit?.fit(); } catch {} term?.focus(); }, 0);
   if (tab === 'boot' && !bootLoaded) { bootLoaded = true; loadBoot(); }
+  if (tab === 'party') loadParty();
   if (tab === 'wakeword') { if (window.wwLoad) window.wwLoad(); if (window.wwActionsLoad) window.wwActionsLoad(); }
   loadHook();
   if (tab === 'apps') { loadYam2(); loadYam(); }

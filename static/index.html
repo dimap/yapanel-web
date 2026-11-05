@@ -4758,10 +4758,11 @@ async function loadDSP() {
 function renderDSP() {
   const card = $('#card-dsp');
   if (!card) return;
-  if (!dspState || !dspState.supported) {
+  if (dspState && dspState.supported === false) {
     card.hidden = true;
     return;
   }
+  if (!dspState) return;
   card.hidden = false;
 
   // Бейдж
@@ -4825,7 +4826,13 @@ document.addEventListener('DOMContentLoaded', () => {
   $$('#dsp-profiles .pill').forEach(btn => {
     btn.onclick = () => act(btn, async () => {
       const prof = btn.dataset.dspProfile;
-      dspState = await api('/api/dsp', { profile: prof });
+      $$('#dsp-profiles .pill').forEach(b => b.classList.toggle('active', b.dataset.dspProfile === prof));
+      const res = await api('/api/dsp', { profile: prof });
+      if (res && res.supported !== undefined) {
+        dspState = res;
+      } else if (dspState && res && res.profile) {
+        dspState.active_profile = res.profile;
+      }
       renderDSP();
       toast(`Режим звука: ${btn.textContent.trim()}`);
     });
@@ -4837,7 +4844,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (chk) {
       chk.onchange = async () => {
         try {
-          dspState = await api('/api/dsp', { action: 'set_filter', filter: id, enabled: chk.checked });
+          const res = await api('/api/dsp', { action: 'set_filter', filter: id, enabled: chk.checked });
+          if (res && res.supported !== undefined) {
+            dspState = res;
+          } else if (dspState) {
+            dspState.filters = dspState.filters || {};
+            dspState.filters[id] = chk.checked;
+          }
           renderDSP();
         } catch (e) {
           chk.checked = !chk.checked;

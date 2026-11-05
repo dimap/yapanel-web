@@ -87,11 +87,27 @@ class TestDSPMath(unittest.TestCase):
         dsp._update_boot_script = lambda: None
 
         # Test apply profile hifi
+        writes.clear()
         res = dsp.action({"profile": "hifi"})
         self.assertTrue(res["ok"])
+        self.assertTrue(res["supported"])
+        self.assertIn("response", res)
         self.assertEqual(dsp.active_profile, "hifi")
         self.assertTrue(dsp.filters["subsonic"])
         self.assertTrue(dsp.filters["notch120"])
+
+        # Verify mute and unmute sequences in writes
+        # First operations must be soft-mute on tweeter and woofer
+        self.assertEqual(writes[0][2], "06 08")  # Tweeter master mute
+        self.assertEqual(writes[1][2], "22 30")  # Tweeter channel mute
+        self.assertEqual(writes[2][2], "06 08")  # Woofer master mute
+        self.assertEqual(writes[3][2], "22 30")  # Woofer channel mute
+        self.assertEqual(writes[4][0], "__SLEEP__")  # 15ms zero-cross ramp
+        # Last operations must be soft-unmute
+        self.assertEqual(writes[-4][2], "22 00")
+        self.assertEqual(writes[-3][2], "06 00")
+        self.assertEqual(writes[-2][2], "22 00")
+        self.assertEqual(writes[-1][2], "06 00")
 
         # Test apply profile stock
         res = dsp.action({"profile": "stock"})

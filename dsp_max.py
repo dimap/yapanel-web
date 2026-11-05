@@ -6,6 +6,7 @@ profile switching, filter toggles, persistence, and frequency response modeling.
 
 import os
 import math
+import time
 import json
 import logging
 from pathlib import Path
@@ -268,17 +269,43 @@ class MaxDSP:
             return "1" in out
         return False
 
+    def _build_mute_cmds(self) -> List[Tuple[str, str, str]]:
+        """Zero-crossing soft-mute sequence for SY6045S power stages."""
+        return [
+            (TWEETER_SYS, ADDR_TWEETER, "06 08"),
+            (TWEETER_SYS, ADDR_TWEETER, "22 30"),
+            (WOOFER_SYS, ADDR_WOOFER, "06 08"),
+            (WOOFER_SYS, ADDR_WOOFER, "22 30"),
+            ("__SLEEP__", "", "0.015"),
+            (TWEETER_SYS, ADDR_TWEETER, "03 5F"),
+            (WOOFER_SYS, ADDR_WOOFER, "03 5F"),
+        ]
+
+    def _build_unmute_cmds(self) -> List[Tuple[str, str, str]]:
+        """Lock EQ and execute zero-crossing soft-unmute for SY6045S."""
+        return [
+            (TWEETER_SYS, ADDR_TWEETER, "03 5E"),
+            (WOOFER_SYS, ADDR_WOOFER, "03 5E"),
+            ("__SLEEP__", "", "0.005"),
+            (TWEETER_SYS, ADDR_TWEETER, "22 00"),
+            (TWEETER_SYS, ADDR_TWEETER, "06 00"),
+            (WOOFER_SYS, ADDR_WOOFER, "22 00"),
+            (WOOFER_SYS, ADDR_WOOFER, "06 00"),
+        ]
+
     def _write_i2c_batch(self, commands: List[Tuple[str, str, str]]) -> bool:
         """
-        Execute I2C write batch commands.
+        Execute I2C write batch commands with soft-mute zero-cross ramp to prevent clicks/pops.
         commands: list of (target_sysfs_path, addr_hex, payload_str)
         """
         is_local = (os.path.exists(WOOFER_SYS) and os.path.exists(TWEETER_SYS)) or getattr(self.adb, "is_local", False)
 
         if is_local:
             try:
-                # Group by chip
                 for target_path, addr, payload in commands:
+                    if target_path == "__SLEEP__":
+                        time.sleep(float(payload))
+                        continue
                     line = f"w {addr} {payload}\n"
                     with open(target_path, "w") as f:
                         f.write(line)
@@ -289,10 +316,20 @@ class MaxDSP:
                 return False
         else:
             # Remote via ADB shell
-            sh_lines = []
+            sh_segments = []
+            cur_cmds = []
             for target_path, addr, payload in commands:
-                sh_lines.append(f'echo "w {addr} {payload}" > {target_path}')
-            full_cmd = " && ".join(sh_lines)
+                if target_path == "__SLEEP__":
+                    if cur_cmds:
+                        sh_segments.append(" && ".join(cur_cmds))
+                        cur_cmds = []
+                    ms = int(float(payload) * 1000)
+                    sh_segments.append(f"usleep {ms * 1000}")
+                else:
+                    cur_cmds.append(f'echo "w {addr} {payload}" > {target_path}')
+            if cur_cmds:
+                sh_segments.append(" && ".join(cur_cmds))
+            full_cmd = " && ".join(sh_segments)
             out, err, code = self.adb.shell(full_cmd, check=False)
             return code == 0
 
@@ -303,10 +340,7 @@ class MaxDSP:
             return {"ok": False, "error": f"Неизвестный профиль: {profile_name}"}
 
         cmds: List[Tuple[str, str, str]] = []
-
-        # Unlock access
-        cmds.append((TWEETER_SYS, ADDR_TWEETER, "03 5F"))
-        cmds.append((WOOFER_SYS, ADDR_WOOFER, "03 5F"))
+        cmds.extend(self._build_mute_cmds())
 
         if profile_name == "stock":
             # Set all registers to bypass
@@ -388,9 +422,7 @@ class MaxDSP:
             self.params["treble_gain"] = 2.0
             self.params["subsonic_freq"] = 45
 
-        # Lock registers
-        cmds.append((TWEETER_SYS, ADDR_TWEETER, "03 5E"))
-        cmds.append((WOOFER_SYS, ADDR_WOOFER, "03 5E"))
+        cmds.extend(self._build_unmute_cmds())
 
         ok = self._write_i2c_batch(cmds)
         if ok:
@@ -424,8 +456,7 @@ class MaxDSP:
     def _apply_custom_state(self) -> Dict[str, Any]:
         """Compile and write the custom filter state to hardware."""
         cmds: List[Tuple[str, str, str]] = []
-        cmds.append((TWEETER_SYS, ADDR_TWEETER, "03 5F"))
-        cmds.append((WOOFER_SYS, ADDR_WOOFER, "03 5F"))
+        cmds.extend(self._build_mute_cmds())
 
         # 1. Notch 120 Hz
         if self.filters.get("notch120"):
@@ -471,9 +502,7 @@ class MaxDSP:
             treble_biquad = BYPASS_HEX
         cmds.append((TWEETER_SYS, ADDR_TWEETER, f"3C {treble_biquad}"))
 
-        # Lock
-        cmds.append((TWEETER_SYS, ADDR_TWEETER, "03 5E"))
-        cmds.append((WOOFER_SYS, ADDR_WOOFER, "03 5E"))
+        cmds.extend(self._build_unmute_cmds())
 
         ok = self._write_i2c_batch(cmds)
         if ok:
@@ -599,8 +628,10 @@ class MaxDSP:
         """Return full DSP status payload for YapAnel UI."""
         supported = self.is_supported()
         return {
+            "ok": True,
             "supported": supported,
             "active_profile": self.active_profile,
+            "profile": self.active_profile,
             "profiles": self.PROFILES,
             "filters": self.filters,
             "params": self.params,
@@ -614,17 +645,21 @@ class MaxDSP:
 
         act = d.get("action")
         if "profile" in d:
-            return self.apply_profile(d["profile"])
+            res = self.apply_profile(d["profile"])
+            return self.status() if res.get("ok") else res
         elif act == "set_filter" or "filter" in d:
             fid = d.get("filter")
             val = d.get("enabled", True)
-            return self.set_filter(fid, val)
+            res = self.set_filter(fid, val)
+            return self.status() if res.get("ok") else res
         elif act == "set_params" or "params" in d:
             p = d.get("params", d)
-            return self.set_params(p)
+            res = self.set_params(p)
+            return self.status() if res.get("ok") else res
         elif act == "status":
             return self.status()
         elif act == "reset":
-            return self.apply_profile("stock")
+            res = self.apply_profile("stock")
+            return self.status() if res.get("ok") else res
 
         return {"ok": False, "error": "Неизвестное действие DSP"}

@@ -6100,6 +6100,12 @@ echo @@BLUEZ
             raise AdbError("неизвестное действие")
         return {"ok": True}
 
+    def dsp_status(self):
+        return {"supported": False, "reason": "Аппаратный DSP не поддерживается на данной модели"}
+
+    def dsp_action(self, d):
+        raise AdbError("Аппаратный DSP не поддерживается на данной модели")
+
 
 class WsServerConn:
     """Серверная сторона WebSocket (RFC 6455) поверх соединения http.server — только то, что нужно терминалу."""
@@ -6438,7 +6444,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"text": redact("\n".join(out)) + "\n"}
 
     # Действия, которые шлются потоком (ползунки, живой предпросмотр): в журнал — только ошибки
-    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd", "/api/leds/live", "/api/leds/stream", "/api/clock/state"}
+    JOURNAL_QUIET = {"/api/volume", "/api/ring", "/api/clock", "/api/radio/miss-seen", "/api/music/cmd", "/api/leds/live", "/api/leds/stream", "/api/clock/state", "/api/dsp"}
     # Что из тела запроса можно показать в журнале: имена и режимы, но не тексты, ключи и пароли
     JOURNAL_KEYS = ("name", "kind", "action", "which", "mode", "enabled", "id", "type")
 
@@ -6650,6 +6656,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/bt": p.bt_state,
             "/api/btout/eq": p.btout_eq_status,
             "/api/metrics": lambda: p.metrics.get(q.get("range", 3600)),
+            "/api/dsp": p.dsp_status,
 
         }
         if u.path in routes:
@@ -6834,6 +6841,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/scenes/run": lambda: p.scene_run(d.get("id")),
             "/api/say": lambda: p.say(d.get("text"), d.get("voice", "alice")),
             "/api/scenes/stop": lambda: p.scene_stop(d.get("id")),
+            "/api/dsp": lambda: p.dsp_action(d),
 
         }
         if u.path in routes:
@@ -6845,7 +6853,7 @@ class PanelUpdater:
     """Проверка новых релизов панели на GitHub и обновление — в зависимости от того, как панель установлена:
     zip (Windows-сборка, Download ZIP) — скачать релиз и заменить файлы панели; git — git pull --ff-only;
     docker — только подсказать команду (образ изнутри не обновить)."""
-    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
+    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "dsp_max.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
     DIRS = ("static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно

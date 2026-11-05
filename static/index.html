@@ -260,6 +260,9 @@
   .btn.icon.sm { width: 36px; }
   .pill { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--btn-line); background: var(--card); font-weight: 600; font-size: 14px; }
   .pill:hover { border-color: var(--accent); }
+  .pill.active, .pill.sel { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+  .dsp-graph-wrap { position: relative; width: 100%; height: 130px; background: var(--field, #151515); border-radius: 14px; padding: 10px; box-sizing: border-box; }
+
   .chip { min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--field); font-size: 13px; font-weight: 600; color: var(--text-2); }
   .chip:hover { border-color: var(--accent); color: var(--accent-ink); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1381,6 +1384,84 @@
             <button class="pill" data-level="50">50</button><button class="pill" data-level="70">70</button>
           </div>
           <p class="hint">Шкала как на колонке: 0–100 с шагом 5. Если вы вошли в Яндекс, громкость ставит сама Алиса; иначе она пересчитывается по таблице Quasar и пишется прямо в микшер.</p>
+        </section>
+
+        <!-- аппаратный звук и dsp -->
+        <section class="card" id="card-dsp" data-widget="dsp" data-title="Аппаратный DSP (Hi-Fi)" hidden>
+          <div class="card-head">
+            <h2>Аппаратный DSP (Hi-Fi)</h2>
+            <div class="row" style="gap:8px">
+              <span class="badge ok" id="dsp-badge">Hi-Fi Studio</span>
+            </div>
+          </div>
+
+          <!-- Пресеты звучания -->
+          <div class="chips" id="dsp-profiles" style="display:flex; flex-wrap:wrap; gap:8px;">
+            <button class="pill active" data-dsp-profile="hifi" type="button" title="Линейная студийная АЧХ: срез вибраций стола, режектор 120 Гц, фазовое выравнивание сабвуфера и воздух ВЧ">🎵 Hi-Fi Studio</button>
+            <button class="pill" data-dsp-profile="stock" type="button" title="Заводской звук: без фильтрации, с корпусным бубнением и вибрацией стола">📦 Заводской сток</button>
+            <button class="pill" data-dsp-profile="night" type="button" title="Ночной режим: глубокий срез НЧ (65 Гц), чтобы вибрация не передавалась соседям">🌙 Ночной</button>
+            <button class="pill" data-dsp-profile="bass" type="button" title="Deep Punch: энергичный плотный бас (65 Гц) с защитой пассивных излучателей">💥 Deep Punch</button>
+          </div>
+
+          <!-- Интерактивная кривая АЧХ (SVG) -->
+          <div class="dsp-graph-wrap">
+            <svg id="dsp-svg" viewBox="0 0 400 110" style="width:100%; height:100%; display:block;" preserveAspectRatio="none">
+              <!-- Сетка -->
+              <line x1="0" y1="30" x2="400" y2="30" stroke="var(--line, #333)" stroke-dasharray="3,3" stroke-width="1"/>
+              <line x1="0" y1="17" x2="400" y2="17" stroke="var(--line, #282828)" stroke-dasharray="2,2" stroke-width="0.8"/>
+              <line x1="0" y1="56" x2="400" y2="56" stroke="var(--line, #282828)" stroke-dasharray="2,2" stroke-width="0.8"/>
+              <line x1="0" y1="83" x2="400" y2="83" stroke="var(--line, #282828)" stroke-dasharray="2,2" stroke-width="0.8"/>
+
+              <!-- Вертикальные частотные линии -->
+              <line x1="53" y1="0" x2="53" y2="110" stroke="var(--line, #282828)" stroke-width="0.8"/>
+              <line x1="93" y1="0" x2="93" y2="110" stroke="var(--line, #282828)" stroke-width="0.8"/>
+              <line x1="226" y1="0" x2="226" y2="110" stroke="var(--line, #282828)" stroke-width="0.8"/>
+              <line x1="360" y1="0" x2="360" y2="110" stroke="var(--line, #282828)" stroke-width="0.8"/>
+
+              <!-- Подписи уровней и частот -->
+              <text x="5" y="28" fill="var(--muted, #888)" font-size="8.5" font-family="monospace">0 dB</text>
+              <text x="5" y="15" fill="var(--muted, #888)" font-size="8" font-family="monospace">+6 dB</text>
+              <text x="5" y="54" fill="var(--muted, #888)" font-size="8" font-family="monospace">-12 dB</text>
+              <text x="5" y="81" fill="var(--muted, #888)" font-size="8" font-family="monospace">-24 dB</text>
+
+              <text x="55" y="104" fill="var(--muted, #777)" font-size="8" font-family="monospace">50Hz</text>
+              <text x="95" y="104" fill="var(--muted, #777)" font-size="8" font-family="monospace">100Hz</text>
+              <text x="228" y="104" fill="var(--muted, #777)" font-size="8" font-family="monospace">1kHz</text>
+              <text x="355" y="104" fill="var(--muted, #777)" font-size="8" font-family="monospace">10kHz</text>
+
+              <!-- Кривые АЧХ -->
+              <path id="dsp-curve-woofer" d="" fill="none" stroke="#00e5ff" stroke-width="1.8" opacity="0.6"/>
+              <path id="dsp-curve-tweeter" d="" fill="none" stroke="#d500f9" stroke-width="1.8" opacity="0.6"/>
+              <path id="dsp-curve-system" d="" fill="none" stroke="var(--accent, #ffcc00)" stroke-width="2.5"/>
+            </svg>
+            <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:-18px; font-size:10px; font-weight:600; padding-right:6px;">
+              <span style="color:#00e5ff">■ Сабвуфер</span>
+              <span style="color:#d500f9">■ Твитеры</span>
+              <span style="color:var(--accent, #ffcc00)">■ Система</span>
+            </div>
+          </div>
+
+          <!-- Фильтры и тумблеры -->
+          <div class="col" style="gap:6px">
+            <label class="toggle" style="cursor:pointer" title="Срезает неслышимый инфразвук (20–45 Гц), устраняя паразитную тряску стола и мебели">
+              <span>🔇 Анти-вибрация (Subsonic 48 Гц)</span>
+              <input type="checkbox" id="dsp-filter-subsonic" checked>
+            </label>
+            <label class="toggle" style="cursor:pointer" title="Устраняет паразитный резонанс пластиковой камеры колонки на 120 Гц">
+              <span>🛡️ Режекторный фильтр 120 Гц (-4.5 дБ)</span>
+              <input type="checkbox" id="dsp-filter-notch120" checked>
+            </label>
+            <label class="toggle" style="cursor:pointer" title="Выравнивает групповую задержку направленного вниз сабвуфера относительно твитеров (+3 дБ вокала)">
+              <span>⏱️ Фазовая компенсация APF-2 (260 Гц)</span>
+              <input type="checkbox" id="dsp-filter-phase" checked>
+            </label>
+            <label class="toggle" style="cursor:pointer" title="Раскрывает шёлковые купольные твитеры на Lossless / FLAC">
+              <span>✨ Воздух ВЧ (+3 дБ 13.5 кГц)</span>
+              <input type="checkbox" id="dsp-filter-treble" checked>
+            </label>
+          </div>
+
+          <p class="hint" id="dsp-desc">Hi-Fi Studio Flat: чистый студийный звук с устраненным гулом пластикового корпуса и защитой мебели от вибраций на неслышимом инфразвуке.</p>
         </section>
 
         <!-- подсветка -->
@@ -3402,6 +3483,7 @@ async function refreshStatus() {
       const mn = { max: 'Станция Макс', midi: 'Станция Миди', lite: 'Станция Лайт', lite2: 'Станция Лайт 2', station2: 'Станция 2' }[s.model];
       if (mn) $('#model-name').textContent = mn;
     }
+    if (s.model === 'max') loadDSP();
     window.__isMatrix = !!(s.matrix && s.matrix.cols === 25);
     try { localStorage.setItem('is_matrix', window.__isMatrix ? '1' : '0'); } catch {}
     const extrasEl = document.querySelector('.extras');
@@ -4659,6 +4741,113 @@ function renderBtOut() {
   eqRow.hidden = !(o.on && o.state === 'bt');
   if (!eqRow.hidden && !btEq) loadBtEq();
 }
+// ---- Аппаратный DSP Станции Макс (Silergy SY6045S) ----
+let dspState = null;
+async function loadDSP() {
+  if (document.hidden || $('#tab-overview').hidden) return;
+  try {
+    dspState = await api('/api/dsp');
+    renderDSP();
+  } catch (e) {
+    if (!e.offline && $('#card-dsp')) {
+      // Игнорируем или скрываем если не поддерживается
+    }
+  }
+}
+
+function renderDSP() {
+  const card = $('#card-dsp');
+  if (!card) return;
+  if (!dspState || !dspState.supported) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  // Бейдж
+  const b = $('#dsp-badge');
+  if (b) {
+    const prof = dspState.profiles?.find(p => p.id === dspState.active_profile);
+    b.textContent = prof ? prof.badge || prof.name : dspState.active_profile;
+    b.className = 'badge ' + (dspState.active_profile === 'stock' ? 'bad' : 'ok');
+  }
+
+  // Кнопки профилей
+  $$('#dsp-profiles .pill').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.dspProfile === dspState.active_profile);
+  });
+
+  // Чекбоксы фильтров
+  if (dspState.filters) {
+    if ($('#dsp-filter-subsonic')) $('#dsp-filter-subsonic').checked = !!dspState.filters.subsonic;
+    if ($('#dsp-filter-notch120')) $('#dsp-filter-notch120').checked = !!dspState.filters.notch120;
+    if ($('#dsp-filter-phase')) $('#dsp-filter-phase').checked = !!dspState.filters.phase;
+    if ($('#dsp-filter-treble')) $('#dsp-filter-treble').checked = !!dspState.filters.treble;
+  }
+
+  // Описание
+  const descEl = $('#dsp-desc');
+  if (descEl) {
+    const prof = dspState.profiles?.find(p => p.id === dspState.active_profile);
+    if (prof) descEl.textContent = prof.desc;
+  }
+
+  // Отрисовка графика АЧХ
+  if (dspState.response && dspState.response.freqs) {
+    renderDSPCurve(dspState.response);
+  }
+}
+
+function renderDSPCurve(resp) {
+  const freqs = resp.freqs;
+  const toX = f => (Math.log10(Math.max(f, 20) / 20) / 3.0) * 400;
+  const toY = db => {
+    const clamped = Math.max(-36, Math.min(12, db));
+    return 30 - (clamped * 2.2);
+  };
+
+  const makePath = arr => {
+    if (!arr || !arr.length) return '';
+    return arr.map((db, i) => `${i === 0 ? 'M' : 'L'} ${toX(freqs[i]).toFixed(1)} ${toY(db).toFixed(1)}`).join(' ');
+  };
+
+  const pWoofer = $('#dsp-curve-woofer');
+  const pTweeter = $('#dsp-curve-tweeter');
+  const pSystem = $('#dsp-curve-system');
+
+  if (pWoofer) pWoofer.setAttribute('d', makePath(resp.woofer_db));
+  if (pTweeter) pTweeter.setAttribute('d', makePath(resp.tweeter_db));
+  if (pSystem) pSystem.setAttribute('d', makePath(resp.system_db));
+}
+
+// Привязка кликов по кнопкам пресетов
+document.addEventListener('DOMContentLoaded', () => {
+  $$('#dsp-profiles .pill').forEach(btn => {
+    btn.onclick = () => act(btn, async () => {
+      const prof = btn.dataset.dspProfile;
+      dspState = await api('/api/dsp', { profile: prof });
+      renderDSP();
+      toast(`Режим звука: ${btn.textContent.trim()}`);
+    });
+  });
+
+  // Привязка чекбоксов фильтров
+  ['subsonic', 'notch120', 'phase', 'treble'].forEach(id => {
+    const chk = $('#dsp-filter-' + id);
+    if (chk) {
+      chk.onchange = async () => {
+        try {
+          dspState = await api('/api/dsp', { action: 'set_filter', filter: id, enabled: chk.checked });
+          renderDSP();
+        } catch (e) {
+          chk.checked = !chk.checked;
+          toast(e.message, true);
+        }
+      };
+    }
+  });
+});
+
 // ---- эквалайзер Bluetooth-выхода ----
 const EQ_NAMES = { flat: 'Без изменений', rock: 'Рок', electronic: 'Электроника', vocal: 'Вокал / подкаст', night: 'Ночной', custom: 'Свой' };
 const EQ_DEFAULT = [60, 230, 910, 3600, 14000];
@@ -4816,6 +5005,7 @@ $('#bt-list').onclick = e => {
   btDo(b, { action: a, mac: row.dataset.mac }, { connect: 'Подключено', disconnect: 'Отключено', remove: 'Устройство забыто' }[a]);
 };
 loadBt();
+  loadDSP();
 
 // ---------- система ----------
 $('#q-restart').onclick = e => confirm('Перезапустить Quasar? Алиса будет недоступна ~30 с.') &&
@@ -5110,6 +5300,7 @@ function showTab() {
   if (tab === 'charts') loadCharts();
   if (tab === 'settings') { loadAccess(); loadAgent(); loadFootprint(); loadPanelVersion().catch(() => {}); loadPanelModel(); }
   if (tab === 'overview') loadBt();
+  loadDSP();
   if (tab === 'player') { renderMusic(); loadPlayerExtras(); loadMusic(); }
   updateMinibar();
 }
@@ -6511,7 +6702,7 @@ function readLayout() {
 const DEFAULT_LAYOUT = { zones: {
   'wz-top': ['stats'],
   'wz-left': ['model', 'alice', 'say', 'bt', 'sounds'],
-  'wz-right': ['music', 'volume', 'clock', 'light', 'device'],
+  'wz-right': ['music', 'volume', 'dsp', 'clock', 'light', 'device'],
 }, hidden: [] };
 const homeZone = id => ZONES.find(z => DEFAULT_LAYOUT.zones[z].includes(id)) || 'wz-right';
 function applyLayout(l) {
@@ -8376,6 +8567,7 @@ function onConnected() {
   loadDispState();
   loadAlarms();
   loadBt();
+  loadDSP();
   loadPanelModel();
 }
 

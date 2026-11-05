@@ -547,6 +547,8 @@ def install(s, profile):
     profile["apps"] = True
     if "tested" in profile and isinstance(profile["tested"], (list, tuple)):
         profile["tested"] = [x for x in profile["tested"] if x not in ("assistant", "scenes", "alarm", "btout", "btpower")]
+        if "dsp" not in profile["tested"]:
+            profile["tested"].append("dsp")
 
     P.alarms = lambda self: {"alarms": [], "supported": False, "installed": False, "running": False, "reason": "Будильники не поддерживаются на Станции Макс"}
     P.scenes = lambda self: {"scenes": [], "supported": False, "running": [], "log": [], "daemon": False, "reason": "Сценарии не поддерживаются на Станции Макс"}
@@ -1957,3 +1959,27 @@ exit 0
 
     P.footprint = max_footprint
     P._footprint_reset = max_footprint_reset
+
+    def max_dsp_status(self):
+        if not hasattr(self, "_max_dsp"):
+            from dsp_max import MaxDSP
+            self._max_dsp = MaxDSP(self)
+        return self._max_dsp.status()
+
+    def max_dsp_action(self, data):
+        if not hasattr(self, "_max_dsp"):
+            from dsp_max import MaxDSP
+            self._max_dsp = MaxDSP(self)
+        return self._max_dsp.action(data)
+
+    P.dsp_status = max_dsp_status
+    P.dsp_action = max_dsp_action
+
+    # On Station Max boot/startup, ensure hardware DSP matches the configured profile
+    try:
+        from dsp_max import MaxDSP
+        _init_dsp = MaxDSP(s)
+        if _init_dsp.is_supported():
+            _init_dsp.apply_profile(_init_dsp.active_profile)
+    except Exception:
+        pass

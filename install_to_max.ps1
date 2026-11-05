@@ -40,7 +40,6 @@ $possibleAdb = @(
     "$ScriptDir\adb.exe",
     "$ScriptDir\platform-tools\adb.exe",
     "$ScriptDir\tools\platform-tools\adb.exe",
-    "C:\Users\www-r\Documents\quazar yandex\platform-tools\adb.exe",
     (Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"),
     "adb"
 )
@@ -93,7 +92,7 @@ if (-not $TargetIP -and (Test-Path $ipFile)) {
 }
 
 while (-not $TargetIP) {
-    $promptIp = Read-Host "      Введите IP-адрес Яндекс Станции Макс (например 192.168.1.144)"
+    $promptIp = Read-Host "      Введите IP-адрес Яндекс Станции Макс (например 192.168.1.100)"
     $TargetIP = $promptIp.Trim()
 }
 

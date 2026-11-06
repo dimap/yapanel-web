@@ -7804,7 +7804,12 @@ def main():
     Handler.ports["http"] = args.port
     ready = os.environ.get("PANEL_READY_FILE")
     if ready:
-        Path(ready).write_text(json.dumps({"port": args.port}), encoding="utf8")
+        # Пишем атомарно: тесты и multi.py читают ready-файл сразу, как только
+        # он появился, и не должны увидеть пустой файл между create и write.
+        ready_path = Path(ready)
+        ready_tmp = ready_path.with_name(ready_path.name + ".tmp")
+        ready_tmp.write_text(json.dumps({"port": args.port}), encoding="utf8")
+        os.replace(ready_tmp, ready_path)
     shown = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
     print(f"Панель {VERSION} · профиль {model}{' (авто)' if auto else ''}")
     JOURNAL.add(f"запуск панели {VERSION}: профиль {model}{' (авто)' if auto else ''}, {platform.system()} {platform.release()}, "

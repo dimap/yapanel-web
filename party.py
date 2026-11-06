@@ -28,8 +28,6 @@ import urllib.error
 from pathlib import Path
 
 from party_store import (
-    DEFAULT_SETTINGS,
-    MODES,
     PartyStore,
     clamp,
     clamp_int,

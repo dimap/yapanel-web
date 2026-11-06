@@ -18,7 +18,7 @@
 Для пользователей Windows подготовлен полностью автоматический установщик, не требующий установки Python на компьютер, ручного ввода команд или настройки зависимостей:
 
 1. **Скачайте архив установщика** из раздела [Релизы (Releases)](https://github.com/Timobzdecc/yapanel-web_max/releases/latest):
-   * **[YapAnel-Max-v0.2.7-Windows.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.2.7/YapAnel-Max-v0.2.7-Windows.zip)** (всё включено: установщик, ADB, все компоненты, пошаговая инструкция `README_WINDOWS.txt` и шаблон `bulbs.example.json` для быстрой настройки умных ламп светомузыки).
+   * **[YapAnel-Max-v0.2.8-Windows.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.2.8/YapAnel-Max-v0.2.8-Windows.zip)** (всё включено: установщик, ADB, все компоненты, пошаговая инструкция `README_WINDOWS.txt` и шаблон `bulbs.example.json` для быстрой настройки умных ламп светомузыки).
    * Либо скачайте скрипт **`install_to_max.bat`** (все файлы панели уже встроены прямо внутри скрипта).
 2. Распакуйте архив и запустите **`install_to_max.bat`** (двойным кликом).
 3. При запросе введите IP-адрес вашей Станции Макс (например `192.168.1.100`).
@@ -54,7 +54,7 @@ adb connect 192.168.1.50:5555
 adb shell mkdir -p /data/yapanel
 
 # Копирование исходного кода и статики
-adb push server.py profiles.py max_profile.py assistant_max.py dsp_max.py party.py config.py access.py glagol.py multi.py pyadb.py /data/yapanel/
+adb push server.py profiles.py max_profile.py assistant_max.py dsp_max.py party.py party_store.py party_audio.py config.py access.py glagol.py multi.py pyadb.py /data/yapanel/
 adb push api /data/yapanel/
 adb push static /data/yapanel/
 adb push device /data/yapanel/
@@ -228,7 +228,7 @@ services:
    ```bash
    adb push bulbs.json /data/yapanel/bulbs.json
    ```
-   *(В сборке для Windows `YapAnel-Max-v0.2.7-Windows.zip` также приложена отдельная пошаговая текстовая инструкция `README_WINDOWS.txt`).*
+   *(В сборке для Windows `YapAnel-Max-v0.2.8-Windows.zip` также приложена отдельная пошаговая текстовая инструкция `README_WINDOWS.txt`).*
 
 
 ### 🤖 Нативный голосовой ассистент (`assistant_max`)

@@ -30,6 +30,7 @@ jobs:
           sh -n start.sh
           sh -n start.command
       - run: node tests/test_renderer.mjs
+      - run: node tests/test_ui_hardening.mjs
       - run: node tests/test_paths.mjs
       - run: node tests/test_model_studio.cjs
       - run: node tests/test_catalog.cjs

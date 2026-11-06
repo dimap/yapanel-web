@@ -11,6 +11,7 @@ subprocess идут как обычно.
 """
 import io
 import os
+import shlex
 import socket
 import struct
 import subprocess
@@ -24,6 +25,9 @@ A_CNXN, A_AUTH, A_OPEN, A_OKAY, A_CLSE, A_WRTE = (struct.unpack("<I", c)[0] for 
                                                    (b"CNXN", b"AUTH", b"OPEN", b"OKAY", b"CLSE", b"WRTE"))
 A_VERSION = 0x01000000
 MAX_PAYLOAD = 256 * 1024
+# Сколько несчитанных данных поток может держать в памяти. Потребитель, который не успевает
+# читать (или вообще не читает), не должен съедать RAM бесконечным выводом команды.
+MAX_STREAM_BUFFER = 64 * 1024 * 1024
 
 
 class AdbError(Exception):
@@ -44,11 +48,24 @@ class Stream:
         self.closed = threading.Event()
         self.cond = threading.Condition()
         self.buf = bytearray()
+        self.overflow = False
 
     def _on_data(self, data):
+        """Принять данные; False — пакет не принят (поток закрыт или переполнен буфер)."""
+        overflow = False
         with self.cond:
-            self.buf += data
+            if self.closed.is_set():
+                return False
+            if len(self.buf) + len(data) > MAX_STREAM_BUFFER:
+                self.overflow = True
+                overflow = True
+            else:
+                self.buf += data
             self.cond.notify_all()
+        if overflow:
+            # Закрываем поток, не держа cond: close() снова берёт его внутри _on_close.
+            self.close()
+        return not overflow
 
     def _on_close(self):
         self.closed.set()
@@ -77,6 +94,8 @@ class Stream:
                 if left is not None and left <= 0:
                     raise socket.timeout("read timeout")
                 self.cond.wait(left)
+            if not self.buf and self.overflow:
+                raise AdbError("error: stream buffer overflow")
             k = len(self.buf) if n < 0 else min(n, len(self.buf))
             out = bytes(self.buf[:k])
             del self.buf[:k]
@@ -138,8 +157,21 @@ class Device:
             out += part
         return bytes(out)
 
+    def _protocol_fault(self, message):
+        self.alive = False
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+        raise AdbError(f"protocol fault ({message})")
+
     def _read_packet(self):
         cmd, a0, a1, n, _crc, _magic = struct.unpack("<6I", self._recv_exact(24))
+        # Доверять n из сети нельзя: сначала проверяем размер, только потом читаем payload.
+        # Больше MAX_PAYLOAD по протоколу adb пакет быть не может (иначе n = 0xFFFFFFFF
+        # заставил бы _recv_exact выделить 4 ГБ).
+        if n > MAX_PAYLOAD:
+            self._protocol_fault(f"payload too large: {n} > {MAX_PAYLOAD}")
         return cmd, a0, a1, self._recv_exact(n) if n else b""
 
     def _reader(self):
@@ -152,17 +184,24 @@ class Device:
                     st.opened.set()
                     st.okay.set()
                 elif cmd == A_WRTE and st:
-                    st._on_data(data)
-                    self._send(_packet(A_OKAY, a1, a0))
+                    if st._on_data(data):
+                        self._send(_packet(A_OKAY, a1, a0))
                 elif cmd == A_CLSE and st:
                     self._forget(st)
                     st._on_close()
-        except (OSError, ConnectionError, struct.error):
+        except (OSError, ConnectionError, struct.error, AdbError):
             pass
-        self.alive = False
-        for st in list(self.streams.values()):
-            st._on_close()
-        self.streams.clear()
+        finally:
+            self.alive = False
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            with self.lock:
+                streams = list(self.streams.values())
+                self.streams.clear()
+            for st in streams:
+                st._on_close()
 
     def _forget(self, st):
         with self.lock:
@@ -175,9 +214,14 @@ class Device:
             local = self.next_id
             self.next_id += 1
             st = self.streams[local] = Stream(self, local)
-        self._send(_packet(A_OPEN, local, 0, service.encode() + b"\0"))
-        if not st.opened.wait(timeout) or st.remote is None:
+        try:
+            self._send(_packet(A_OPEN, local, 0, service.encode() + b"\0"))
+        except OSError:
+            self._forget(st)
             st._on_close()
+            raise
+        if not st.opened.wait(timeout) or st.remote is None:
+            st.close()
             raise AdbError("error: closed")
         return st
 
@@ -187,6 +231,11 @@ class Device:
             self.sock.close()
         except OSError:
             pass
+        with self.lock:
+            streams = list(self.streams.values())
+            self.streams.clear()
+        for st in streams:
+            st._on_close()
 
 
 # ---------- реестр подключённых устройств (как у сервера adb) ----------
@@ -239,13 +288,15 @@ def disconnect(serial):
 def shell(dev, cmd, timeout=None):
     st = dev.open("shell:" + cmd)
     out = bytearray()
-    end = None if timeout is None else time.monotonic() + timeout
-    while True:
-        part = st.read(-1, None if end is None else max(0.01, end - time.monotonic()))
-        if not part:
-            break
-        out += part
-    st.close()
+    try:
+        end = None if timeout is None else time.monotonic() + timeout
+        while True:
+            part = st.read(-1, None if end is None else max(0.01, end - time.monotonic()))
+            if not part:
+                break
+            out += part
+    finally:
+        st.close()
     return bytes(out)
 
 
@@ -318,51 +369,116 @@ def pull(dev, remote, local):
     return len(out)
 
 
-_forwards = []
+_forwards, _forwards_lock = [], threading.Lock()
+
+
+def _close_socket(sock):
+    """Разбудить чужие recv/accept и закрыть сокет, не падая на уже закрытом."""
+    shutdown = getattr(sock, "shutdown", None)
+    if shutdown is not None:
+        try:
+            shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+    try:
+        sock.close()
+    except OSError:
+        pass
+
+
+def _unregister_forward(srv):
+    with _forwards_lock:
+        try:
+            _forwards.remove(srv)
+        except ValueError:
+            pass
+    _close_socket(srv)
+
+
+def close_forward(port):
+    """Остановить проброс, созданный forward(); True — если такой порт был найден."""
+    with _forwards_lock:
+        srv = None
+        for item in _forwards:
+            try:
+                if item.getsockname()[1] == port:
+                    srv = item
+                    break
+            except OSError:
+                pass
+    if srv is None:
+        return False
+    _unregister_forward(srv)
+    return True
 
 
 def forward(dev, remote_port):
     """tcp:0 → свободный локальный порт; каждое подключение к нему — поток tcp:<порт> на колонке."""
     srv = socket.socket()
-    srv.bind(("127.0.0.1", 0))
-    srv.listen(8)
-    _forwards.append(srv)
+    try:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(8)
+    except OSError:
+        _close_socket(srv)
+        raise
+    with _forwards_lock:
+        _forwards.append(srv)
 
     def pump(conn):
+        st = None
         try:
-            st = dev.open(f"tcp:{remote_port}")
-        except (AdbError, OSError):
-            conn.close()
-            return
+            try:
+                st = dev.open(f"tcp:{remote_port}")
+            except (AdbError, OSError):
+                return
 
-        def up():
+            def up():
+                try:
+                    while True:
+                        data = conn.recv(65536)
+                        if not data:
+                            break
+                        st.write(data)
+                except (OSError, AdbError):
+                    pass
+                finally:
+                    st.close()
+                    shutdown = getattr(conn, "shutdown", None)
+                    if shutdown is not None:
+                        try:
+                            shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+            threading.Thread(target=up, daemon=True).start()
             try:
                 while True:
-                    data = conn.recv(65536)
+                    data = st.read(-1)
                     if not data:
                         break
-                    st.write(data)
+                    conn.sendall(data)
             except (OSError, AdbError):
                 pass
-            st.close()
-        threading.Thread(target=up, daemon=True).start()
-        try:
-            while True:
-                data = st.read(-1)
-                if not data:
-                    break
-                conn.sendall(data)
-        except OSError:
-            pass
-        conn.close()
+        finally:
+            # Любая ошибка (в т.ч. в dev.open) не должна оставлять клиента и поток adb висеть.
+            if st is not None:
+                st.close()
+            _close_socket(conn)
 
     def accept():
-        while True:
-            try:
-                conn, _ = srv.accept()
-            except OSError:
-                return
-            threading.Thread(target=pump, args=(conn,), daemon=True).start()
+        try:
+            while True:
+                try:
+                    conn, _ = srv.accept()
+                except OSError:
+                    return
+                try:
+                    threading.Thread(target=pump, args=(conn,), daemon=True).start()
+                except RuntimeError:
+                    _close_socket(conn)
+        finally:
+            _unregister_forward(srv)
+
     threading.Thread(target=accept, daemon=True).start()
     return srv.getsockname()[1]
 
@@ -373,6 +489,18 @@ def _parse(argv):
     if args[:1] == ["-s"]:
         serial, args = args[1], args[2:]
     return serial, args
+
+
+def _shell_command(args):
+    """Собрать команду для `adb shell`.
+
+    Один аргумент — это уже готовая команда (панель часто передаёт весь pipeline строкой),
+    её нельзя лишний раз квотировать. Несколько аргументов — обычный argv: shlex.join
+    сохраняет пробелы, кавычки и спецсимволы и не даёт shell истолковать их случайно.
+    """
+    if len(args) == 1:
+        return args[0]
+    return shlex.join(args)
 
 
 def _run(argv, timeout=None):
@@ -405,7 +533,7 @@ def _run(argv, timeout=None):
         if cmd == "get-state":
             return 0, b"device\n", b""
         if cmd == "shell":
-            return 0, shell(dev, " ".join(args[1:]), timeout), b""
+            return 0, shell(dev, _shell_command(args[1:]), timeout), b""
         if cmd == "push":
             n = push(dev, args[1], args[2])
             return 0, f"{args[1]}: 1 file pushed. {n} bytes\n".encode(), b""
@@ -433,7 +561,7 @@ class _Popen:
         if not args or args[0] != "shell":
             raise OSError("pyadb: Popen поддерживает только shell")
         self.args, self.returncode = argv, None
-        self.st = device(serial).open("shell:" + " ".join(args[1:]))
+        self.st = device(serial).open("shell:" + _shell_command(args[1:]))
         r, w = os.pipe()
         raw = io.FileIO(r, "rb")
         self.stdout = io.TextIOWrapper(io.BufferedReader(raw), encoding="utf-8", errors="replace") if text else raw
@@ -448,13 +576,15 @@ class _Popen:
                 if not data:
                     break
                 os.write(self._w, data)
-        except OSError:
+        except (OSError, AdbError):
             pass
-        try:
-            os.close(self._w)
-        except OSError:
-            pass
-        self.returncode = 0 if self.returncode is None else self.returncode
+        finally:
+            self.st.close()
+            try:
+                os.close(self._w)
+            except OSError:
+                pass
+            self.returncode = 0 if self.returncode is None else self.returncode
 
     def poll(self):
         return self.returncode
@@ -516,5 +646,9 @@ def _patched_popen(argv, *a, **kw):
 
 def install():
     """Подменить adb для всего процесса; вернуть «путь к adb», который отдать панели."""
-    subprocess.run, subprocess.Popen = _patched_run, _patched_popen
+    # Повторный install() не должен заворачивать наши же обёртки ещё раз.
+    if subprocess.run is not _patched_run:
+        subprocess.run = _patched_run
+    if subprocess.Popen is not _patched_popen:
+        subprocess.Popen = _patched_popen
     return ADB

@@ -28,6 +28,16 @@ SESSION_TTL = _cfg_sec.session_ttl_seconds if _cfg_sec else 90 * 24 * 3600      
 PBKDF2_ITER = _cfg_sec.pbkdf2_iter if _cfg_sec else 240_000
 MIN_PASSWORD = _cfg_sec.min_password_len if _cfg_sec else 4
 
+FAILS_TTL = 24 * 3600          # старые записи о неудачах больше не нужны: максимальная пауза — 15 минут
+FAILS_MAX = 4096               # предохранитель от роста словаря при переборе с многих адресов
+
+CORRUPT_ERROR = ("Файл пароля панели (.panel_auth.json) повреждён или недоступен. "
+                 "Восстановите его из резервной копии или удалите, чтобы задать пароль заново.")
+
+
+def _throttle_delay():
+    return _cfg_sec.login_throttle_delay if _cfg_sec else 0.7
+
 
 class AccessError(Exception):
     pass
@@ -39,36 +49,105 @@ def _hash_token(token):
 
 class PanelAccess:
     def __init__(self, path: Path):
-        self.path = path
+        self.path = Path(path)
         self.lock = threading.Lock()
         self.fails = {}            # ip → (число неудач подряд, время последней)
         self.data = {}
+        self.corrupt = False       # файл есть, но прочитать его не удалось — панель обязана остаться закрытой
+        self.load_error = None
         try:
-            self.data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
+            text = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            pass                   # файла нет — пароль не задан (прежнее поведение)
+        except (OSError, UnicodeError) as error:
+            self._mark_corrupt(f"файл не читается: {error}")
+        else:
+            self._load(text)
+
+    def _mark_corrupt(self, reason):
+        self.corrupt = True
+        self.load_error = reason
+        self.data = {}
+
+    def _load(self, text):
+        try:
+            data = json.loads(text)
+        except (ValueError, RecursionError) as error:
+            self._mark_corrupt(f"некорректный JSON: {error}")
+            return
+        if not isinstance(data, dict):
+            self._mark_corrupt("ожидался JSON-объект")
+            return
+        if data.get("hash"):
+            salt = data.get("salt")
+            if not isinstance(data.get("hash"), str) or not isinstance(salt, str):
+                self._mark_corrupt("нет хэша или соли пароля")
+                return
+            try:
+                bytes.fromhex(data["hash"])
+                bytes.fromhex(salt)
+            except ValueError:
+                self._mark_corrupt("хэш или соль пароля повреждены")
+                return
+            iterations = data.get("iter", PBKDF2_ITER)
+            if not isinstance(iterations, int) or iterations <= 0:
+                self._mark_corrupt("число итераций пароля повреждено")
+                return
+        sessions = data.get("sessions")
+        if sessions is not None and not isinstance(sessions, dict):
+            self._mark_corrupt("список сессий повреждён")
+            return
+        self.data = data
 
     # ---------- состояние ----------
     @property
     def enabled(self):
-        return bool(self.data.get("hash"))
+        # Повреждённый файл считаем защитой включённой: панель не должна открыться.
+        return self.corrupt or bool(self.data.get("hash"))
 
     def _save(self):
-        tmp = self.path.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=1)
-        os.replace(tmp, self.path)
+        """Атомарно записать файл: временный файл рядом, fsync и os.replace."""
+        tmp_name = None
+        fd = -1
+        try:
+            fd, tmp_name = tempfile.mkstemp(prefix=self.path.name + ".", suffix=".tmp",
+                                            dir=str(self.path.parent))
+            os.chmod(tmp_name, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd = -1
+                json.dump(self.data, f, indent=1)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, self.path)
+            tmp_name = None
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if tmp_name is not None:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
 
     def _check_password(self, password):
+        if self.corrupt:
+            return False
         if not self.enabled:
             return True
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(self.data["salt"]),
-                                 self.data.get("iter", PBKDF2_ITER))
+        try:
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(self.data["salt"]),
+                                     int(self.data.get("iter", PBKDF2_ITER)))
+        except (KeyError, TypeError, ValueError):
+            return False
         return hmac.compare_digest(dk.hex(), self.data["hash"])
 
     # ---------- сессии ----------
     def session_ok(self, token):
+        if self.corrupt:
+            return False
         if not self.enabled:
             return True
         if not token:
@@ -76,10 +155,13 @@ class PanelAccess:
         h = _hash_token(token)
         with self.lock:
             s = self.data.get("sessions", {}).get(h)
-            now = time.time()
-            if not s or now - s["last"] > SESSION_TTL:
+            last = s.get("last") if isinstance(s, dict) else None
+            if not isinstance(last, (int, float)):
                 return False
-            if now - s["last"] > 3600:          # не пишем файл на каждый запрос
+            now = time.time()
+            if now - last > SESSION_TTL:
+                return False
+            if now - last > 3600:               # не пишем файл на каждый запрос
                 s["last"] = now
                 self._save()
         return True
@@ -88,30 +170,66 @@ class PanelAccess:
         token = secrets.token_urlsafe(32)
         now = time.time()
         sessions = self.data.setdefault("sessions", {})
-        # чистим просроченные
-        for h in [h for h, s in sessions.items() if now - s["last"] > SESSION_TTL]:
-            del sessions[h]
+        # чистим просроченные и битые записи
+        for h, s in list(sessions.items()):
+            last = s.get("last") if isinstance(s, dict) else None
+            if not isinstance(last, (int, float)) or now - last > SESSION_TTL:
+                del sessions[h]
         sessions[_hash_token(token)] = {"created": now, "last": now, "ua": (ua or "")[:160]}
         return token
 
     # ---------- вход / выход ----------
+    def _prune_fails(self, now):
+        """Не даём словарю неудачных попыток расти бесконечно."""
+        cutoff = now - FAILS_TTL
+        for ip, (n, last) in list(self.fails.items()):
+            # Активную блокировку не снимаем, даже если запись старая.
+            if last < cutoff and self._lock_left(n, last) == 0:
+                del self.fails[ip]
+        excess = len(self.fails) - FAILS_MAX
+        if excess <= 0:
+            return
+        oldest = sorted(self.fails.items(), key=lambda item: item[1][1])
+        # Сначала убираем записи, которые уже не блокируют вход, и только потом — активные.
+        for ip, (n, last) in oldest:
+            if len(self.fails) <= FAILS_MAX:
+                return
+            if self._lock_left(n, last) == 0:
+                self.fails.pop(ip, None)
+        for ip, _ in oldest:
+            if len(self.fails) <= FAILS_MAX:
+                return
+            self.fails.pop(ip, None)
+
     def login(self, ip, password, ua):
+        delay = 0.0
+        left = 0
         with self.lock:
+            now = time.time()
+            self._prune_fails(now)
             n, t = self.fails.get(ip, (0, 0))
             wait = self._lock_left(n, t)
             if wait:
                 raise AccessError(f"Слишком много попыток. Подождите {wait} с")
+            if self.corrupt:
+                raise AccessError(CORRUPT_ERROR)
             if not self.enabled:
                 raise AccessError("Пароль не задан")
             if not self._check_password(password or ""):
-                self.fails[ip] = (n + 1, time.time())
-                time.sleep(_cfg_sec.login_throttle_delay if _cfg_sec else 0.7)                  # медленнее перебор
-                left = self._lock_left(n + 1, time.time())
-                raise AccessError("Неверный пароль" + (f". Следующая попытка через {left} с" if left else ""))
-            self.fails.pop(ip, None)
-            token = self._new_session(ua)
-            self._save()
-            return token
+                failed_at = time.time()
+                n += 1
+                self.fails[ip] = (n, failed_at)
+                self._prune_fails(failed_at)
+                left = self._lock_left(n, failed_at)
+                delay = _throttle_delay()       # пауза — уже без lock, чтобы не держать остальных
+            else:
+                self.fails.pop(ip, None)
+                token = self._new_session(ua)
+                self._save()
+                return token
+        if delay:
+            time.sleep(delay)                   # медленнее перебор, но панель не блокируется
+        raise AccessError("Неверный пароль" + (f". Следующая попытка через {left} с" if left else ""))
 
     @staticmethod
     def _lock_left(n, t):
@@ -131,29 +249,43 @@ class PanelAccess:
 
     def set_password(self, current, new, ua):
         """Задать/сменить пароль. Все остальные сессии сбрасываются; возвращает токен новой сессии."""
+        delay = 0.0
         with self.lock:
+            if self.corrupt:
+                raise AccessError(CORRUPT_ERROR)
             if self.enabled and not self._check_password(current or ""):
-                time.sleep(_cfg_sec.login_throttle_delay if _cfg_sec else 0.7)
-                raise AccessError("Текущий пароль неверный")
-            if len(new or "") < MIN_PASSWORD:
-                raise AccessError(f"Пароль — не короче {MIN_PASSWORD} символов")
-            salt = secrets.token_bytes(16)
-            dk = hashlib.pbkdf2_hmac("sha256", new.encode(), salt, PBKDF2_ITER)
-            self.data = {"hash": dk.hex(), "salt": salt.hex(), "iter": PBKDF2_ITER, "sessions": {}}
-            token = self._new_session(ua)
-            self._save()
-            return token
+                delay = _throttle_delay()
+            else:
+                if len(new or "") < MIN_PASSWORD:
+                    raise AccessError(f"Пароль — не короче {MIN_PASSWORD} символов")
+                salt = secrets.token_bytes(16)
+                dk = hashlib.pbkdf2_hmac("sha256", new.encode(), salt, PBKDF2_ITER)
+                self.data = {"hash": dk.hex(), "salt": salt.hex(), "iter": PBKDF2_ITER, "sessions": {}}
+                token = self._new_session(ua)
+                self._save()
+                return token
+        if delay:
+            time.sleep(delay)
+        raise AccessError("Текущий пароль неверный")
 
     def disable(self, current):
+        delay = 0.0
         with self.lock:
-            if not self._check_password(current or ""):
-                time.sleep(_cfg_sec.login_throttle_delay if _cfg_sec else 0.7)
-                raise AccessError("Текущий пароль неверный")
-            self.data = {}
-            self._save()
+            if self.corrupt:
+                raise AccessError(CORRUPT_ERROR)
+            if self._check_password(current or ""):
+                self.data = {}
+                self._save()
+                return
+            delay = _throttle_delay()
+        if delay:
+            time.sleep(delay)
+        raise AccessError("Текущий пароль неверный")
 
     def logout_others(self, token):
         with self.lock:
+            if self.corrupt:
+                return 0
             keep = _hash_token(token) if token else None
             sessions = self.data.get("sessions", {})
             n = len(sessions)
@@ -162,8 +294,12 @@ class PanelAccess:
             return n - len(self.data["sessions"])
 
     def info(self, token):
-        return {"enabled": self.enabled, "authed": self.session_ok(token),
-                "sessions": len(self.data.get("sessions", {})) if self.enabled else 0}
+        result = {"enabled": self.enabled, "authed": self.session_ok(token),
+                  "sessions": len(self.data.get("sessions", {})) if self.enabled else 0}
+        if self.corrupt:
+            result["error"] = CORRUPT_ERROR
+            result["corrupt"] = True
+        return result
 
 
 # ---------- HTTPS ----------

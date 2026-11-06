@@ -136,12 +136,16 @@ class DeviceConfig:
     serial: Optional[str] = None
     adb_bin: str = "auto"
     adb_server_port: int = 5037
+    # Включает pyadb (чистый Python-протокол adb) до создания Adb: он подменяет
+    # subprocess.run/Popen, поэтому включается только явно — PANEL_PYADB=1.
     use_pyadb: bool = False
     is_local: bool = False
     model: str = "auto"
     shell_timeout: float = 15.0
     alive_timeout: float = 4.0
     led_poll_interval: float = 0.4
+    # Подсеть для --find, если флаг не передан в командной строке: PANEL_FIND_SUBNET
+    # или "device": {"find_subnet": "192.168.1.0/24"} в .panel_settings.json.
     find_subnet: Optional[str] = None
     tv_box_serial: Optional[str] = None
 
@@ -315,7 +319,11 @@ _ENV_MAP: List[Tuple[str, str, str, Callable[[Any], Any]]] = [
     ("ADB_SERIAL", "device", "serial", str),
     ("ADB", "device", "adb_bin", str),
     ("ANDROID_ADB_SERVER_PORT", "device", "adb_server_port", _cast_int),
+    # pyadb — чистый Python-клиент adb (без platform-tools); включается явно,
+    # потому что он подменяет subprocess.run/Popen на время работы процесса.
     ("PANEL_PYADB", "device", "use_pyadb", _cast_bool),
+    ("PANEL_FIND", "device", "find_subnet", str),
+    ("PANEL_FIND_SUBNET", "device", "find_subnet", str),
     ("PANEL_LOCAL", "device", "is_local", _cast_bool),
     ("PANEL_MODEL", "device", "model", str),
     ("PANEL_ADB_TIMEOUT", "device", "shell_timeout", _cast_float),

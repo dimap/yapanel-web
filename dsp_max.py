@@ -9,6 +9,8 @@ import math
 import time
 import json
 import logging
+import functools
+import threading
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -21,6 +23,9 @@ WOOFER_SYS = "/sys/bus/i2c/drivers/sy6045s/2-002b/settings"
 # 8-bit I2C addresses used in driver protocol
 ADDR_TWEETER = "54"
 ADDR_WOOFER = "56"
+
+# Marker used by the boot-time persistence helper.
+DSP_FLAG_FILE = Path("/tmp/hifi_dsp_applied")
 
 # Bypass biquad coefficient (unity gain: b0=1.0, a1=0, a2=0, b1=0, b2=0 in Q5.26)
 BYPASS_HEX = "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00"
@@ -175,8 +180,29 @@ GOLDEN_HIFI = {
 }
 
 
+def _serialized_hardware(method):
+    """Run a method under the shared RLock used by every MaxDSP instance.
+
+    The lock is re-entrant because a single public operation (for example
+    ``apply_profile``) intentionally nests other hardware helpers
+    (``_apply_custom_state`` -> ``_write_i2c_batch``).
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class MaxDSP:
     """Manages Station Max SY6045S hardware DSP filters and presets."""
+
+    # Shared by all instances: max_profile.py may create more than one MaxDSP
+    # object, and the HTTP server handles requests in parallel threads.
+    _hw_lock = threading.RLock()
+    _lock = _hw_lock
 
     PROFILES = [
         {
@@ -256,8 +282,8 @@ class MaxDSP:
                     try:
                         s_direct = json.loads(direct_path.read_text(encoding="utf-8"))
                         dsp_conf = s_direct.get("dsp")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("[DSP] Failed to read fallback settings %s: %s", direct_path, e)
             if isinstance(dsp_conf, dict):
                 self.active_profile = dsp_conf.get("profile", "hifi")
                 if "filters" in dsp_conf and isinstance(dsp_conf["filters"], dict):
@@ -267,6 +293,7 @@ class MaxDSP:
         except Exception as e:
             logger.warning(f"Error loading DSP settings: {e}")
 
+    @_serialized_hardware
     def restore_hardware_state(self) -> Dict[str, Any]:
         """Restore saved DSP configuration to hardware on panel boot/startup."""
         if not self.is_supported():
@@ -280,27 +307,62 @@ class MaxDSP:
         self._restored = True
         return res
 
-    def _save_state(self):
-        """Save DSP state to panel settings."""
+    def _save_state(self) -> bool:
+        """Save the DSP section to panel settings and verify persistence.
+
+        ``server.save_settings`` writes the whole JSON file, so after saving we
+        check its status and re-read the settings to detect a silent failure.
+        A dedicated ``save_settings_section("dsp", section)`` API in server.py
+        would allow writing just this section and avoid clobbering concurrent
+        updates made by other modules; dsp_max.py cannot do that safely on its
+        own.
+        """
         try:
             import server
-            s = server.load_settings()
-            s["dsp"] = {
-                "profile": self.active_profile,
-                "filters": self.filters,
-                "params": self.params,
-            }
-            server.save_settings(s)
         except Exception as e:
-            logger.warning(f"Error saving DSP settings: {e}")
+            logger.error("[DSP] Cannot import server to save DSP settings: %s", e, exc_info=True)
+            return False
+
+        try:
+            s = server.load_settings()
+            if not isinstance(s, dict):
+                logger.error("[DSP] Settings payload is not a dict; refusing to save DSP state")
+                return False
+            section = {
+                "profile": self.active_profile,
+                "filters": dict(self.filters),
+                "params": dict(self.params),
+            }
+            s["dsp"] = section
+            if server.save_settings(s) is False:
+                logger.error("[DSP] server.save_settings() reported a write failure")
+                return False
+
+            # Read-back catches a silent failure on filesystems that accept
+            # replace() but lose the data (or an older server.py without status).
+            persisted = server.load_settings()
+            saved_section = persisted.get("dsp") if isinstance(persisted, dict) else None
+            if saved_section != section:
+                logger.error("[DSP] DSP settings were not persisted; check settings file permissions/disk")
+                return False
+            return True
+        except Exception as e:
+            logger.error("[DSP] Error saving DSP settings: %s", e, exc_info=True)
+            return False
 
     def is_supported(self) -> bool:
         """Check if Silergy SY6045S dual amp hardware is present."""
         if os.path.exists(WOOFER_SYS) and os.path.exists(TWEETER_SYS):
             return True
         if self.adb:
-            out, _, _ = self.adb.shell(f"test -e {WOOFER_SYS} && echo 1 || echo 0", check=False)
-            return "1" in out
+            try:
+                out, _, _ = self.adb.shell(
+                    f"test -e {WOOFER_SYS} && echo 1 || echo 0", check=False
+                )
+                return "1" in str(out or "")
+            except Exception as e:
+                logger.warning("[DSP] Hardware probe via ADB failed: %s", e)
+                return False
         return False
 
     def _build_mute_cmds(self) -> List[Tuple[str, str, str]]:
@@ -327,6 +389,39 @@ class MaxDSP:
             (WOOFER_SYS, ADDR_WOOFER, "06 00"),
         ]
 
+    def _verify_local_write(self, target_path: str, addr: str, payload: str) -> Optional[bool]:
+        """Best-effort read-back of a sysfs write. Never raises.
+
+        Returns True on a matching read-back, False on a mismatch, and None
+        when the file is not readable (write-only sysfs entries are normal).
+        A verification failure must not turn a successful write into an error.
+        """
+        try:
+            if not os.access(target_path, os.R_OK):
+                logger.debug("[DSP] Read-back unavailable for %s (not readable)", target_path)
+                return None
+            with open(target_path, "r", errors="replace") as f:
+                data = f.read(4096)
+        except Exception as e:  # best-effort: a read-back problem is never fatal
+            logger.debug("[DSP] Read-back failed for %s: %s", target_path, e)
+            return None
+
+        if not data.strip():
+            # Some sysfs attributes accept writes but read back empty.
+            logger.debug("[DSP] Read-back of %s is empty; cannot verify", target_path)
+            return None
+
+        normalized = " ".join(data.split()).upper()
+        expected = " ".join(str(payload).split()).upper()
+        if expected and expected not in normalized:
+            logger.warning(
+                "[DSP] Read-back mismatch for %s: wrote %r, got %r",
+                target_path, expected, data[:200],
+            )
+            return False
+        return True
+
+    @_serialized_hardware
     def _write_i2c_batch(self, commands: List[Tuple[str, str, str]]) -> bool:
         """
         Execute I2C write batch commands with soft-mute zero-cross ramp to prevent clicks/pops.
@@ -349,38 +444,56 @@ class MaxDSP:
                                 f.flush()
                             written = True
                             break
-                        except OSError:
-                            time.sleep(0.008)
+                        except OSError as e:
+                            logger.debug("[DSP] Write attempt %d failed for %s: %s", attempt + 1, target_path, e)
+                            if attempt < 2:
+                                time.sleep(0.008)
                     if not written:
                         logger.error(f"Local I2C write failed for {target_path} after 3 attempts")
                         return False
+                    # Advisory only: never fail the batch because of read-back.
+                    try:
+                        self._verify_local_write(target_path, addr, payload)
+                    except Exception as e:
+                        logger.debug("[DSP] Read-back helper error for %s: %s", target_path, e)
                 return True
             except Exception as e:
-                logger.error(f"Local I2C write error: {e}")
+                logger.error(f"Local I2C write error: {e}", exc_info=True)
                 return False
         else:
             # Remote via ADB shell
-            sh_segments = []
-            cur_cmds = []
-            for target_path, addr, payload in commands:
-                if target_path == "__SLEEP__":
-                    if cur_cmds:
-                        sh_segments.append(" && ".join(cur_cmds))
-                        cur_cmds = []
-                    ms = int(float(payload) * 1000)
-                    sh_segments.append(f"usleep {ms * 1000}")
-                else:
-                    cur_cmds.append(f'echo "w {addr} {payload}" > {target_path}')
-            if cur_cmds:
-                sh_segments.append(" && ".join(cur_cmds))
-            full_cmd = " && ".join(sh_segments)
-            out, err, code = self.adb.shell(full_cmd, check=False)
-            return code == 0
+            if not self.adb:
+                logger.error("[DSP] Cannot write DSP: no local sysfs and no ADB connection")
+                return False
+            try:
+                sh_segments = []
+                cur_cmds = []
+                for target_path, addr, payload in commands:
+                    if target_path == "__SLEEP__":
+                        if cur_cmds:
+                            sh_segments.append(" && ".join(cur_cmds))
+                            cur_cmds = []
+                        ms = int(float(payload) * 1000)
+                        sh_segments.append(f"usleep {ms * 1000}")
+                    else:
+                        cur_cmds.append(f'echo "w {addr} {payload}" > {target_path}')
+                if cur_cmds:
+                    sh_segments.append(" && ".join(cur_cmds))
+                full_cmd = " && ".join(sh_segments)
+                out, err, code = self.adb.shell(full_cmd, check=False)
+                if code != 0:
+                    logger.error("[DSP] Remote I2C batch failed (code=%s): %s", code, (err or out or "").strip()[:300])
+                    return False
+                return True
+            except Exception as e:
+                logger.error("[DSP] Remote I2C write error: %s", e, exc_info=True)
+                return False
 
+    @_serialized_hardware
     def apply_profile(self, profile_name: str, save: bool = True) -> Dict[str, Any]:
         """Apply a named DSP profile to hardware."""
         valid_ids = [p["id"] for p in self.PROFILES]
-        if profile_name not in valid_ids:
+        if not isinstance(profile_name, str) or profile_name not in valid_ids:
             return {"ok": False, "error": f"Неизвестный профиль: {profile_name}"}
 
         if profile_name == "custom":
@@ -520,27 +633,68 @@ class MaxDSP:
             return {"ok": True, "profile": profile_name}
         return {"ok": False, "error": "Ошибка записи в I2C драйвер SY6045S"}
 
+    @_serialized_hardware
     def set_filter(self, filter_id: str, enabled: bool, save: bool = True) -> Dict[str, Any]:
         """Toggle an individual filter on or off."""
+        if not isinstance(filter_id, str):
+            return {"ok": False, "error": "Некорректный идентификатор фильтра"}
         if filter_id not in self.filters:
             return {"ok": False, "error": f"Неизвестный фильтр: {filter_id}"}
 
-        self.filters[filter_id] = bool(enabled)
+        if isinstance(enabled, bool):
+            enabled_bool = enabled
+        elif isinstance(enabled, int) and enabled in (0, 1):
+            enabled_bool = bool(enabled)
+        elif isinstance(enabled, str) and enabled.strip().lower() in ("true", "false", "1", "0", "on", "off"):
+            enabled_bool = enabled.strip().lower() in ("true", "1", "on")
+        else:
+            return {"ok": False, "error": "Параметр enabled должен быть boolean"}
+
+        self.filters[filter_id] = enabled_bool
         self.active_profile = "custom"
         return self._apply_custom_state(save=save)
 
+    @_serialized_hardware
     def set_params(self, params: Dict[str, Any], save: bool = True) -> Dict[str, Any]:
         """Update custom parameters (bass_gain, treble_gain, subsonic_freq)."""
-        if "bass_gain" in params:
-            self.params["bass_gain"] = round(max(-6.0, min(8.0, float(params["bass_gain"]))), 1)
-        if "treble_gain" in params:
-            self.params["treble_gain"] = round(max(-6.0, min(8.0, float(params["treble_gain"]))), 1)
-        if "subsonic_freq" in params:
-            self.params["subsonic_freq"] = int(max(30, min(80, float(params["subsonic_freq"]))))
+        if not isinstance(params, dict):
+            return {"ok": False, "error": "Параметры DSP должны быть объектом"}
 
+        updates: Dict[str, Any] = {}
+        for key in ("bass_gain", "treble_gain"):
+            if key not in params:
+                continue
+            raw = params[key]
+            if isinstance(raw, bool):
+                return {"ok": False, "error": f"Некорректное значение {key}"}
+            try:
+                val = float(raw)
+            except (TypeError, ValueError, OverflowError):
+                return {"ok": False, "error": f"Некорректное значение {key}"}
+            if not math.isfinite(val):
+                return {"ok": False, "error": f"Некорректное значение {key}"}
+            updates[key] = round(max(-6.0, min(8.0, val)), 1)
+
+        if "subsonic_freq" in params:
+            raw = params["subsonic_freq"]
+            if isinstance(raw, bool):
+                return {"ok": False, "error": "Некорректное значение subsonic_freq"}
+            try:
+                val = float(raw)
+            except (TypeError, ValueError, OverflowError):
+                return {"ok": False, "error": "Некорректное значение subsonic_freq"}
+            if not math.isfinite(val):
+                return {"ok": False, "error": "Некорректное значение subsonic_freq"}
+            updates["subsonic_freq"] = int(max(30, min(80, val)))
+
+        if not updates:
+            return {"ok": False, "error": "Не заданы параметры DSP"}
+
+        self.params.update(updates)
         self.active_profile = "custom"
         return self._apply_custom_state(save=save)
 
+    @_serialized_hardware
     def _apply_custom_state(self, save: bool = True) -> Dict[str, Any]:
         """Compile and write the custom filter state to hardware."""
         cmds: List[Tuple[str, str, str]] = []
@@ -605,17 +759,24 @@ class MaxDSP:
             return {"ok": True, "profile": self.active_profile, "filters": self.filters, "params": self.params}
         return {"ok": False, "error": "Ошибка применения параметров DSP"}
 
-    def _update_boot_script(self):
-        """Update /tmp/hifi_dsp_applied and persistence script."""
+    def _update_boot_script(self) -> bool:
+        """Update the boot-time DSP marker file (best effort, never raises)."""
+        flag_file = Path(DSP_FLAG_FILE)
         try:
-            flag_file = Path("/tmp/hifi_dsp_applied")
             if self.active_profile == "stock":
                 if flag_file.exists():
                     flag_file.unlink(missing_ok=True)
+                    logger.info("[DSP] Removed boot marker %s (stock profile)", flag_file)
             else:
                 flag_file.touch(exist_ok=True)
-        except Exception:
-            pass
+                logger.debug("[DSP] Updated boot marker %s", flag_file)
+            return True
+        except OSError as e:
+            logger.warning("[DSP] Cannot update boot marker %s: %s", flag_file, e)
+            return False
+        except Exception as e:
+            logger.error("[DSP] Unexpected error updating boot marker %s: %s", flag_file, e, exc_info=True)
+            return False
 
     def calculate_response(self) -> Dict[str, Any]:
         """Compute frequency response curve points for real-time frontend visualization."""
@@ -732,28 +893,38 @@ class MaxDSP:
             "response": self.calculate_response() if supported else None,
         }
 
+    @_serialized_hardware
     def action(self, d: Dict[str, Any]) -> Dict[str, Any]:
         """Handle incoming POST /api/dsp command."""
+        if not isinstance(d, dict):
+            return {"ok": False, "error": "Запрос DSP должен быть объектом"}
+
+        act = d.get("action")
+        if act is not None and not isinstance(act, str):
+            return {"ok": False, "error": "Некорректное действие DSP"}
+
         if not self.is_supported():
             return {"ok": False, "error": "Аппаратный DSP доступен только на Станции Макс"}
 
-        act = d.get("action")
-        if "profile" in d:
-            res = self.apply_profile(d["profile"])
-            return self.status() if res.get("ok") else res
-        elif act == "set_filter" or "filter" in d:
-            fid = d.get("filter")
-            val = d.get("enabled", True)
-            res = self.set_filter(fid, val)
-            return self.status() if res.get("ok") else res
-        elif act == "set_params" or "params" in d:
-            p = d.get("params", d)
-            res = self.set_params(p)
-            return self.status() if res.get("ok") else res
-        elif act == "status":
+        if act == "status":
             return self.status()
-        elif act == "reset":
+        if act == "reset":
             res = self.apply_profile("stock")
             return self.status() if res.get("ok") else res
 
-        return {"ok": False, "error": "Неизвестное действие DSP"}
+        if act == "set_filter":
+            res = self.set_filter(d.get("filter"), d.get("enabled", True))
+        elif act == "set_params":
+            res = self.set_params(d.get("params", d))
+        elif act == "profile":
+            res = self.apply_profile(d.get("profile"))
+        elif act is None and "profile" in d:
+            res = self.apply_profile(d["profile"])
+        elif act is None and "filter" in d:
+            res = self.set_filter(d.get("filter"), d.get("enabled", True))
+        elif act is None and "params" in d:
+            res = self.set_params(d.get("params"))
+        else:
+            return {"ok": False, "error": "Неизвестное действие DSP"}
+
+        return self.status() if res.get("ok") else res

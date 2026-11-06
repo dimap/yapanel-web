@@ -12,9 +12,11 @@ import http.cookiejar
 import json
 import os
 import re
+import shutil
 import socket
 import ssl
 import struct
+import tempfile
 import threading
 import time
 import urllib.error
@@ -43,6 +45,58 @@ else:
 
 OAUTH_URL = f"https://oauth.yandex.ru/authorize?response_type=token&client_id={MUSIC_CLIENT[0]}"
 
+# Проверка сертификата колонки включается только явно: у локальных колонок сертификат самоподписанный,
+# и обязательная проверка без CA сломала бы им подключение.
+GLAGOL_CA_ENV = "PANEL_GLAGOL_CA"
+TLS_INSECURE_WARNING = ("Glagol: TLS-сертификат колонки не проверяется; "
+                        f"задайте {GLAGOL_CA_ENV} (файл или каталог с CA), чтобы включить проверку")
+
+
+def _glagol_ca(ca=None):
+    """Находит CA для проверки колонки. Возвращает (путь, причина ошибки)."""
+    raw = str(ca).strip() if ca is not None else ""
+    if not raw:   # явный аргумент важнее окружения, пустой — читаем PANEL_GLAGOL_CA
+        raw = str(os.environ.get(GLAGOL_CA_ENV) or "").strip()
+    if not raw:
+        return None, None
+    try:
+        path = Path(raw).expanduser()
+        if path.is_dir() or path.is_file():
+            return path, None
+    except Exception as e:
+        return None, f"{GLAGOL_CA_ENV}={raw}: {e}"
+    return None, f"{GLAGOL_CA_ENV}={raw}: файл или каталог не найден"
+
+
+def glagol_ssl_context(ca=None):
+    """TLS-контекст для WebSocket колонки: (context, verified, warning).
+
+    Если CA задан и доступен — CERT_REQUIRED и загрузка этого CA. Если CA нет,
+    остаётся CERT_NONE (локальная колонка с самоподписанным сертификатом работает),
+    но в warning/info явно видно, что проверка отключена.
+    """
+    ca_path, problem = _glagol_ca(ca)
+    try:
+        ctx = ssl.create_default_context()
+    except (OSError, ssl.SSLError) as e:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        problem = problem or f"не удалось создать TLS-контекст: {e}"
+    if ca_path is not None:
+        try:
+            ctx.check_hostname = False   # в сертификате локальной колонки обычно IP, а не имя
+            ctx.verify_mode = ssl.CERT_REQUIRED
+            if ca_path.is_dir():
+                ctx.load_verify_locations(capath=str(ca_path))
+            else:
+                ctx.load_verify_locations(cafile=str(ca_path))
+            return ctx, True, None
+        except (OSError, ValueError, ssl.SSLError) as e:
+            problem = f"{GLAGOL_CA_ENV}={ca_path}: {e}"
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    warning = TLS_INSECURE_WARNING if not problem else f"{TLS_INSECURE_WARNING} ({problem})"
+    return ctx, False, warning
+
 
 class AuthError(Exception):
     pass
@@ -53,27 +107,100 @@ class YandexAuth:
 
     def __init__(self, path):
         self.path = Path(path)
-        self.data = json.loads(self.path.read_text()) if self.path.exists() else {}
+        self.data = {}
+        self.load_error = None       # почему не удалось прочитать файл (панель при этом работает)
+        self.backup_path = None      # копия битого файла, если её удалось сделать
         self.qr = None   # незавершённый вход по QR: opener с куками, заголовки, ответ submit
         self.lock = threading.Lock()
+        self._save_lock = threading.Lock()
+        self._load()
 
     # ---- хранение ----
+    def _load(self):
+        """Читает токены, но никогда не роняет панель из-за битого/нечитаемого файла."""
+        try:
+            if not self.path.exists():
+                return
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("ожидался объект JSON")
+        except Exception as e:   # fail-safe: любая ошибка доступа/разбора — просто пустой вход
+            self.data = {}
+            self.load_error = f"не удалось прочитать {self.path.name}: {e}"
+            self.backup_path = self._backup_corrupt()
+            if self.backup_path:
+                self.load_error += f"; копия: {self.backup_path.name}"
+            return
+        self.data = data
+
+    def _backup_corrupt(self):
+        """Сохраняет копию битого файла рядом (права 600), не мешая следующему входу."""
+        backup = self.path.with_name(self.path.name + ".corrupt")
+        try:
+            shutil.copy2(self.path, backup)
+            try:
+                os.chmod(backup, 0o600)
+            except OSError:
+                pass
+            return backup
+        except Exception:
+            return None
+
     @property
     def music_token(self):
         return self.data.get("music_token")
 
     def info(self):
-        return {"logged_in": bool(self.music_token), "login": self.data.get("login"), "method": self.data.get("method")}
+        return {"logged_in": bool(self.music_token), "login": self.data.get("login"),
+                "method": self.data.get("method"), "load_error": self.load_error}
 
     def _save(self, **kw):
-        self.data = {k: v for k, v in kw.items() if v}
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(self.data, f)
+        """Атомарная запись: временный файл в том же каталоге, fsync и os.replace."""
+        data = {k: v for k, v in kw.items() if v}
+        parent = self.path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        with self._save_lock:
+            fd, tmp_name = tempfile.mkstemp(prefix=self.path.name + ".", suffix=".tmp", dir=str(parent))
+            try:
+                try:
+                    os.chmod(tmp_name, 0o600)   # mkstemp уже 600 на POSIX; на экзотической ФС не мешаем записи
+                except OSError:
+                    pass
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    fd = -1
+                    json.dump(data, f, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_name, self.path)
+                tmp_name = None
+                if hasattr(os, "O_DIRECTORY"):   # fsync каталога — чтобы замена пережила сбой питания
+                    try:
+                        dfd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+                        try:
+                            os.fsync(dfd)
+                        finally:
+                            os.close(dfd)
+                    except OSError:
+                        pass
+            finally:
+                if fd != -1:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                if tmp_name:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+            self.data = data
+            self.load_error = None
 
     def logout(self):
-        self.data = {}
-        self.path.unlink(missing_ok=True)
+        with self._save_lock:
+            self.data = {}
+            self.path.unlink(missing_ok=True)
+            self.load_error = None
         return self.info()
 
     # ---- HTTP ----
@@ -167,33 +294,71 @@ class YandexAuth:
 
 
 class WebSocket:
-    """Минимальный клиент RFC 6455 поверх TLS: текстовые кадры, ping/pong, close."""
+    """Минимальный клиент RFC 6455 поверх TLS: текстовые кадры, ping/pong, close.
 
-    def __init__(self, host, port, timeout=10):
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE   # у колонки самоподписанный сертификат
+    Входящие кадры и буфер ограничены: сломанная или взломанная колонка не должна
+    заставить панель выделить произвольный объём памяти.
+    """
+
+    MAX_FRAME_BYTES = 4 * 1024 * 1024
+    MAX_MESSAGE_BYTES = 8 * 1024 * 1024
+    MAX_BUFFER_BYTES = MAX_FRAME_BYTES + 14
+    MAX_HANDSHAKE_BYTES = 16 * 1024
+
+    def __init__(self, host, port, timeout=10, ssl_context=None):
+        ctx = ssl_context if ssl_context is not None else glagol_ssl_context()[0]
         raw = socket.create_connection((host, port), timeout=timeout)
-        self.sock = ctx.wrap_socket(raw, server_hostname=host)
-        key = base64.b64encode(os.urandom(16)).decode()
-        self.sock.sendall((f"GET / HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                           f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nOrigin: https://{host}\r\n\r\n").encode())
-        head = b""
-        while b"\r\n\r\n" not in head:
-            chunk = self.sock.recv(4096)
-            if not chunk:
-                raise ConnectionError("колонка закрыла соединение при рукопожатии")
-            head += chunk
-        status, _, self.buf = head.partition(b"\r\n\r\n")
-        if b" 101 " not in status.split(b"\r\n")[0]:
-            raise ConnectionError("Glagol: " + status.split(b"\r\n")[0].decode(errors="replace"))
+        try:
+            raw.settimeout(timeout)
+            self.sock = ctx.wrap_socket(raw, server_hostname=host)
+        except BaseException:
+            try:
+                raw.close()
+            except OSError:
+                pass
+            raise
+        try:
+            key = base64.b64encode(os.urandom(16)).decode()
+            self.sock.sendall((f"GET / HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                               f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nOrigin: https://{host}\r\n\r\n").encode())
+            head = b""
+            deadline = time.monotonic() + timeout
+            while b"\r\n\r\n" not in head:
+                if len(head) > self.MAX_HANDSHAKE_BYTES:
+                    raise ConnectionError("Glagol: слишком большой ответ при рукопожатии")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ConnectionError("Glagol: таймаут рукопожатия")
+                self.sock.settimeout(remaining)
+                try:
+                    chunk = self.sock.recv(4096)
+                except socket.timeout:
+                    raise ConnectionError("Glagol: таймаут рукопожатия") from None
+                if not chunk:
+                    raise ConnectionError("колонка закрыла соединение при рукопожатии")
+                head += chunk
+            if len(head) > self.MAX_HANDSHAKE_BYTES:
+                raise ConnectionError("Glagol: слишком большой ответ при рукопожатии")
+            status, _, self.buf = head.partition(b"\r\n\r\n")
+            if b" 101 " not in status.split(b"\r\n")[0]:
+                raise ConnectionError("Glagol: " + status.split(b"\r\n")[0].decode(errors="replace"))
+            self.sock.settimeout(timeout)
+        except BaseException:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            raise
         self.wlock = threading.Lock()
 
     def _fill(self, n):
         # Только дочитываем в буфер, ничего не забирая: если recv упадёт по таймауту посреди кадра,
-        # следующий вызов разберёт кадр с начала.
+        # следующий вызов разберёт кадр с начала. Читаем не больше недостающего, поэтому буфер
+        # ограничен размером кадра, а не скоростью/аппетитом отправителя.
+        if n > self.MAX_BUFFER_BYTES:
+            raise ConnectionError(f"Glagol: кадр больше {self.MAX_FRAME_BYTES} байт")
         while len(self.buf) < n:
-            chunk = self.sock.recv(65536)
+            chunk = self.sock.recv(min(65536, n - len(self.buf)))
             if not chunk:
                 raise ConnectionError("соединение закрыто")
             self.buf += chunk
@@ -217,6 +382,7 @@ class WebSocket:
     def recv(self):
         """Следующее текстовое сообщение (склеивает фрагменты, сам отвечает на ping)."""
         parts = []
+        total = 0
         while True:
             self._fill(2)
             b1, b2 = self.buf[0], self.buf[1]
@@ -227,6 +393,10 @@ class WebSocket:
             elif n == 127:
                 self._fill(10)
                 n, pos = struct.unpack(">Q", self.buf[2:10])[0], 10
+            if n > self.MAX_FRAME_BYTES:
+                raise ConnectionError(f"Glagol: кадр {n} байт превышает предел {self.MAX_FRAME_BYTES}")
+            if opcode >= 8 and (not (b1 & 0x80) or n > 125):
+                raise ConnectionError("Glagol: некорректный управляющий кадр")
             mask = None
             if b2 & 0x80:
                 self._fill(pos + 4)
@@ -242,6 +412,9 @@ class WebSocket:
                 continue
             if opcode == 10:
                 continue
+            total += n
+            if total > self.MAX_MESSAGE_BYTES:
+                raise ConnectionError(f"Glagol: сообщение превышает предел {self.MAX_MESSAGE_BYTES} байт")
             parts.append(data)
             if b1 & 0x80:
                 return b"".join(parts).decode("utf-8", "replace")
@@ -256,7 +429,7 @@ class WebSocket:
 class Glagol:
     """Держит соединение с колонкой, хранит последнее состояние и отправляет команды."""
 
-    def __init__(self, auth, host, device_id, platform, port=None, config=None):
+    def __init__(self, auth, host, device_id, platform, port=None, config=None, ca=None):
         self.config = config or (_cfg_glagol if _cfg_glagol else None)
         effective_port = port if port is not None else (self.config.port if self.config else YASTATION_GLAGOL_PORT)
         self.auth, self.host, self.device_id, self.platform, self.port = auth, host, device_id, platform, effective_port
@@ -266,11 +439,20 @@ class Glagol:
         self.updated = 0.0
         self.error = None
         self.waiters = {}
+        self.waiters_lock = threading.Lock()   # и словарь ожиданий, и self.ws меняются под ним
         self.wake = threading.Event()
+        cfg_ca = ca if ca is not None else (getattr(self.config, "ca", None) if self.config else None)
+        try:
+            self._tls_context, self.tls_verified, self.tls_warning = glagol_ssl_context(cfg_ca)
+        except Exception as e:   # панель должна подняться даже при сломанном TLS-окружении
+            self._tls_context, self.tls_verified = None, False
+            self.tls_warning = f"Glagol: не удалось подготовить TLS: {e}"
         threading.Thread(target=self._run, daemon=True, name="glagol").start()
 
     def info(self):
-        return {"connected": self.ws is not None, "error": self.error, "state": self.state, "updated": self.updated}
+        return {"connected": self.ws is not None, "error": self.error, "state": self.state, "updated": self.updated,
+                "tls_verified": getattr(self, "tls_verified", False),
+                "tls_warning": getattr(self, "tls_warning", None)}
 
     def _conversation_token(self):
         q = urllib.parse.urlencode({"device_id": self.device_id, "platform": self.platform})
@@ -299,22 +481,48 @@ class Glagol:
         return json.dumps({"conversationToken": self.token, "id": rid or str(uuid.uuid4()),
                            "payload": payload, "sentTime": int(time.time() * 1000)})
 
+    def _resolve_waiter(self, rid, msg):
+        """Будит ожидающий send; словарь и запись ответа защищены waiters_lock."""
+        if not rid:
+            return
+        with self.waiters_lock:
+            waiter = self.waiters.get(rid)
+            if waiter is None:
+                return
+            waiter["resp"] = msg
+            waiter["event"].set()
+
+    def _fail_waiters(self, status="disconnected"):
+        """Соединение закрылось: не оставляем send ждать полный таймаут."""
+        with self.waiters_lock:
+            pending = list(self.waiters.values())
+            self.waiters.clear()
+            for waiter in pending:
+                if waiter.get("resp") is None:
+                    waiter["resp"] = {"status": status}
+                waiter["event"].set()
+
     def _run(self):
         fails = 0
         cfg = getattr(self, "config", None)
-        sock_to = cfg.sock_timeout if cfg else 30
-        ping_int = cfg.ping_interval if cfg else 20.0
+        sock_to = getattr(cfg, "sock_timeout", 30) if cfg else 30
+        ping_int = getattr(cfg, "ping_interval", 20.0) if cfg else 20.0
+        ws_to = getattr(cfg, "ws_timeout", 10) if cfg else 10
         while True:
             if not self.auth.music_token or not self.host or not self.device_id:
                 self.error = None
                 self.wake.wait(2)
                 self.wake.clear()
                 continue
+            ws = None
             try:
                 self.token = self._conversation_token()
-                ws = WebSocket(self.host, self.port)
+                ws = WebSocket(self.host, self.port, timeout=ws_to,
+                               ssl_context=getattr(self, "_tls_context", None))
                 ws.sock.settimeout(sock_to)
-                self.ws, self.error, fails = ws, None, 0
+                with self.waiters_lock:
+                    self.ws = ws
+                self.error, fails = None, 0
                 ws.send(self._envelope({"command": "softwareVersion"}))
                 last_ping = time.time()
                 while True:
@@ -325,10 +533,7 @@ class Glagol:
                     if msg:
                         if "state" in msg:
                             self.state, self.updated = msg["state"], time.time()
-                        rid = msg.get("requestId")
-                        if rid in self.waiters:
-                            self.waiters[rid]["resp"] = msg
-                            self.waiters[rid]["event"].set()
+                        self._resolve_waiter(msg.get("requestId"), msg)
                     if time.time() - last_ping > ping_int:   # не даём соединению заснуть
                         ws.send(self._envelope({"command": "ping"}))
                         last_ping = time.time()
@@ -341,31 +546,40 @@ class Glagol:
                 self.error = f"нет связи с колонкой по Glagol: {e}"
                 fails += 1
             finally:
-                if self.ws:
-                    self.ws.close()
-                self.ws = None
+                with self.waiters_lock:
+                    if self.ws is ws:
+                        self.ws = None
+                if ws:
+                    ws.close()
+                self._fail_waiters("disconnected")
             self.wake.wait(min(60, 3 * fails))
             self.wake.clear()
 
     def send(self, payload, timeout=None):
         cfg = getattr(self, "config", None)
-        effective_timeout = timeout if timeout is not None else (cfg.cmd_timeout if cfg else 6.0)
-        ws = self.ws
-        if not ws:
-            raise AuthError(self.error or "нет соединения с колонкой по Glagol")
-        rid = str(uuid.uuid4())
-        w = self.waiters[rid] = {"event": threading.Event(), "resp": None}
+        effective_timeout = timeout if timeout is not None else (getattr(cfg, "cmd_timeout", 6.0) if cfg else 6.0)
+        with self.waiters_lock:
+            ws = self.ws
+            if not ws:
+                raise AuthError(self.error or "нет соединения с колонкой по Glagol")
+            rid = str(uuid.uuid4())
+            w = {"event": threading.Event(), "resp": None}
+            self.waiters[rid] = w
         try:
             ws.send(self._envelope(payload, rid))
             w["event"].wait(effective_timeout)
             resp = w["resp"] or {}
             return {"status": resp.get("status", "timeout")}
         finally:
-            self.waiters.pop(rid, None)
+            with self.waiters_lock:
+                self.waiters.pop(rid, None)
 
     def reconnect(self):
-        if self.ws:
-            self.ws.close()
+        with self.waiters_lock:
+            ws, self.ws = self.ws, None
+        if ws:
+            ws.close()
+        self._fail_waiters("reconnect")
         self.wake.set()
 
 

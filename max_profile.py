@@ -11,10 +11,12 @@ Hardware:
 """
 
 import base64
+import logging
 import os
 import posixpath
 import re
 import shlex
+import shutil
 import struct
 import time
 import threading
@@ -35,6 +37,47 @@ MAX_SCREEN_COLS = 25
 MAX_SCREEN_ROWS = 16
 MAX_SCREEN_PIXELS = 400
 MAX_SCREEN_BYTES = 1200
+
+BT_CONF_PATH = "/data/misc/bluedroid/bt_config.conf"
+BT_CONF_BACKUP = BT_CONF_PATH + ".bak-webpanel"
+
+# /proc is replaced in tests to validate pid/address checks without touching the host.
+_PROC_ROOT = "/proc"
+_QUASAR_CMDLINE_MARK = b"com.yandex.io.sdk"
+_MIN_USER_ADDR = 0x1000
+_MAX_USER_ADDR = 0x0000FFFFFFFFFFFF  # 48-bit user-space address on AArch64
+
+# preexec_fn is only safe when the process is single-threaded and on POSIX.
+_POSIX = os.name == "posix"
+
+_log = logging.getLogger(__name__)
+
+
+def _shell_result(res):
+    """Normalize adb.shell()/test doubles to (stdout, stderr, rc)."""
+    if isinstance(res, (tuple, list)):
+        out = res[0] if len(res) > 0 and res[0] is not None else ""
+        err = res[1] if len(res) > 1 and res[1] is not None else ""
+        try:
+            rc = int(res[2]) if len(res) > 2 else 0
+        except (TypeError, ValueError):
+            rc = 0
+        return str(out), str(err), rc
+    return ("" if res is None else str(res)), "", 0
+
+
+def _preexec_allowed():
+    if not _POSIX:
+        return False
+    try:
+        return threading.active_count() <= 1
+    except Exception:
+        return False
+
+
+def _preexec_unsupported(exc):
+    msg = str(exc).lower()
+    return "preexec" in msg and ("not supported" in msg or "support" in msg or "implemented" in msg)
 
 # 4x7 font for digits, symbols, Latin, and Cyrillic
 FONT_4X7 = {
@@ -342,6 +385,48 @@ def find_quasar_controller_addr(target_pid=None):
     return None
 
 
+def _quasar_pid_valid(pid):
+    """True only when pid exists and its cmdline belongs to Quasar (com.yandex.io.sdk)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0 or not os.path.isdir(f"{_PROC_ROOT}/{pid}"):
+        return False
+    try:
+        with open(f"{_PROC_ROOT}/{pid}/cmdline", "rb") as f:
+            cmdline = f.read()
+    except Exception:
+        return False
+    return _QUASAR_CMDLINE_MARK in cmdline
+
+
+def _quasar_addr_valid(pid, addr):
+    """True when addr is non-zero, in user space, and mapped in the pid's address space."""
+    try:
+        addr = int(addr)
+    except (TypeError, ValueError):
+        return False
+    if not (_MIN_USER_ADDR <= addr < _MAX_USER_ADDR):
+        return False
+    try:
+        with open(f"{_PROC_ROOT}/{pid}/maps", "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                rng = line.split(None, 1)[0] if line.split(None, 1) else ""
+                start_s, sep, end_s = rng.partition("-")
+                if not sep:
+                    continue
+                try:
+                    start, end = int(start_s, 16), int(end_s, 16)
+                except ValueError:
+                    continue
+                if start <= addr < end:
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 def max_set_quasar_clock_paused(adb, pause=True):
     """Clean cooperative memory pause/resume matching max-platform / hal_bridge.
     Sets YandexStationFrontalController::isInitialized_ to 0 or 1 in Quasar memory.
@@ -355,15 +440,23 @@ def max_set_quasar_clock_paused(adb, pause=True):
     if is_local:
         with _quasar_ctrl_lock:
             info = find_quasar_controller_addr()
-            if info:
-                pid, addr = info
-                try:
-                    with open(f"/proc/{pid}/mem", "r+b", buffering=0) as f:
-                        f.seek(addr)
-                        f.write(bytes([val]))
-                    return True
-                except Exception:
-                    _cached_quasar_ctrl = None
+            if not info:
+                _cached_quasar_ctrl = None
+                return False
+            pid, addr = info
+            # Never write into an unknown process or an implausible address.
+            if not _quasar_pid_valid(pid) or not _quasar_addr_valid(pid, addr):
+                _cached_quasar_ctrl = None
+                return False
+            try:
+                with open(f"{_PROC_ROOT}/{pid}/mem", "r+b", buffering=0) as f:
+                    f.seek(addr)
+                    written = f.write(bytes([val]))
+                if written == 0:
+                    raise OSError("short write to /proc/%s/mem" % pid)
+                return True
+            except Exception:
+                _cached_quasar_ctrl = None
     else:
         cmd = (
             f"/data/python/bin/python3.11 -c \"import sys; sys.path.insert(0, '/data/yapanel'); "
@@ -392,9 +485,22 @@ def max_android_cmd(adb, args, timeout=None):
                     f.write("u:r:system_server:s0")
             except Exception:
                 pass
+
+        def _run(use_preexec):
+            kwargs = dict(capture_output=True, text=True, errors="replace", timeout=effective_timeout)
+            if use_preexec:
+                kwargs["preexec_fn"] = _preexec
+            return subprocess.run(args, **kwargs)
+
+        # preexec_fn is unsafe with threads and unsupported on non-POSIX platforms.
+        if _preexec_allowed():
+            try:
+                return _run(True).stdout
+            except Exception as exc:
+                if not _preexec_unsupported(exc):
+                    return ""
         try:
-            p = subprocess.run(args, capture_output=True, text=True, errors="replace", preexec_fn=_preexec, timeout=effective_timeout)
-            return p.stdout
+            return _run(False).stdout
         except Exception:
             return ""
     else:
@@ -429,32 +535,132 @@ def max_read_bt_conf(adb):
     """Read /data/misc/bluedroid/bt_config.conf locally or via ADB."""
     if getattr(adb, "is_local", False):
         try:
-            with open("/data/misc/bluedroid/bt_config.conf", "r", encoding="utf-8", errors="replace") as f:
+            with open(BT_CONF_PATH, "r", encoding="utf-8", errors="replace") as f:
                 return f.read()
         except Exception:
             return ""
     else:
-        out, _, _ = adb.shell("su -c 'cat /data/misc/bluedroid/bt_config.conf' 2>/dev/null; true", check=False)
+        out, _, _ = adb.shell(f"su -c 'cat {BT_CONF_PATH}' 2>/dev/null; true", check=False)
         return out
 
 
 def max_write_bt_conf(adb, text):
-    """Write /data/misc/bluedroid/bt_config.conf locally or via ADB."""
+    """Atomically write bt_config.conf, keeping a webpanel backup for rollback."""
+    if text is None or not str(text).strip():
+        raise ValueError("bt_config.conf: пустое содержимое — запись отменена")
+    text = str(text)
+
     if getattr(adb, "is_local", False):
-        with open("/data/misc/bluedroid/bt_config.conf", "w", encoding="utf-8") as f:
-            f.write(text)
-    else:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tf:
-            tf.write(text)
-            tmp_path = tf.name
+        target = Path(BT_CONF_PATH)
+        backup = Path(BT_CONF_BACKUP)
+        existed = target.exists()
+        if existed:
+            # No backup means no safe write: abort before touching the target.
+            shutil.copy2(target, backup)
+        tmp = target.with_name(f".{target.name}.tmp-{os.getpid()}-{os.urandom(4).hex()}")
         try:
-            adb.push(tmp_path, "/data/local/tmp/bt_config.tmp")
-            adb.shell("su -c 'cp /data/local/tmp/bt_config.tmp /data/misc/bluedroid/bt_config.conf && rm /data/local/tmp/bt_config.tmp'", check=False)
-        finally:
+            with open(tmp, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            if existed:
+                # os.replace() swaps the inode: carry over the original permissions/owner.
+                try:
+                    st = target.stat()
+                except OSError:
+                    st = None
+                if st is not None:
+                    try:
+                        os.chmod(tmp, st.st_mode & 0o7777)
+                    except OSError:
+                        pass
+                    if hasattr(os, "chown"):
+                        try:
+                            os.chown(tmp, st.st_uid, st.st_gid)
+                        except OSError:
+                            pass
+            os.replace(tmp, target)
+        except Exception:
             try:
-                os.unlink(tmp_path)
+                os.unlink(tmp)
+            except OSError:
+                pass
+            if existed and backup.exists():
+                try:
+                    shutil.copy2(backup, target)
+                except Exception:
+                    try:
+                        os.replace(backup, target)
+                    except Exception:
+                        pass
+            raise
+        return
+
+    suffix = f"{os.getpid()}-{os.urandom(4).hex()}"
+    stage = f"/data/local/tmp/bt_config-{suffix}.tmp"
+    target_tmp = f"{BT_CONF_PATH}.webpanel.tmp-{suffix}"
+    q_stage = shlex.quote(stage)
+    q_tmp = shlex.quote(target_tmp)
+    q_target = shlex.quote(BT_CONF_PATH)
+    q_backup = shlex.quote(BT_CONF_BACKUP)
+
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, newline="") as tf:
+        tf.write(text)
+        tf.flush()
+        try:
+            os.fsync(tf.fileno())
+        except OSError:
+            pass
+        tmp_path = tf.name
+    write_attempted = False
+    try:
+        out, err, rc = _shell_result(adb.shell(
+            f"su -c 'if [ -f {q_target} ]; then cp -f {q_target} {q_backup} || exit 3; "
+            f"[ -f {q_backup} ] || exit 4; fi'",
+            check=False,
+        ))
+        if rc != 0:
+            # The target is still intact; do not restore a possibly partial backup.
+            raise OSError(f"не удалось сохранить копию bt_config.conf: {(err or out).strip()}")
+        write_attempted = True
+
+        adb.push(tmp_path, stage)
+        out, err, rc = _shell_result(adb.shell(
+            f"su -c 'u=$(stat -c %u {q_target} 2>/dev/null); g=$(stat -c %g {q_target} 2>/dev/null); "
+            f"m=$(stat -c %a {q_target} 2>/dev/null); "
+            f"cp -f {q_stage} {q_tmp} && mv -f {q_tmp} {q_target} && [ -s {q_target} ] && "
+            f"{{ if [ -n \"$u\" ] && [ -n \"$g\" ]; then chown \"$u:$g\" {q_target} 2>/dev/null; "
+            f"else chown bluetooth:bluetooth {q_target} 2>/dev/null; fi; "
+            f"[ -n \"$m\" ] && chmod \"$m\" {q_target} 2>/dev/null; true; }}'",
+            check=False,
+        ))
+        if rc != 0:
+            raise OSError(f"не удалось записать bt_config.conf: {(err or out).strip()}")
+    except Exception:
+        # The target is never truncated in place; restore the pre-write copy if writing began.
+        if write_attempted:
+            try:
+                adb.shell(
+                    f"su -c 'if [ -f {q_backup} ]; then cp -f {q_backup} {q_target}; fi; "
+                    f"chown bluetooth:bluetooth {q_target} 2>/dev/null; "
+                    f"chmod 660 {q_target} 2>/dev/null; true'",
+                    check=False,
+                )
             except Exception:
                 pass
+        raise
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        try:
+            adb.shell(f"su -c 'rm -f {q_stage} {q_tmp}' 2>/dev/null; true", check=False)
+        except Exception:
+            pass
 
 
 def max_is_bt_off(adb, bt_off_path):
@@ -621,8 +827,20 @@ def install(s, profile):
         q_log = shlex.quote(play_log)
         self.adb.shell(f": > {q_log} 2>/dev/null; chmod 666 {q_log} 2>/dev/null; true", check=False)
         self.detach("play", f"if [ -x /odm/bin/playaudio ]; then /odm/bin/playaudio {q} >{q_log} 2>&1{rm}; else aplay -q {q} >{q_log} 2>&1{rm}; fi")
-        time.sleep(0.3)
-        log = strip_ansi(self.adb.shell(f"tail -c 400 {q_log} 2>/dev/null; true", check=False)[0]).strip()
+        time.sleep(0.2)
+        # playaudio may not have written anything yet: re-read the log briefly instead of
+        # treating the first empty/error-looking chunk as a final failure.
+        log = ""
+        for attempt in range(3):
+            try:
+                res = self.adb.shell(f"tail -c 400 {q_log} 2>/dev/null; true", check=False)
+                log = strip_ansi(_shell_result(res)[0]).strip()
+            except Exception:
+                log = ""
+            if log and not re.search(r"(?i)(error|cannot|failed|unable|busy|exception|fatal)", log):
+                break
+            if attempt < 2:
+                time.sleep(0.2 if log else 0.15)
         if re.search(r"(?i)(error|cannot|failed|unable|busy|exception|fatal)", log):
             raise AdbError("Не удалось проиграть звук: " + log[-300:])
 
@@ -1932,28 +2150,90 @@ exit 0
             "yam_installed": False
         }
 
-    def max_footprint_reset(self):
-        """Reset Station Max changes safely without touching non-existent Buildroot services."""
+    def max_footprint_reset(self, dry_run=False):
+        """Reset Station Max changes safely without touching non-existent Buildroot services.
+
+        Only explicitly known panel-owned paths are removed.  With dry_run=True the
+        device is not modified at all: the list is only logged and returned footprint
+        is read normally.
+        """
+        web = str(getattr(s, "WEB_DIR", "/data/quasar/webpanel")).rstrip("/")
+        owned = []
+
+        def _add_owned(path):
+            if not path:
+                return
+            path = str(path)
+            if path not in owned:
+                owned.append(path)
+
+        for attr in ("BOOT_CUSTOM", "SOUND_CUSTOM", "BOOT_ALWAYS", "BOOT_HOOK", "BT_OFF", "HOSTS_CUSTOM"):
+            _add_owned(getattr(s, attr, None))
+        created = getattr(s, "ROOTKEEPER_CREATED", "")
+        if created and posixpath.normpath(str(created)).startswith(web + "/"):
+            _add_owned(created)
+        for name in ("override", "patterns", "viz", "bt_off", "hosts"):
+            _add_owned(posixpath.join(web, name))
+
+        _log.info("Max footprint reset%s: panel-owned paths: %s",
+                  " (dry-run)" if dry_run else "", ", ".join(owned))
+        journal = getattr(s, "JOURNAL", None)
+        if journal is not None and hasattr(journal, "add"):
+            try:
+                journal.add(f"Сброс Max{'(dry-run)' if dry_run else ''}: пути панели: {', '.join(owned)}")
+            except Exception:
+                pass
+        if dry_run:
+            return self.footprint()
+
         self._agent_forget()
-        with self.adb.only_adb():
-            self.adb.shell(
-                f"[ -f {s.WEB_DIR}/bt_off ] && svc bluetooth enable 2>/dev/null; "
-                f"killall viz 2>/dev/null; killall yapanel-agent 2>/dev/null; "
-                f"grep -q ' {s.BOOT_TARGET} ' /proc/mounts && umount {s.BOOT_TARGET} 2>/dev/null; "
-                f"grep -q ' {s.SOUND_TARGET} ' /proc/mounts && umount {s.SOUND_TARGET} 2>/dev/null; "
-                f"grep -q ' /system/etc/hosts ' /proc/mounts && umount /system/etc/hosts 2>/dev/null; "
-                f"[ -d {s.OVR_DIR} ] && (cd {s.OVR_DIR} && find . -type f) | while read -r f; do "
-                f"  t=\"{s.PATTERNS['clock']}/${{f#./}}\"; grep -q \" $t \" /proc/mounts && umount \"$t\" 2>/dev/null; "
-                f"  t2=\"{s.QUASAR}/${{f#./}}\"; grep -q \" $t2 \" /proc/mounts && umount \"$t2\" 2>/dev/null; "
+        q = shlex.quote
+        bt_off = str(getattr(s, "BT_OFF", posixpath.join(web, "bt_off")))
+        ovr = str(getattr(s, "OVR_DIR", posixpath.join(web, "override")))
+        boot_target = str(getattr(s, "BOOT_TARGET", ""))
+        sound_target = str(getattr(s, "SOUND_TARGET", ""))
+        boot_orig = str(getattr(s, "BOOT_ORIG", ""))
+        sound_orig = str(getattr(s, "SOUND_ORIG", ""))
+        patterns = getattr(s, "PATTERNS", {})
+        clock_dir = str(patterns.get("clock", "")) if isinstance(patterns, dict) else ""
+        quasar = str(getattr(s, "QUASAR", ""))
+
+        rm_owned = " ".join(
+            f"if [ -e {q(path)} ]; then rm -rf {q(path)} && printf 'removed %s\\n' {q(path)}; fi;"
+            for path in owned
+        )
+        restore_boot = ""
+        if boot_orig and boot_target:
+            restore_boot = (f"if [ -f {q(boot_orig)} ]; then mkdir -p {q(posixpath.dirname(boot_target))} && "
+                            f"mv -f {q(boot_orig)} {q(boot_target)} 2>/dev/null; fi; ")
+        restore_sound = ""
+        if sound_orig and sound_target:
+            restore_sound = (f"if [ -f {q(sound_orig)} ]; then mkdir -p {q(posixpath.dirname(sound_target))} && "
+                             f"mv -f {q(sound_orig)} {q(sound_target)} 2>/dev/null; fi; ")
+        unmount_overrides = ""
+        if ovr and clock_dir and quasar:
+            unmount_overrides = (
+                f"[ -d {q(ovr)} ] && (cd {q(ovr)} && find . -type f) | while read -r f; do "
+                f"  t={q(clock_dir)}/${{f#./}}; grep -q \" $t \" /proc/mounts && umount \"$t\" 2>/dev/null; "
+                f"  t2={q(quasar)}/${{f#./}}; grep -q \" $t2 \" /proc/mounts && umount \"$t2\" 2>/dev/null; "
                 f"done; "
-                f"rm -rf {s.WEB_DIR}/override {s.WEB_DIR}/patterns {s.WEB_DIR}/viz {s.WEB_DIR}/bt_off {s.WEB_DIR}/hosts; "
-                f"rm -f {s.BOOT_CUSTOM} {s.SOUND_CUSTOM} {s.BOOT_ALWAYS}; "
-                f"[ -f {s.BOOT_ORIG} ] && mv -f {s.BOOT_ORIG} {s.BOOT_TARGET} 2>/dev/null; "
-                f"[ -f {s.SOUND_ORIG} ] && mv -f {s.SOUND_ORIG} {s.SOUND_TARGET} 2>/dev/null; "
-                f"rm -f {s.BOOT_HOOK}; "
-                f"rm -f /data/quasar/rootkeeper.sh*; "
-                f"true", check=False
             )
+
+        with self.adb.only_adb():
+            out, _, _ = _shell_result(self.adb.shell(
+                f"[ -f {q(bt_off)} ] && svc bluetooth enable 2>/dev/null; "
+                f"killall viz 2>/dev/null; killall yapanel-agent 2>/dev/null; "
+                f"grep -q ' {boot_target} ' /proc/mounts && umount {q(boot_target)} 2>/dev/null; "
+                f"grep -q ' {sound_target} ' /proc/mounts && umount {q(sound_target)} 2>/dev/null; "
+                f"grep -q ' /system/etc/hosts ' /proc/mounts && umount /system/etc/hosts 2>/dev/null; "
+                f"{unmount_overrides}"
+                f"{rm_owned}"
+                f"{restore_boot}{restore_sound}"
+                f"true", check=False
+            ))
+            for line in out.splitlines():
+                if line.startswith("removed "):
+                    _log.info("Max footprint reset: %s", line.strip())
             self.ring_reset()
             return self.footprint()
 

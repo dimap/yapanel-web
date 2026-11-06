@@ -35,6 +35,78 @@ async function act(btn, fn, okMsg) {
 }
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------- единый планировщик периодических задач ----------
+// Все частые опросы идут через один таймер. Пока вкладка скрыта, задачи стоят
+// и не дёргают колонку; при возврате выполняются сразу, не ожидая интервала.
+const Scheduler = (() => {
+  const tasks = new Map();
+  let timer = 0, timerAt = 0, seq = 0;
+  const now = () => Date.now();
+
+  function arm(at) {
+    if (document.hidden) return;
+    if (timer && timerAt <= at) return;
+    if (timer) clearTimeout(timer);
+    timerAt = at;
+    timer = setTimeout(tick, Math.max(0, at - now()));
+  }
+  function tick() {
+    timer = 0; timerAt = 0;
+    if (document.hidden) return;
+    const t = now();
+    for (const task of tasks.values()) {
+      if (task.next > t) continue;
+      task.next = t + task.ms;
+      if (task.running) continue;       // долгий запрос не наслаивается сам на себя
+      task.running = true;
+      let r;
+      try { r = task.fn(); } catch { task.running = false; continue; }
+      if (r && typeof r.then === 'function') r.catch(() => {}).finally(() => { task.running = false; });
+      else task.running = false;
+    }
+    // Пересчитываем после задач: setInterval мог изменить следующий запуск.
+    let next = Infinity;
+    for (const task of tasks.values()) next = Math.min(next, task.next);
+    if (next !== Infinity) arm(next);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearTimeout(timer); timer = 0; timerAt = 0; return; }
+    const t = now();
+    for (const task of tasks.values()) task.next = Math.min(task.next, t);
+    arm(t);
+  });
+
+  function add(ms, fn) {
+    const id = ++seq, delay = Math.max(16, +ms || 0);
+    tasks.set(id, { ms: delay, fn, next: now() + delay, running: false });
+    arm(tasks.get(id).next);
+    return id;
+  }
+  function remove(id) { tasks.delete(id); }
+  function setInterval(id, ms) {
+    const task = tasks.get(id), delay = Math.max(16, +ms || 0);
+    if (!task || task.ms === delay) return;
+    task.ms = delay;
+    task.next = now() + delay;       // новый интервал — от текущего момента, как setTimeout после ответа
+    arm(task.next);
+  }
+  return { add, remove, setInterval, size: () => tasks.size };
+})();
+const every = (ms, fn) => Scheduler.add(ms, fn);
+
+// Большие списки перерисовываем, только когда их разметка реально изменилась:
+// иначе innerHTML на каждом опросе пересоздаёт узлы и сбрасывает фокус/выделение.
+function setListHtml(el, html) {
+  if (!el || el._listHtml === html) return false;
+  el._listHtml = html;
+  el.innerHTML = html;
+  return true;
+}
+// Адрес обложки — в CSS. Кавычки и переводы строк экранируем, чтобы данные API
+// не могли выйти из url("…") и добавить свои свойства.
+const cssUrl = u => /^(https?:)?\/\//i.test(String(u || '')) ? `url("${String(u).replace(/["\\\n\r]/g, c => '\\' + c)}")` : '';
 // Скрытые значения (Device ID, IP, Wi‑Fi, логин): точки, по нажатию — значение, по повторному — снова точки.
 // Приватный режим (по умолчанию включён) — защита для тех, кто скриншотит панель не глядя; выключается в «Настроить».
 const revealed = new Set();
@@ -43,7 +115,7 @@ const DOTS = '••••••••';
 const secret = (key, v, dots = DOTS) => {
   if (!v) return '—';
   const on = privateOff || revealed.has(key);
-  return `<button class="secret${on ? ' shown' : ''}" data-key="${key}" data-v="${esc(v)}" data-dots="${dots}" title="Показать / скрыть">${on ? esc(v) : dots}</button>`;
+  return `<button class="secret${on ? ' shown' : ''}" data-key="${esc(key)}" data-v="${esc(v)}" data-dots="${esc(dots)}" title="Показать / скрыть" aria-label="Показать или скрыть значение">${on ? esc(v) : dots}</button>`;
 };
 function applyPrivate() {
   $$('.secret').forEach(x => {
@@ -147,7 +219,7 @@ $('#set-tiles').onchange = () => {
 
 // ---------- мини-графики в плитках «Обзора» ----------
 // Та же история, что у «Графиков» (сервер собирает её сам), — последние 15 минут; раз в 30 с, пока виден «Обзор».
-let sparkTimer, sparkData = null;
+let sparkData = null;
 function sparkPath(vals, w, h, span = 0) {
   const xs = vals.map((v, i) => [i, v]).filter(([, v]) => v != null);
   if (xs.length < 2) return null;
@@ -175,15 +247,14 @@ function sparkPath(vals, w, h, span = 0) {
   return { line, area };
 }
 async function loadSparks() {
-  clearTimeout(sparkTimer);
-  if (!online || document.hidden || $('#tab-overview').hidden) { sparkTimer = setTimeout(loadSparks, 15000); return; }
+  if (!online || document.hidden || $('#tab-overview').hidden) return;
   try {
     const d = sparkData = await api('/api/metrics?range=900');
     drawSparks(d);
     tilesFromMetrics(d);
   } catch {}
-  sparkTimer = setTimeout(loadSparks, 30000);
 }
+every(30000, loadSparks);
 function drawSparks(d) {
     $$('#stat-row > .stat').forEach(tile => { if (!tile.dataset.spark) tile.querySelector('.spark')?.remove(); });
     $$('.stat[data-spark]').forEach(tile => {
@@ -271,7 +342,7 @@ function updateSub() {
   $('#ov-sub').innerHTML = `<span class="dot ${alive ? 'on' : 'off'}" title="${alive ? 'Алиса работает' : 'Алиса остановлена'}" style="display:inline-block;margin-right:6px;vertical-align:1px"></span>`
     + hostHtml(status.hostname) + esc(` · Quasar ${ver} · ${ago} с назад`);
 }
-setInterval(updateSub, 1000);
+every(1000, updateSub);
 
 // ---------- громкость ----------
 // Динамик — в уровнях Алисы 0–10 (как на колонке), Bluetooth — сырой микшер 0–255.
@@ -339,7 +410,7 @@ function renderSounds() {
   // С поиском ищем по всем папкам и показываем папку рядом с именем.
   const list = f ? sounds.filter(n => n.toLowerCase().includes(f)) : sounds.filter(n => folderOf(n) === sndFolder);
   $('#snd-folders').style.opacity = f ? .5 : 1;
-  $('#sounds').innerHTML = list.length ? list.map(n => {
+  const html = list.length ? list.map(n => {
     const base = n.slice(n.lastIndexOf('/') + 1);
     const m = base.match(/^(.*)\.([^.]+)$/) || [base, base, ''];
     const dir = folderOf(n);
@@ -351,6 +422,7 @@ function renderSounds() {
         <button class="btn sm icon ghost" data-snd-reset="${esc(n)}" title="Вернуть стандартный" aria-label="Вернуть стандартный ${esc(m[1])}">${icon('i-refresh', 14)}</button>` : ''}
         <button class="btn sm icon ghost" data-snd-replace="${esc(n)}" title="Заменить своим" aria-label="Заменить ${esc(m[1])} своим">${icon('i-ul', 14)}</button></span></div>`;
   }).join('') : '<div class="empty">Ничего не найдено</div>';
+  if (!setListHtml($('#sounds'), html)) return;
   $$('#sounds .play').forEach(b => b.onclick = () => act(b, () => api('/api/play', { name: b.dataset.s }), '▶ ' + b.dataset.s));
   $$('#sounds [data-snd-orig]').forEach(b => b.onclick = () => act(b, () => api('/api/sounds/play-original', { name: b.dataset.sndOrig }), '▶ стандартный'));
   $$('#sounds [data-snd-reset]').forEach(b => b.onclick = () => act(b, async () => setSndCustom(await api('/api/sounds/reset', { name: b.dataset.sndReset })), 'Вернул стандартный звук'));
@@ -822,8 +894,8 @@ async function loadDispState() {
   if (document.hidden || $('#tab-overview').hidden) return;
   try { dispState = await api('/api/display'); dispStateAt = Date.now(); renderDispState(); } catch {}
 }
-setInterval(loadDispState, 5000);
-setInterval(() => dispState.mode === 'timer' && renderDispState(), 1000);
+every(5000, loadDispState);
+every(1000, () => dispState.mode === 'timer' && renderDispState());
 
 $('#disp-pin').onclick = e => act(e.currentTarget, async () => {
   let body = { mode: dispMode, brightness: +$('#clock-br').value };
@@ -886,12 +958,12 @@ function sendClock(btn) {
 $('#clock-set').onclick = e => sendClock(e.currentTarget);
 $('#clock-text').onkeydown = e => { if (e.key === 'Enter') sendClock(null); };
 clockPreview();
-setInterval(() => (dispMode !== 'text' || !$('#clock-text').value) && !(dispState && dispState.mode) && Date.now() > ($('#clock-preview')._until || 0) && clockPreview(), 15000);
+every(15000, () => (dispMode !== 'text' || !$('#clock-text').value) && !(dispState && dispState.mode) && Date.now() > ($('#clock-preview')._until || 0) && clockPreview());
 
 // Живое состояние дисплея и кольца для модели, пока «Обзор» на экране. Локальные анимации
 // (запущенные из панели) рисуются по кадрам сами, опрос их не перебивает.
 let ringAnimUntil = 0, ringLit = false, ringTimer;
-let ledStreamSource = null;
+let ledStreamSource = null, ledTask = 0, liveTask = 0;
 function initRealtimeLedStream() {
   if (window.EventSource) {
     try { if (ledStreamSource) ledStreamSource.close(); } catch {}
@@ -923,21 +995,21 @@ function initRealtimeLedStream() {
 initRealtimeLedStream();
 
 async function pollLeds() {
+  // 20 FPS нужны только пока «Обзор» на экране; на других вкладках — редкая проверка.
+  if (!online || document.hidden || $('#tab-overview').hidden) { Scheduler.setInterval(ledTask, 2000); return; }
   if (!ledStreamSource) {
     try {
-      if (!document.hidden && !$('#tab-overview').hidden) {
-        const s = await api('/api/clock/state');
-        if (Array.isArray(s.v) && Date.now() >= ($('#clock-preview')._until || 0)) toModel(s.pixels || s.v);
-        if (Array.isArray(s.ring) && s.ring.length && Date.now() >= ringAnimUntil) {
-          toRing(s.ring_all || s.ring);
-          syncRingPreview(s.ring_all || s.ring);
-        }
+      const s = await api('/api/clock/state');
+      if (Array.isArray(s.v) && Date.now() >= ($('#clock-preview')._until || 0)) toModel(s.pixels || s.v);
+      if (Array.isArray(s.ring) && s.ring.length && Date.now() >= ringAnimUntil) {
+        toRing(s.ring_all || s.ring);
+        syncRingPreview(s.ring_all || s.ring);
       }
     } catch {}
   }
-  setTimeout(pollLeds, ledStreamSource ? 2000 : 50); // 20 FPS fallback
+  Scheduler.setInterval(ledTask, ledStreamSource ? 2000 : 50); // 20 FPS fallback
 }
-pollLeds();
+ledTask = every(50, pollLeds);
 // Быстрый поток — только пока «Обзор» на экране, визуализатор включён и музыка играет.
 // Пока играет музыка, Quasar рисует на часах эквалайзер: 4 цифры — 4 полосы, в каждой столбик из D, G, A.
 const isSpectrum = v => [0, 1, 2, 3].every(p => !v[p * 8 + 1] && !v[p * 8 + 2] && !v[p * 8 + 4] && !v[p * 8 + 5] && !v[p * 8 + 7])
@@ -961,9 +1033,9 @@ async function liveLeds() {
   }
   const spectrumNow = window.__spectrum && performance.now() - window.__spectrum.t < 2500;
   const delay = want ? (sseActive ? 1000 : (spectrumNow ? 50 : 700)) : 500;
-  setTimeout(liveLeds, delay);
+  Scheduler.setInterval(liveTask, delay);
 }
-setTimeout(liveLeds, 1000);   // первый запуск — когда весь скрипт уже загружен
+liveTask = every(1000, liveLeds);   // первый запуск — когда весь скрипт уже загружен
 function animateRing({ frames, loop }, seconds) {
   clearTimeout(ringTimer);
   if (!frames.length) return;
@@ -1390,22 +1462,20 @@ $('#ra-reset').onclick = e => confirm(`Вернуть стандартную а�
 // ---------- bluetooth ----------
 
 // Виджет Bluetooth: сопряжённые устройства, видимость с таймером. Опрашиваем, только пока виден «Обзор».
-let btData = null, btTimer;
+let btData = null, btTask = 0;
 const BT_ICONS = { phone: 'i-bt', 'audio-card': 'i-vol', 'audio-headset': 'i-vol', 'audio-headphones': 'i-vol', computer: 'i-term' };
 async function loadBt() {
-  clearTimeout(btTimer);
-  if (!online || document.hidden || $('#tab-overview').hidden || $('[data-widget="bt"]').closest('#wz-hidden')) {
-    btTimer = setTimeout(loadBt, 3000); return;
-  }
-  try { btData = await api('/api/bt'); renderBt(); } catch (e) { if (!e.offline) $('#bt-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
-  btTimer = setTimeout(loadBt, btData?.pair_until ? 2000 : 5000);
+  if (!online || document.hidden || $('#tab-overview').hidden || $('[data-widget="bt"]').closest('#wz-hidden')) return;
+  try { btData = await api('/api/bt'); renderBt(); } catch (e) { if (!e.offline) setListHtml($('#bt-list'), `<div class="empty">${esc(e.message)}</div>`); }
+  Scheduler.setInterval(btTask, btData?.pair_until ? 2000 : 5000);
 }
+btTask = every(3000, loadBt);
 function btLeft() {
   const left = btData?.pair_until ? Math.max(0, Math.round(btData.pair_until - Date.now() / 1000)) : 0;
   $('#bt-pair-left').hidden = !left;
   $('#bt-pair-left').textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
 }
-setInterval(() => btData?.pair_until && btLeft(), 1000);
+every(1000, () => btData?.pair_until && btLeft());
 function renderBt() {
   const d = btData, conn = d.devices.filter(x => x.connected), vis = d.discoverable;
   const card = $('[data-widget="bt"]');
@@ -1429,13 +1499,13 @@ function renderBt() {
   $('#bt-pair-btn').classList.toggle('primary', !vis);
   btLeft();
   renderBtOut();
-  $('#bt-list').innerHTML = d.devices.length ? d.devices.map(x => `<div class="bt-row${x.connected ? ' on' : ''}" data-mac="${esc(x.mac)}">
+  setListHtml($('#bt-list'), d.devices.length ? d.devices.map(x => `<div class="bt-row${x.connected ? ' on' : ''}" data-mac="${esc(x.mac)}">
       <div class="bt-ic">${icon(BT_ICONS[x.icon] || 'i-bt', 18)}</div>
       <div class="info"><b>${x.name ? secret('btn-' + x.mac, x.name) : 'Без имени'}</b>
         <span class="meta">${[x.connected ? 'подключено' : 'сопряжено', x.battery != null ? `батарея ${x.battery}%` : ''].filter(Boolean).join(' · ')} · ${secret('bt-' + x.mac, x.mac)}</span></div>
       <div class="actions">${x.connected ? '<button class="btn sm" data-bta="disconnect">Отключить</button>' : '<button class="btn sm" data-bta="connect">Подключить</button>'}
         <button class="btn sm ghost" data-bta="remove" title="Забыть устройство" aria-label="Забыть устройство">${icon('i-trash', 16)}</button></div></div>`).join('')
-    : '<div class="empty">Сопряжённых устройств нет</div>';
+    : '<div class="empty">Сопряжённых устройств нет</div>');
 }
 const btDo = (btn, body, msg) => act(btn, async () => { btData = await api('/api/bt', body); renderBt(); }, msg);
 $('#bt-power').onchange = e => {
@@ -1765,7 +1835,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // ---- Светомузыка (Party Mode) ----
-let partyTimer = null;
+let partyTask = 0;
 let partyData = null;
 let partyBulbsConfig = [];
 let partyEventsBound = false;
@@ -1791,8 +1861,8 @@ const fmtCinemaTime = s => {
 };
 
 async function loadParty() {
-  clearTimeout(partyTimer);
   initPartyEvents();
+  if (!online || document.hidden || !$('#tab-party') || $('#tab-party').hidden) return;
   try {
     partyData = await api('/api/party/status');
     try { partyBulbsConfig = await api('/api/party/bulbs'); } catch {}
@@ -1803,10 +1873,9 @@ async function loadParty() {
       if (b) { b.textContent = 'ошибка'; b.className = 'badge bad'; }
     }
   }
-  if ($('#tab-party') && !$('#tab-party').hidden) {
-    partyTimer = setTimeout(loadParty, (partyData && partyData.running) ? 1500 : 4000);
-  }
+  Scheduler.setInterval(partyTask, (partyData && partyData.running) ? 1500 : 4000);
 }
+partyTask = every(4000, loadParty);
 
 function renderParty() {
   const d = partyData;
@@ -1981,15 +2050,15 @@ function renderParty() {
             </div>
             <div style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:500;">
               <button class="btn sm" type="button" data-party-test="${esc(b.id)}" title="Мигнуть 3 раза зелёным светом">💡 Тест</button>
-              <button class="btn sm" type="button" data-party-edit="${esc(b.id)}" title="Редактировать">✏️</button>
-              <button class="btn sm danger" type="button" data-party-del="${esc(b.id)}" title="Удалить лампу">🗑️</button>
+              <button class="btn sm" type="button" data-party-edit="${esc(b.id)}" title="Редактировать" aria-label="Редактировать лампу ${esc(b.name)}">✏️</button>
+              <button class="btn sm danger" type="button" data-party-del="${esc(b.id)}" title="Удалить лампу" aria-label="Удалить лампу ${esc(b.name)}">🗑️</button>
             </div>
           </div>
         `;
       });
-      listEl.innerHTML = html;
+      setListHtml(listEl, html);
     } else {
-      listEl.innerHTML = '<div class="empty" style="text-align:center; padding:16px;">Лампы пока не привязаны.<br>Нажмите <b>«➕ Добавить лампу»</b> или <b>«🔍 Поиск в Wi-Fi»</b>, чтобы подключить умные лампы Tuya/Smart Life к колонке.</div>';
+      setListHtml(listEl, '<div class="empty" style="text-align:center; padding:16px;">Лампы пока не привязаны.<br>Нажмите <b>«➕ Добавить лампу»</b> или <b>«🔍 Поиск в Wi-Fi»</b>, чтобы подключить умные лампы Tuya/Smart Life к колонке.</div>');
     }
   }
 
@@ -2720,7 +2789,7 @@ $('#log-name').onchange = () => { $('#log-out').scrollTop = 1e9; loadLog(); };
 $('#log-lines').onchange = () => loadLog();
 $('#log-filter').oninput = renderLog;
 $('#log-mask').onchange = renderLog;
-setInterval(() => $('#log-follow').checked && !$('#tab-logs').hidden && loadLog(), 3000);
+every(3000, () => $('#log-follow').checked && !document.hidden && !$('#tab-logs').hidden && loadLog());
 
 // ---------- консоль ----------
 // xterm.js ↔ WebSocket /api/term ↔ adb shell с псевдотерминалом на сервере. Сеанс живёт, пока открыта страница.
@@ -2996,7 +3065,7 @@ function aliceWaitRender() {
   $('#alice-wait-title').textContent = aliceWait.title || 'Алиса перезапускается';
   $('#alice-wait-text').textContent = aliceWait.text || 'Обычно это около 30 секунд — пока она недоступна, музыка и команды не работают';
 }
-setInterval(aliceWaitRender, 1000);
+every(1000, aliceWaitRender);
 
 // Мгновенный отклик кнопок плеера. muWant — что мы попросили; пока колонка не подтвердила (до 5 с), опрос
 // состояния его не перетирает. Позицию трека при этом замораживаем или продолжаем с текущей.
@@ -3053,7 +3122,7 @@ async function loadMusic() {
   }
   renderMusic();
 }
-setInterval(loadMusic, 1000);
+every(1000, loadMusic);
 
 function musicPos() {
   const s = muState(), p = s?.playerState;
@@ -3090,6 +3159,25 @@ function swapText(e, html, text, after) {
 }
 // Ставим разметку, только если она поменялась: иначе renderMusic (4 раза в секунду) пересоздаёт ссылку под курсором и клик теряется.
 const setHtml = (e, html) => { if (e._html !== html) { e._html = html; e.innerHTML = html; } };
+
+// Плавный прогресс — только ползунки и время, без перерисовки обложки, ссылок и кнопок.
+function renderMusicProgress() {
+  const s = muState(), p = muPlayer();
+  const isBt = p?.playerType === 'bluetooth';
+  const pos = musicPos();
+  $$('input.mu-seek').forEach(r => {
+    // по Bluetooth позиция приходит верная, но перематывать колонка не умеет — только на телефоне
+    r.disabled = !p?.duration || isBt;
+    r.title = isBt ? 'По Bluetooth перематывать можно только на телефоне' : '';
+    if (!mu.seeking) { r.max = Math.round(p?.duration || 100); r.value = Math.round(pos); }
+  });
+  if (!mu.seeking) $$('.mu-pos').forEach(e => e.textContent = fmtDur(pos));
+  $$('.mu-dur').forEach(e => e.textContent = fmtDur(p?.duration));
+  if (typeof s?.volume === 'number' && Date.now() - mu.volSet > 2500) {
+    $$('input.mu-vol').forEach(r => r.value = Math.round(s.volume * 100));
+    $$('.mu-vol-v').forEach(e => e.textContent = Math.round(s.volume * 100));
+  }
+}
 
 function renderMusic() {
   const i = mu.info;
@@ -3134,7 +3222,7 @@ function renderMusic() {
   const cover = has && !isBt ? coverUrl(p.extra?.coverURI, 400) : '';
   $$('.mu-cover').forEach(e => {
     const url = e.classList.contains('pl-cover') && mu.track?.coverBig ? mu.track.coverBig : cover;
-    e.style.backgroundImage = url ? `url("${url}")` : '';
+    e.style.backgroundImage = url ? cssUrl(url) : '';
     if (e.firstElementChild) e.firstElementChild.style.display = url ? 'none' : '';
   });
   plTint(has && !isBt ? coverUrl(p.extra?.coverURI, 50) : '');
@@ -3152,19 +3240,7 @@ function renderMusic() {
   $$('[data-mu="shuffle"]').forEach(b => b.classList.toggle('on', !!p?.entityInfo?.shuffled));
   $$('[data-mu="like"]').forEach(b => { b.classList.toggle('liked', !!mu.track?.liked); b.setAttribute('aria-label', mu.track?.liked ? 'Убрать лайк' : 'Лайк'); });
   $$('[data-mu="shuffle"], [data-mu="repeat"], [data-mu="like"], [data-mu="dislike"]').forEach(b => b.disabled = !has);
-  const pos = musicPos();
-  $$('input.mu-seek').forEach(r => {
-    // по Bluetooth позиция приходит верная, но перематывать колонка не умеет — только на телефоне
-    r.disabled = !p?.duration || isBt;
-    r.title = isBt ? 'По Bluetooth перематывать можно только на телефоне' : '';
-    if (!mu.seeking) { r.max = Math.round(p?.duration || 100); r.value = Math.round(pos); }
-  });
-  if (!mu.seeking) $$('.mu-pos').forEach(e => e.textContent = fmtDur(pos));
-  $$('.mu-dur').forEach(e => e.textContent = fmtDur(p?.duration));
-  if (typeof s?.volume === 'number' && Date.now() - mu.volSet > 2500) {
-    $$('input.mu-vol').forEach(r => r.value = Math.round(s.volume * 100));
-    $$('.mu-vol-v').forEach(e => e.textContent = Math.round(s.volume * 100));
-  }
+  renderMusicProgress();
 
   if (p?.id && p.id !== mu.trackId) {   // сменился трек — подробности и всё для вкладки «Плеер»
     mu.trackId = p.id; mu.track = null; mu.extras = {};
@@ -3173,7 +3249,7 @@ function renderMusic() {
   }
   if (!$('#tab-player').hidden) renderPlayerTab();
 }
-setInterval(() => muState()?.playing && !mu.seeking && renderMusic(), 250);   // плавный прогресс
+every(250, () => muState()?.playing && !mu.seeking && renderMusicProgress());   // плавный прогресс
 
 // ----- вкладка «Плеер» -----
 const PL_TYPES = { Radio: 'Радио', Album: 'Альбом', Playlist: 'Плейлист', Artist: 'Исполнитель', Track: 'Трек', FmRadio: 'FM-радио' };
@@ -3509,7 +3585,7 @@ matchMedia('(max-width: 760px)').addEventListener('change', () => { plSheet('');
 const trackRow = (t, cur, tag) => `<button class="trow${cur ? ' cur' : ''}" data-play="${esc(t.id)}" ${t.available === false ? 'disabled' : ''}>
   ${t.cover ? `<img src="${esc(t.cover)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
   <span class="tt"><b>${esc(t.title)}</b><span>${esc(t.artists)}</span></span>
-  ${tag ? `<span class="badge${cur ? ' ok' : ''}">${tag}</span>` : ''}<span class="td">${t.durationMs ? fmtDur(t.durationMs / 1000) : ''}</span></button>`;
+  ${tag ? `<span class="badge${cur ? ' ok' : ''}">${esc(tag)}</span>` : ''}<span class="td">${t.durationMs ? fmtDur(t.durationMs / 1000) : ''}</span></button>`;
 async function loadPlayerExtras() {
   const id = mu.trackId;
   if (!id || mu.extras.for === id) return;
@@ -3650,8 +3726,8 @@ async function startQr() {
     q.make();
     $('#mu-qr').innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
     $('#mu-qr-status').textContent = 'Ждём подтверждения на телефоне…';
-    clearInterval(mu.qrTimer);
-    mu.qrTimer = setInterval(pollQr, 2000);
+    if (mu.qrTimer) Scheduler.remove(mu.qrTimer);
+    mu.qrTimer = every(2000, pollQr);
   } catch (e) {
     mu.qr = 'failed';
     $('#mu-qr').innerHTML = '<div class="empty">QR недоступен</div>';
@@ -3659,13 +3735,14 @@ async function startQr() {
     api('/api/auth').then(a => $('#mu-oauth').href = a.oauth_url).catch(() => {});
   }
 }
-function stopQr() { clearInterval(mu.qrTimer); mu.qrTimer = null; mu.qr = null; }
+function stopQr() { if (mu.qrTimer) Scheduler.remove(mu.qrTimer); mu.qrTimer = null; mu.qr = null; }
 async function pollQr() {
   try {
     const r = await api('/api/auth/qr');
     if (r.state === 'done') { stopQr(); toast('Вход выполнен' + (r.login ? ': ' + r.login : '')); loadMusic(); }
     else if (r.state === 'expired' || r.state === 'none') {
-      clearInterval(mu.qrTimer);
+      if (mu.qrTimer) Scheduler.remove(mu.qrTimer);
+      mu.qrTimer = null;
       $('#mu-qr-link').setAttribute('aria-disabled', 'true');
       $('#mu-qr-status').innerHTML = (plMobile() ? 'Ссылка для входа устарела.' : 'QR-код устарел.') + ' <button class="btn sm" id="mu-qr-new">Новый код</button>';
       $('#mu-qr-new').onclick = () => startQr();
@@ -4208,10 +4285,10 @@ function renderFs() {
   });
   const body = $('#fs-body');
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="5"><div class="empty">${fs.entries.length ? 'Ничего не найдено' : 'Пустая папка'}</div></td></tr>`;
+    setListHtml(body, `<tr><td colspan="5"><div class="empty">${fs.entries.length ? 'Ничего не найдено' : 'Пустая папка'}</div></td></tr>`);
     return;
   }
-  body.innerHTML = list.map(e => {
+  const html = list.map(e => {
     const ico = e.is_dir ? 'i-folder' : e.type === 'link' ? 'i-link' : AUDIO.test(e.name) ? 'i-music' : 'i-file';
     return `<tr data-name="${esc(e.name)}" class="${e.is_dir ? 'dir' : ''} ${fs.sel === e.name ? 'sel' : ''}">
       <td class="name"><span class="n">${icon(ico, 18)}${esc(e.name)}</span>${e.target ? ` <span class="tgt">→ ${esc(e.target)}</span>` : ''}</td>
@@ -4224,6 +4301,7 @@ function renderFs() {
         <button class="btn sm icon ghost danger" data-a="rm" aria-label="Удалить" title="Удалить">${icon('i-trash')}</button>` : ''}
       </td></tr>`;
   }).join('');
+  if (!setListHtml(body, html)) return;
   $$('#fs-body tr[data-name]').forEach(tr => {
     const e = fs.entries.find(x => x.name === tr.dataset.name);
     tr.onclick = ev => {
@@ -4631,13 +4709,12 @@ const AS_TTS_HINT = {
   alice: 'Ответ читает сама Алиса («Окей, повторяю: …»). Бесплатно и без ключа, но интонация ровная, без знаков препинания.',
   openai: 'Любой сервер с OpenAI-совместимым /audio/speech: OpenAI, Piper на компьютере через openedai-speech, голоса Edge через openai-edge-tts.',
 };
-let asTimer = null, asCfg = null;
+let asTask = 0, asCfg = null;
 function asPoll(on) {
-  clearTimeout(asTimer);
   if (on) loadAssistant(true);
 }
 async function loadAssistant(fill) {
-  clearTimeout(asTimer);
+  if (!online || document.hidden || $('#tab-assistant').hidden) return;
   let st;
   try { st = await api('/api/assistant'); } catch (e) { return e.offline || toast(e.message, true); }
   $('#as-experimental').hidden = !st.experimental;
@@ -4653,10 +4730,10 @@ async function loadAssistant(fill) {
   const err = s.config_error || s.error;
   $('#as-error').hidden = !err;
   $('#as-error').textContent = err ? 'Последняя ошибка: ' + err : '';
-  $('#as-hist').innerHTML = (s.history || []).slice().reverse().map(h => `<div><b>${esc(h.question)}</b>`
+  setListHtml($('#as-hist'), (s.history || []).slice().reverse().map(h => `<div><b>${esc(h.question)}</b>`
     + (h.answer ? esc(h.answer) : `<span class="err">${esc(h.error || '')}</span>`)
     + `<small>${new Date(h.at * 1000).toLocaleTimeString()} · ${h.source === 'voice' ? 'голосом' : 'из панели'}`
-    + `${h.ms ? ' · ' + (h.ms / 1000).toFixed(1) + ' с' : ''}</small></div>`).join('');
+    + `${h.ms ? ' · ' + (h.ms / 1000).toFixed(1) + ' с' : ''}</small></div>`).join(''));
   const until = s.mode_until ? new Date(s.mode_until * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   $('#as-mode-state').textContent = s.mode ? 'включён' + (until ? ` · отключится в ${until}, если молчать` : '') : 'выключен';
   $('#as-mode-btn').textContent = s.mode ? 'Выключить' : 'Включить';
@@ -4665,8 +4742,9 @@ async function loadAssistant(fill) {
   $('#as-mode-btn').disabled = !st.running || !c.enabled;
   if (s.mode && st.running && c.enabled) { $('#as-badge').textContent = 'Режим ассистента'; $('#as-badge').className = 'badge ok'; }
   if (fill && st.installed) asFill(c);
-  if (!$('#tab-assistant').hidden) asTimer = setTimeout(loadAssistant, s.state && s.state !== 'idle' ? 1000 : 4000);
+  Scheduler.setInterval(asTask, s.state && s.state !== 'idle' ? 1000 : 4000);
 }
+asTask = every(4000, loadAssistant);
 function asFill(c) {
   asCfg = c;
   const llm = c.llm || {}, tts = c.tts || {};
@@ -4807,7 +4885,7 @@ $('#as-remove').onclick = e => confirm('Удалить помощника с к�
 // Атрибуты кнопок — data-rd-*: data-play и data-mu уже заняты общими обработчиками плеера Алисы.
 const RD_ALICE = ['Европа Плюс', 'Русское радио', 'Авторадио', 'Радио Рекорд', 'Наше радио', 'Ретро FM', 'DFM', 'Love Radio',
   'Хит FM', 'Радио Energy', 'Маяк', 'Дорожное радио', 'Радио Шансон', 'Relax FM', 'Монте-Карло', 'Business FM', 'Детское радио'];
-let rd = { st: null, timer: null, checked: {} };
+let rd = { st: null, task: 0, checked: {} };
 // Пометка у станции — только если с потоком беда; нормальные станции без лишних надписей.
 function rdCheckText(c) {
   if (!c || c.state === 'ok') return '';
@@ -4829,11 +4907,10 @@ async function rdCheck(url, quiet) {
   } catch {}
 }
 function rdPoll(on) {
-  clearTimeout(rd.timer);
   if (on) loadRadio();
 }
 async function loadRadio() {
-  clearTimeout(rd.timer);
+  if (!online || document.hidden || $('#tab-radio').hidden) return;
   let st;
   try { st = await api('/api/radio'); } catch (e) { return e.offline || toast(e.message, true); }
   rd.st = st;
@@ -4878,8 +4955,9 @@ async function loadRadio() {
   // станция играет пару секунд и молчит — проверяем, не блокировка ли
   if (now.url && /почти не отдаёт|souphttpsrc/.test(now.error || '')) rdCheck(now.url, true);
   $('#rd-voice-hint').textContent = `— «Алиса, ${st.play[0]} <название>», «Алиса, ${st.stop[0]}»`;
-  if (!$('#tab-radio').hidden) rd.timer = setTimeout(loadRadio, now.playing || now.paused || now.retrying ? 4000 : 10000);
+  Scheduler.setInterval(rd.task, now.playing || now.paused || now.retrying ? 4000 : 10000);
 }
+rd.task = every(10000, loadRadio);
 // Логотип станции — из каталога radio-browser.info (панель скачивает и хранит его сама); не нашёлся — первые буквы.
 const rdKey = s => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/^радио\s+/, '').replace(/[^a-zа-я0-9]+/g, '');
 function rdAliceView(learned = []) {
@@ -5072,7 +5150,7 @@ const CHARTS = [
   { k: 'load', name: 'Средняя нагрузка', unit: '', min: 0, fmt: v => v.toFixed(2), note: 'load average за минуту' },
 ];
 const EV_TEXT = { reboot: '⟲', offline: '⨯', online: '✓', alarm: '⏰' };
-let chData = null, chRange = +(store.get('ch.range') || 3600), chHover = null, chTimer;
+let chData = null, chRange = +(store.get('ch.range') || 3600), chHover = null;
 $('#ch-grid').innerHTML = CHARTS.map(c => `<section class="card chart-card">
   <div class="chart-head"><h2>${c.name}</h2><div class="chart-val" id="ch-${c.k}-v">—</div></div>
   <div class="chart-sub" id="ch-${c.k}-sub">${c.note || ''}</div>
@@ -5087,11 +5165,10 @@ function niceTicks(lo, hi, n = 3) {
   return { ticks: out, lo: out[0], hi: out[out.length - 1] };
 }
 async function loadCharts() {
-  clearTimeout(chTimer);
-  if (shownTab !== 'charts') return;
+  if (!online || document.hidden || shownTab !== 'charts') return;
   try { chData = await api('/api/metrics?range=' + chRange); renderCharts(); } catch (e) { if (!e.offline) toast(e.message, true); }
-  chTimer = setTimeout(loadCharts, 10000);
 }
+every(10000, loadCharts);
 function chGeom(svg) {
   const W = svg.clientWidth || 600, H = svg.clientHeight || 150;
   return { W, H, L: 40, R: 8, T: 8, B: 20 };
@@ -5147,9 +5224,9 @@ function renderCharts() {
     + `<g class="hover" visibility="hidden"><line class="cross" y1="${pg.T}" y2="${pg.H - pg.B}"/></g>`;
   const played = d.play.filter(Boolean).length * d.step;
   $('#ch-play-v').innerHTML = played ? `${played >= 3600 ? (played / 3600).toFixed(1) + '<span>ч</span>' : Math.round(played / 60) + '<span>мин</span>'}` : '—';
-  $('#ch-events').innerHTML = d.events.length ? d.events.slice().reverse().map(e =>
+  setListHtml($('#ch-events'), d.events.length ? d.events.slice().reverse().map(e =>
     `<div class="ev-row"><time>${hm(e.t)}</time><span>${EV_TEXT[e.type] || '•'} ${esc(e.text)}</span></div>`).join('')
-    : '<span class="meta">За этот период ничего не случилось</span>';
+    : '<span class="meta">За этот период ничего не случилось</span>');
   showHover(chHover);
 }
 function showHover(t) {
@@ -5245,7 +5322,7 @@ function inText(ms) {
   return 'через ' + (h ? `${h} ч ` : '') + (m || !h ? `${m} мин` : '');
 }
 async function loadAlarms() {
-  try { alarmsData = await api('/api/alarms'); } catch (e) { if (!e.offline) $('#al-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  try { alarmsData = await api('/api/alarms'); } catch (e) { if (!e.offline) setListHtml($('#al-list'), `<div class="empty">${esc(e.message)}</div>`); return; }
   renderAlarms();
 }
 function renderAlarms() {
@@ -5255,7 +5332,7 @@ function renderAlarms() {
   $('#al-badge').textContent = !d.alarms.length ? 'нет' : next ? `ближайший ${inText(next[1] - Date.now())}` : 'все выключены';
   $('#al-badge').className = 'badge' + (on.length && d.running ? ' ok' : on.length && !d.running ? ' bad' : '');
   if (on.length && !d.running) $('#al-badge').textContent = 'служба не запущена — проверьте поддержку профиля и хук';
-  $('#al-list').innerHTML = d.alarms.length ? d.alarms.map(a => {
+  setListHtml($('#al-list'), d.alarms.length ? d.alarms.map(a => {
     const m = AL_MODES[a.mode] || AL_MODES.sound;
     const what = a.mode === 'music' ? `Включить: ${a.query}` : a.mode === 'text' ? `«${a.query}»` : m.name;
     const extra = [a.mode !== 'sound' ? `иначе звук «${sndName(a)}»` : `звук «${sndName(a)}»`,
@@ -5269,7 +5346,7 @@ function renderAlarms() {
         <button class="btn sm" data-a="test" title="Сработает прямо сейчас">Проверить</button>
         <button class="btn sm" data-a="edit">Изменить</button>
       </div></div>`;
-  }).join('') : '<div class="empty">Будильников пока нет</div>';
+  }).join('') : '<div class="empty">Будильников пока нет</div>');
   $('#al-tz').textContent = d.pc_tz || 'неизвестен (используется UTC)';
   $('#al-devtime').textContent = d.device_time?.hm ? `на колонке ${d.device_time.hm} ${d.device_time.zone || ''}` : '';
   // в журнале демона — id; показываем вместо них время и подпись
@@ -5397,7 +5474,7 @@ const SC_CHECKS = {
   chance: { name: 'случайно, % «да»', ph: '50' }, assistant_mode: { name: 'включён режим ассистента' },
 };
 const SC_RAMPS = [[0, 'сразу'], [30, 'за 30 с'], [60, 'за 1 мин'], [180, 'за 3 мин'], [300, 'за 5 мин'], [600, 'за 10 мин'], [1800, 'за 30 мин']];
-let scData = null, scEdit = null, scTimer, scSel = null, scHasAssistant = false;
+let scData = null, scEdit = null, scTask = 0, scSel = null, scHasAssistant = false;
 const durText = s => s >= 3600 ? `${+(s / 3600).toFixed(1)} ч` : s >= 60 ? `${+(s / 60).toFixed(1)} мин` : `${s} с`;
 const sndTitle = v => v.startsWith('u_') ? (alUploaded.find(u => u.sound === v)?.sound_name || 'свой звук') : v.replace(/^sys:/, '').split('/').pop().replace(/\.[^.]+$/, '');
 function nodeText(n) {
@@ -5431,22 +5508,23 @@ function scChain(s) {
   return { chain: out, linear };
 }
 async function loadScenes() {
-  clearTimeout(scTimer);
+  if (!online || document.hidden || $('#tab-scenes').hidden) return;
   try {
     [scData, scHasAssistant] = await Promise.all([api('/api/scenes'), api('/api/assistant').then(a => !!a.installed, () => false)]);
     if (!patterns.ring) patterns = await api('/api/patterns').catch(() => ({}));   // для ноды «Анимация»
-  } catch (e) { if (!e.offline) $('#sc-list').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  } catch (e) { if (!e.offline) setListHtml($('#sc-list'), `<div class="empty">${esc(e.message)}</div>`); return; }
   renderScenes();
   // пока что-то идёт — обновляем, чтобы кнопка «Остановить» и журнал не отставали
-  if (!$('#tab-scenes').hidden) scTimer = setTimeout(loadScenes, scData.running.length ? 2000 : 15000);
+  Scheduler.setInterval(scTask, scData.running.length ? 2000 : 15000);
 }
+scTask = every(15000, loadScenes);
 function renderScenes() {
   const d = scData; if (!d) return;
   const on = d.scenes.filter(s => s.on).length;
   if (d.supported === false) { $('#sc-add').disabled = true; $('#sc-save').disabled = true; }
   $('#sc-badge').textContent = !d.scenes.length ? 'нет' : on && !d.daemon ? 'служба не запущена — проверьте поддержку профиля и хук' : `включено ${on} из ${d.scenes.length}`;
   $('#sc-badge').className = 'badge' + (on && d.daemon ? ' ok' : on && !d.daemon ? ' bad' : '');
-  $('#sc-list').innerHTML = d.scenes.length ? d.scenes.map(s => {
+  setListHtml($('#sc-list'), d.scenes.length ? d.scenes.map(s => {
     const run = d.running.includes(s.id), { chain, linear } = scChain(s);
     return `<div class="al-row${s.on ? '' : ' off'}" data-id="${esc(s.id)}">
       <div class="al-time">${({ boot: icon('i-power', 30), voice: icon('i-mic', 30), manual: icon('i-play', 30) })[s.trigger] || esc(s.time)}</div>
@@ -5458,7 +5536,7 @@ function renderScenes() {
         ${run ? '<button class="btn sm danger-soft" data-a="stop">Остановить</button>' : '<button class="btn sm" data-a="run" title="Выполнить прямо сейчас">Запустить</button>'}
         <button class="btn sm" data-a="edit">Изменить</button>
       </div></div>`;
-  }).join('') : '<div class="empty">Сценариев пока нет. Например: «Ночь» — в 23:00 громкость 20% и «Алиса, включи режим не беспокоить».</div>';
+  }).join('') : '<div class="empty">Сценариев пока нет. Например: «Ночь» — в 23:00 громкость 20% и «Алиса, включи режим не беспокоить».</div>');
   $('#sc-log').textContent = d.log.length ? d.log.slice().reverse().join('\n') : 'Пока пусто';
 }
 const scSave = list => api('/api/scenes', { scenes: list }).then(r => { scData = r; renderScenes(); return r; });
@@ -5909,13 +5987,13 @@ $('#al-snooze-cancel').onclick = e => act(e.currentTarget, async () => { await a
 $('#ab-stop').onclick = e => act(e.currentTarget, async () => { await api('/api/alarms/cmd', { action: 'stop' }); setTimeout(loadAlarms, 1500); }, 'Будильник выключен');
 $('#ab-snooze').onclick = e => act(e.currentTarget, async () => { await api('/api/alarms/cmd', { action: 'snooze' }); setTimeout(loadAlarms, 1500); }, 'Отложено');
 // Состояние: на вкладке — часто, на остальных — реже и только если будильники вообще есть.
-setInterval(() => {
+every(3000, () => {
   if (!online || document.hidden) return;
   const onTab = shownTab === 'alarm';
   if (onTab || alarmsData?.state?.ringing || (alarmsData?.installed && alarmsData.alarms.some(a => a.on))) {
     if (onTab || Date.now() - (loadAlarms.t || 0) > 15000 || alarmsData?.state?.ringing) { loadAlarms.t = Date.now(); loadAlarms(); }
   }
-}, 3000);
+});
 
 // ---------- версия панели и обновление ----------
 // Сервер раз в 6 часов спрашивает GitHub о последнем релизе. В «Обзоре» — пометка (её можно скрыть
@@ -6033,7 +6111,7 @@ loadPanelVersion().catch(() => {});
 // ---------- подключение ----------
 // Сервер сам переподключается к колонке; страница только показывает состояние и после
 // подключения (в том числе повторного) заново загружает данные.
-let connInfo = null, retryDeadline = 0, connTimer;
+let connInfo = null, retryDeadline = 0, connTask = 0;
 const CONN_TEXT = {
   server: ['Сервер панели не отвечает', 'Проверьте, что server.py запущен, — страница переподключится сама.', ''],
   connecting: ['Подключаемся к колонке', 'Устанавливаем соединение по adb…', ''],
@@ -6076,7 +6154,6 @@ function renderConn() {
   $('#conn-box').hidden = !online;
 }
 async function connCheck() {
-  clearTimeout(connTimer);
   try {
     const r = await PanelContext.fetch('/api/conn');
     connInfo = r.status === 401 ? { state: 'locked' } : await r.json();
@@ -6086,9 +6163,9 @@ async function connCheck() {
   online = connInfo.state === 'online';
   renderConn();
   if (online !== was) { online ? onConnected() : showTab(); updateMinibar(); }
-  connTimer = setTimeout(connCheck, online ? 3000 : connInfo.state === 'locked' ? 10000 : 1000);
+  Scheduler.setInterval(connTask, online ? 3000 : connInfo.state === 'locked' ? 10000 : 1000);
 }
-setInterval(() => connInfo?.state === 'adb_error' && renderConn(), 1000);   // обратный отсчёт
+connTask = every(3000, connCheck);
 $('#cs-login').onsubmit = async e => {
   e.preventDefault();
   const btn = $('#cs-login-btn'), err = $('#cs-login-err');
@@ -6106,7 +6183,7 @@ $('#cs-login').onsubmit = async e => {
 };
 $('#cs-retry').onclick = e => act(e.currentTarget, async () => { await PanelContext.fetch('/api/conn/retry', { method: 'POST' }); await connCheck(); });
 
-let statusTimer;
+let statusTask = 0;
 // ---------- поиск колонки в сети ----------
 // Тот же поиск, что ./start.sh --find: порт adb 5555 в подсетях компьютера, затем проверка платы.
 // Выбранный адрес панель запоминает и перезапускается с ним.
@@ -6212,9 +6289,9 @@ function onConnected() {
   fs.loaded = false; logsLoaded = false; bootLoaded = false;
   showTab();
   refreshStatus();
-  clearInterval(statusTimer);
-  statusTimer = setInterval(refreshStatus, 5000);
-  loadSounds().catch(e => { if (!e.offline) $('#sounds').innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
+  if (statusTask) Scheduler.remove(statusTask);
+  statusTask = every(5000, refreshStatus);
+  loadSounds().catch(e => { if (!e.offline) setListHtml($('#sounds'), `<div class="empty">${esc(e.message)}</div>`); });
   loadSay();
   loadSparks();
   loadViz();

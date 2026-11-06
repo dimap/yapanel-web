@@ -1881,8 +1881,8 @@
         <p class="hint full" id="al-mode-hint"></p>
         <label class="f full"><span id="al-sound-cap">Звук</span>
           <span class="row" style="flex-wrap:nowrap"><select class="field" id="al-sound"></select>
-          <button type="button" class="btn sm" id="al-sound-play" title="Послушать"><svg width="14" height="14" aria-hidden="true"><use href="#i-play"/></svg></button>
-          <button type="button" class="btn sm" id="al-sound-up" title="Загрузить свой"><svg width="14" height="14" aria-hidden="true"><use href="#i-ul"/></svg></button></span>
+          <button type="button" class="btn sm" id="al-sound-play" title="Послушать" aria-label="Послушать выбранный звук"><svg width="14" height="14" aria-hidden="true"><use href="#i-play"/></svg></button>
+          <button type="button" class="btn sm" id="al-sound-up" title="Загрузить свой" aria-label="Загрузить свой звук"><svg width="14" height="14" aria-hidden="true"><use href="#i-ul"/></svg></button></span>
           <input type="file" id="al-sound-file" accept="audio/*" hidden></label>
         <label class="f"><span>Громкость: <span id="al-vol-v">50</span>%</span><input type="range" id="al-vol" min="1" max="10" step="1" value="5"></label>
         <label class="f">Нарастание громкости
@@ -2317,7 +2317,7 @@
       <div id="party-bulb-editor" hidden style="margin-top:14px; padding:16px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
         <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
           <h3 id="party-bulb-ed-title" style="margin:0; font-size:15px; font-weight:600;">➕ Привязать умную лампу Tuya</h3>
-          <button class="btn sm" type="button" id="party-bulb-cancel-x" title="Закрыть">✕</button>
+          <button class="btn sm" type="button" id="party-bulb-cancel-x" title="Закрыть" aria-label="Закрыть редактор лампы">✕</button>
         </div>
         <form id="party-bulb-form" onsubmit="return false;">
           <input type="hidden" id="party-bulb-edit-mode" value="add">
@@ -2367,7 +2367,7 @@
       <div id="party-scan-panel" hidden style="margin-top:14px; padding:16px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
         <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:8px;">
           <h3 style="margin:0; font-size:15px; font-weight:600;">🔍 Поиск ламп Tuya в локальной сети Wi-Fi</h3>
-          <button class="btn sm" type="button" id="party-scan-close-btn" title="Закрыть">✕</button>
+          <button class="btn sm" type="button" id="party-scan-close-btn" title="Закрыть" aria-label="Закрыть поиск ламп">✕</button>
         </div>
         <p class="hint" style="margin-bottom:12px;">Служба слушает сетевые анонсы устройств Tuya/Smart Life (UDP 6666/6667) для быстрого авто-определения IP и Device ID.</p>
         <div class="row" style="gap:10px; margin-bottom:12px; align-items:center;">
@@ -2383,7 +2383,7 @@
       <div id="party-import-panel" hidden style="margin-top:14px; padding:16px; background:var(--card-sub); border:1px solid var(--border); border-radius:12px;">
         <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:8px;">
           <h3 style="margin:0; font-size:15px; font-weight:600;">📋 Импорт ламп из JSON</h3>
-          <button class="btn sm" type="button" id="party-import-close-btn" title="Закрыть">✕</button>
+          <button class="btn sm" type="button" id="party-import-close-btn" title="Закрыть" aria-label="Закрыть импорт ламп">✕</button>
         </div>
         <p class="hint" style="margin-bottom:10px;">Вставьте сюда список из <code>devices.json</code> (tinytuya wizard) или массив ламп в формате <code>[{"name": "...", "ip": "...", "id": "...", "key": "..."}]</code>.</p>
         <textarea id="party-import-text" class="field" style="width:100%; height:120px; font-family:monospace; font-size:12px; margin-bottom:10px;" placeholder='[&#10;  {&#10;    "name": "Люстра",&#10;    "ip": "192.168.1.105",&#10;    "id": "bf0123456789abcdef",&#10;    "key": "0123456789abcdef",&#10;    "role": "kick"&#10;  }&#10;]'></textarea>
@@ -2836,7 +2836,7 @@
   <!-- ================= ФАЙЛЫ ================= -->
   <main id="tab-files" data-page hidden>
     <header class="page-head">
-      <div><h1>Файлы</h1><div class="sub">Корень (/) только для чтения — писать можно в /data и /tmp</div></div>
+      <div><h1>Файлы</h1><div class="sub">Корень (/) только для чтения — писать можно в /data/quasar/webpanel, /data/local/tmp, /sdcard и /tmp</div></div>
     </header>
     <div class="files-grid">
       <section class="card">
@@ -3454,7 +3454,7 @@
   <!-- ================= ФАЙЛЫ ================= -->
   <main id="tab-files" data-page hidden>
     <header class="page-head">
-      <div><h1>Файлы</h1><div class="sub">Корень (/) только для чтения — писать можно в /data и /tmp</div></div>
+      <div><h1>Файлы</h1><div class="sub">Корень (/) только для чтения — писать можно в /data/quasar/webpanel, /data/local/tmp, /sdcard и /tmp</div></div>
     </header>
     <div class="files-grid">
       <section class="card">

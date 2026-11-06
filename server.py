@@ -38,6 +38,7 @@ import tempfile
 import threading
 import zipfile
 import time
+from email.utils import formatdate, parsedate_to_datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -237,6 +238,13 @@ set_data_dir(ROOT)
 # Без пароля доступны только оболочка страницы и вход; всё остальное — после входа.
 PUBLIC_PATHS = {"/", "/index.html", "/manifest.webmanifest", "/sw.js", "/ca.crt", "/api/panel-auth",
                 "/api/panel-auth/login"}
+# Тело запроса не читаем в память целиком: JSON — 8 МБ, файлы — своим лимитом.
+# Лимит проверяется по Content-Length заранее, поэтому огромный запрос получает 413 без чтения.
+JSON_BODY_LIMIT = 8 * 1024 * 1024
+MEDIA_BODY_LIMIT = 200 * 1024 * 1024
+BACKUP_BODY_LIMIT = 200 * 1024 * 1024
+FS_UPLOAD_BODY_LIMIT = 512 * 1024 * 1024
+SOUND_BODY_LIMIT = 50 * 1024 * 1024
 # Команды Glagol, которые можно отправить из панели, и разрешённые для них поля.
 # Громкость: у Quasar своя шкала 0–20; колонка показывает её ×5 (0–100 с шагом 5), Glagol — /20 (0–1).
 # В ALSA она переводится по volume_manager_settings.platformToAlsaMap из quasar.cfg: 0 → 0, 1 → 49, 20 → 255.
@@ -673,6 +681,10 @@ def ring_fb_cmd(pixels):
 
 class AdbError(Exception):
     pass
+
+
+class BodyTooLarge(Exception):
+    """Content-Length больше разрешённого: тело не читаем, отвечаем 413 и закрываем соединение."""
 
 
 # Состояние Bluetooth спрашиваем у bluetoothd по D-Bus одним запросом: каждый запуск bluetoothctl оставляет в
@@ -1938,11 +1950,13 @@ def adb_usage_error(text, what):
     return text
 
 
-def find_adb():
+def find_adb(use_pyadb=None):
+    if use_pyadb is None:
+        use_pyadb = bool(os.environ.get("PANEL_PYADB"))
     if os.environ.get("PANEL_LOCAL") or os.environ.get("ADB") == "local":
         return "local"
     # Телефон (APK) или компьютер без adb: протокол adb на чистом Python (pyadb.py), только по сети
-    if os.environ.get("PANEL_PYADB"):
+    if use_pyadb:
         import pyadb
         return pyadb.install()
     exe = "adb.exe" if os.name == "nt" else "adb"
@@ -4658,6 +4672,65 @@ echo @@BLUEZ
             raise AdbError(f"это не резервная копия панели: {e}")
         if not manifest or manifest.get("format") != 1:
             raise AdbError("это не резервная копия панели (нет manifest.json)")
+        # Восстановление начинается с полного сброса /data/quasar/webpanel. Если
+        # установка из копии сорвётся, возвращаем прежние заставку/звук/override/
+        # хук из локального снимка, а не оставляем колонку полупустой.
+        snapshot_dir = tempfile.mkdtemp(prefix="webpanel_restore_")
+        snapshot, hook_was = {}, False
+        try:
+            try:
+                snapshot = self._snapshot_web(snapshot_dir)
+            except Exception as e:  # noqa: BLE001 — снимок не должен мешать самому восстановлению
+                JOURNAL.add(f"restore: не удалось сохранить файлы панели ({e})", "warn")
+            try:
+                hook_was = bool(self.hook_status().get("hook"))
+            except Exception as e:  # noqa: BLE001
+                JOURNAL.add(f"restore: не удалось узнать состояние хука ({e})", "warn")
+            try:
+                report = self._restore_apply(files)
+            except Exception:
+                try:
+                    self._restore_web(snapshot, hook_was)
+                    JOURNAL.add("restore: установка не удалась — прежние файлы панели возвращены", "warn")
+                except Exception as restore_error:  # noqa: BLE001
+                    JOURNAL.add(f"restore: не удалось вернуть прежние файлы панели: {restore_error}", "error")
+                raise
+            return {"restored": report, "ui": manifest.get("ui") or {}, "created": manifest.get("created"),
+                    "firmware": manifest.get("firmware"), "footprint": self.footprint()}
+        finally:
+            shutil.rmtree(snapshot_dir, ignore_errors=True)
+
+    RESTORE_EXTRA_FILES = ("boot_hook.sh", "boot.orig.binscled.zst", "boot_sound.orig.wav")
+
+    def _snapshot_web(self, td):
+        """Локальная копия того, что footprint_reset удалит из /data/quasar/webpanel."""
+        out, _, _ = self.adb.shell(f"cd {WEB_DIR} 2>/dev/null && find . -type f; true", check=False)
+        names = [l.strip()[2:] for l in strip_ansi(out).splitlines() if l.strip().startswith("./")]
+        saved = {}
+        for n in names:
+            if not (self.BACKUP_FILES.fullmatch(n) or n in self.RESTORE_EXTRA_FILES):
+                continue
+            local = Path(td) / n.replace("/", "__")
+            try:
+                self.adb.pull(f"{WEB_DIR}/{n}", local, timeout=300)
+            except (AdbError, OSError, subprocess.TimeoutExpired):
+                continue
+            if local.exists():
+                saved[n] = local
+        return saved
+
+    def _restore_web(self, saved, hook):
+        if not saved and not hook:
+            return
+        self.adb.shell(f"mkdir -p {WEB_DIR}")
+        for n, local in saved.items():
+            parent = posixpath.dirname(f"{WEB_DIR}/{n}")
+            self.adb.shell(f"mkdir -p {shlex.quote(parent)}")
+            self.adb.push(local, f"{WEB_DIR}/{n}")
+        if hook:
+            self._ensure_hook()
+
+    def _restore_apply(self, files):
         report = []
         self.footprint_reset()
         boot = self.boot_status()
@@ -4725,8 +4798,7 @@ echo @@BLUEZ
             # скрипт — текущей версии, часовой пояс — этого компьютера (их ставит alarm_install)
             n = len(self.alarm_install()["alarms"])
             report.append(f"будильник ({n})")
-        return {"restored": report, "ui": manifest.get("ui") or {}, "created": manifest.get("created"),
-                "firmware": manifest.get("firmware"), "footprint": self.footprint()}
+        return report
 
     # ---------- будильник ----------
     ALARM_FIELDS = ("id", "on", "time", "days", "mode", "query", "sound", "sound_name", "volume", "ramp",
@@ -6151,12 +6223,27 @@ echo @@BLUEZ
         return self.bt_state()
 
     # ---------- файлы ----------
+    # Системные разделы, которые нельзя менять через файловый менеджер. Чтение/скачивание
+    # по-прежнему работают: ограничение касается только записи, удаления и переименования.
+    WRITE_DENY = ("/system", "/vendor", "/odm", "/data/data", "/data/quasar", "/data/local",
+                  "/etc", "/proc", "/sys", "/dev", "/root", "/bin", "/sbin", "/usr", "/apex")
+    # Исключения: временные каталоги и собственная папка панели. Остальное
+    # в /data/local и /data/quasar по-прежнему доступно только на чтение.
+    WRITE_ALLOW = ("/data/local/tmp", WEB_DIR)
+    SENSITIVE_FILES = (".panel_auth.json", ".yandex_auth.json", ".agent.json")
+
     @staticmethod
     def norm(path):
         return posixpath.normpath("/" + str(path or "").strip().lstrip("/"))
 
+    @classmethod
+    def _sensitive_path(cls, path):
+        """Служебные файлы панели не отдаём через файловый менеджер даже на чтение."""
+        parts = [p for p in path.split("/") if p]
+        return bool(parts) and (parts[-1] in cls.SENSITIVE_FILES or ".tls" in parts)
+
     def fs_list(self, path):
-        path = self.norm(path)
+        path = self._guard(path)
         entries = []
         has_links = False
         for mode, size, mtime, name in self.adb.ls(path):
@@ -6201,7 +6288,7 @@ echo @@BLUEZ
         return {"path": path, "writable": out.strip() == "rw", "entries": entries}
 
     def fs_read(self, path, limit=512 * 1024):
-        path = self.norm(path)
+        path = self._guard(path)
         if getattr(self.adb, "is_local", False):
             try:
                 with open(path, "rb") as f:
@@ -6236,7 +6323,7 @@ echo @@BLUEZ
         return {"binary": False, "text": text, "truncated": truncated}
 
     def fs_write(self, path, text):
-        path = self.norm(path)
+        path = self._guard(path, write=True)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "f"
             f.write_bytes(text.encode("utf-8"))
@@ -6247,30 +6334,56 @@ echo @@BLUEZ
         name = posixpath.basename(name)
         if not name or name in (".", ".."):
             raise AdbError("плохое имя файла")
-        dest = posixpath.join(self.norm(directory), name)
+        # Проверяем конечный путь, а не только папку: имя тоже не должно
+        # попасть в защищённое дерево или перезаписать служебный файл.
+        dest = self._guard(posixpath.join(directory, name), write=True, allow_temp=True)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "f"
             f.write_bytes(body)
             self.adb.push(f, dest, timeout=600)
         return {"ok": True, "path": dest}
 
-    def _guard(self, path):
+    def _guard(self, path, write=False, allow_temp=False):
+        """Проверка пути файлового менеджера.
+
+        write — операция меняет колонку: запрещаем системные разделы и слишком
+        короткие пути (/system, /vendor, /odm, /data/data, /data/quasar,
+        /data/local, кроме /data/local/tmp). allow_temp разрешает саму папку
+        /tmp или /data/local/tmp (нужно для загрузки в неё), но не её удаление.
+        Чтение и скачивание системных файлов не ограничиваем, однако служебные
+        файлы панели (.panel_auth.json, .yandex_auth.json, .tls/…) не отдаём.
+        """
         path = self.norm(path)
-        if path.count("/") < 2 or path in ("/bkupgrade/data", "/data/quasar"):
-            raise AdbError(f"{path}: слишком важный путь, используйте консоль")
+        temp = (path == "/tmp" or path.startswith("/tmp/")
+                or path == "/data/local/tmp" or path.startswith("/data/local/tmp/"))
+        if write:
+            if not (allow_temp and temp) and (path.count("/") < 2
+                                               or path == "/bkupgrade/data" or path.startswith("/bkupgrade/data/")):
+                raise AdbError(f"{path}: слишком важный путь, используйте консоль")
+            for root in self.WRITE_DENY:
+                if path == root or path.startswith(root + "/"):
+                    if path in self.WRITE_ALLOW:
+                        if allow_temp:
+                            break
+                        raise AdbError(f"{path}: системный путь защищён от изменения")
+                    if any(path.startswith(allowed + "/") for allowed in self.WRITE_ALLOW):
+                        break
+                    raise AdbError(f"{path}: системный путь защищён от изменения")
+        if self._sensitive_path(path):
+            raise AdbError(f"{path}: служебный файл панели недоступен через файловый менеджер")
         return path
 
     def fs_delete(self, path):
-        path = self._guard(path)
+        path = self._guard(path, write=True)
         _, err, rc = self.adb.shell(f"rm -rf {shlex.quote(path)}", check=False)
         if rc != 0:
             raise AdbError(err.strip() or "не удалось удалить")
         return {"ok": True}
 
     def fs_rename(self, path, new_name):
-        path = self._guard(path)
+        path = self._guard(path, write=True)
         new_name = str(new_name).strip()
-        if not new_name or "/" in new_name or new_name in (".", ".."):
+        if not new_name or "/" in new_name or "\\" in new_name or new_name in (".", ".."):
             raise AdbError("плохое имя")
         dest = posixpath.join(posixpath.dirname(path), new_name)
         _, err, rc = self.adb.shell(f"mv -n {shlex.quote(path)} {shlex.quote(dest)}", check=False)
@@ -6279,18 +6392,18 @@ echo @@BLUEZ
         return {"ok": True}
 
     def fs_mkdir(self, path):
-        path = self.norm(path)
+        path = self._guard(path, write=True, allow_temp=True)
         _, err, rc = self.adb.shell(f"mkdir -p {shlex.quote(path)}", check=False)
         if rc != 0:
             raise AdbError(err.strip() or "не удалось создать папку")
         return {"ok": True}
 
     def fs_play(self, path):
-        return self._play_path(self.norm(path))
+        return self._play_path(self._guard(path))
 
     def fs_download(self, path):
         """Возвращает (имя, локальный файл, tmpdir). Папки упаковываются в tar.gz на компьютере."""
-        path = self.norm(path)
+        path = self._guard(path)
         name = posixpath.basename(path) or "root"
         td = tempfile.mkdtemp(prefix="webpanel_")
         local = Path(td) / name
@@ -6348,6 +6461,11 @@ echo @@BLUEZ
             cmd = f"logcat -d -v time | grep -iE 'audio|sound|media|alsa' | tail -n {lines}"
         elif name.startswith("tmp:"):
             fname = name[4:]
+            # tmp:<имя> — только basename из /data/local/tmp. Иначе «tmp:../..» или
+            # «tmp:/etc/passwd» читали бы произвольные файлы на колонке.
+            if (not fname or fname in (".", "..") or posixpath.basename(fname) != fname
+                    or "/" in fname or "\\" in fname or "\x00" in fname):
+                raise AdbError(f"Лог {name} не найден")
             cmd = f"tail -n {lines} /data/local/tmp/{shlex.quote(fname)}"
         elif name in self.logs_list():
             cmd = f"tail -n {lines} {LOGS_DIR}/{shlex.quote(name)}"
@@ -6520,14 +6638,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8", headers=()):
+    def _send(self, code, body, ctype="application/json; charset=utf-8", headers=(), cache="no-store"):
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         for k, v in headers:
             self.send_header(k, v)
@@ -6537,6 +6657,36 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             # вкладку закрыли или перезагрузили, пока колонка отвечала: ответ некому отдать, это не ошибка
             self.close_connection = True
+
+    def _serve_file(self, f, ctype=None, cache="no-cache"):
+        """Статика с ETag/Last-Modified: браузер и service worker кешируют,
+        но каждый раз сверяют версию (304), поэтому после обновления панели
+        не остаётся старого app.js со старым index.html."""
+        try:
+            st = f.stat()
+        except OSError:
+            return self._send(404, {"error": "not found"})
+        etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+        headers = [("ETag", etag), ("Last-Modified", formatdate(st.st_mtime, usegmt=True))]
+        ctype = ctype or MIME.get(f.suffix, "application/octet-stream")
+        inm = (self.headers.get("If-None-Match") or "").strip()
+        if inm:
+            tags = {x.strip() for x in inm.split(",")}
+            if "*" in tags or etag in tags:
+                return self._send(304, b"", ctype, headers, cache=cache)
+        else:
+            ims = self.headers.get("If-Modified-Since")
+            if ims:
+                try:
+                    if int(st.st_mtime) <= int(parsedate_to_datetime(ims).timestamp()):
+                        return self._send(304, b"", ctype, headers, cache=cache)
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        try:
+            data = f.read_bytes()
+        except OSError:
+            return self._send(404, {"error": "not found"})
+        return self._send(200, data, ctype, headers, cache=cache)
 
     # ---------- доступ ----------
     @property
@@ -6558,6 +6708,56 @@ class Handler(BaseHTTPRequestHandler):
             return ("Set-Cookie", f"{access.COOKIE}={token}; Max-Age={access.SESSION_TTL}; {attrs}")
         return ("Set-Cookie", f"{access.COOKIE}=; Max-Age=0; {attrs}")
 
+    def _client_net_allowed(self):
+        """cfg.server.allow_networks — дополнительный фильтр клиентских IP.
+        Пустой список ничего не меняет, loopback разрешён всегда (панель на
+        localhost и reverse proxy на этом же компьютере не должны пострадать)."""
+        cfg = get_config()
+        nets = getattr(getattr(cfg, "server", None), "allow_networks", ()) or ()
+        if not nets:
+            return True
+        try:
+            ip = ipaddress.ip_address(str((self.client_address or ("",))[0]).split("%", 1)[0])
+        except (ValueError, IndexError, TypeError):
+            return False
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        if ip.is_loopback:
+            return True
+        for entry in nets:
+            try:
+                net = ipaddress.ip_network(str(entry).strip(), strict=False)
+            except ValueError:
+                continue
+            if ip.version == net.version and ip in net:
+                return True
+        return False
+
+    def _same_origin(self, origin):
+        if (origin or "").strip().lower() == "null":
+            return False
+        try:
+            parsed = urlparse(origin)
+        except ValueError:
+            return False
+        host = (self.headers.get("Host") or "").strip().lower()
+        return bool(host and parsed.netloc and parsed.netloc.lower() == host)
+
+    def _content_length(self):
+        values = self.headers.get_all("Content-Length") if hasattr(self.headers, "get_all") else None
+        if values is None:
+            single = self.headers.get("Content-Length")
+            values = [] if single is None else [single]
+        normalized = {str(v).strip() for v in values}
+        if not normalized:
+            return 0
+        if len(normalized) != 1:
+            raise ValueError("конфликтующие Content-Length")
+        raw = normalized.pop()
+        if not re.fullmatch(r"\d+", raw):
+            raise ValueError("неверный Content-Length")
+        return int(raw)
+
     def _guard(self, path):
         """True — запрос уже отклонён. POST с чужого сайта (CSRF) режем всегда, даже без пароля:
         иначе любая открытая вкладка могла бы дёрнуть /api/shell на localhost."""
@@ -6570,16 +6770,29 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             self._send(403, {"error": "private worker"})
             return True
+        if not self._client_net_allowed():
+            self._send(403, {"error": "этот клиент не входит в разрешённые сети"})
+            return True
         if self.command == "POST":
             origin = self.headers.get("Origin")
-            # «null» шлют изолированные iframe и т. п. — с панели такого не бывает, а чужая страница так обошла бы проверку
-            if origin and (origin == "null" or urlparse(origin).netloc != self.headers.get("Host")):
-                self._send(403, {"error": "запрос с чужого сайта"})
-                return True
+            if origin:
+                # «null» шлют изолированные iframe и т. п. — с панели такого не бывает, а чужая страница так обошла бы проверку
+                if not self._same_origin(origin):
+                    self._send(403, {"error": "запрос с чужого сайта"})
+                    return True
+            else:
+                # Браузеры с Sec-Fetch-Site: same-origin/none — свой запрос или переход
+                # по адресу; cross-site/same-site — чужая страница. Без заголовка
+                # (curl, старые клиенты, API) не блокируем.
+                site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+                if site and site not in ("same-origin", "none"):
+                    self._send(403, {"error": "запрос с чужого сайта"})
+                    return True
             # Панель шлёт тело только как JSON или файл. «Простые» типы (форма, text/plain) браузер отправит
             # с чужого сайта без предварительного запроса — их не принимаем, даже если Origin не пришёл.
             ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
-            if int(self.headers.get("Content-Length") or 0) and ctype not in ("application/json", "application/octet-stream"):
+            if self._content_length() and ctype not in ("application/json", "application/octet-stream"):
+                self.close_connection = True
                 self._send(415, {"error": "тело запроса — только JSON или файл"})
                 return True
         if path in PUBLIC_PATHS or path.startswith("/static/") or self.access.session_ok(self._token()):
@@ -6612,13 +6825,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": str(e)})
         self._send(404, {"error": "not found"})
 
-    def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
+    def _body(self, limit=JSON_BODY_LIMIT):
+        """Читает тело только после проверки Content-Length.
+
+        BodyTooLarge поднимается до чтения — огромный запрос не попадает в
+        память. Ошибки формата заголовка (ValueError) и превышение лимита
+        обрабатывает do_POST, отвечая 400/413 и не обрывая соединение.
+        """
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            raise ValueError("chunked-тело не поддерживается")
+        n = self._content_length()
+        if n > limit:
+            raise BodyTooLarge(f"тело больше {limit // (1024 * 1024)} МБ")
         return self.rfile.read(n) if n else b""
 
-    def _json(self):
-        b = self._body()
-        return json.loads(b) if b else {}
+    def _json(self, limit=JSON_BODY_LIMIT):
+        b = self._body(limit)
+        if not b:
+            return {}
+        try:
+            return json.loads(b)
+        except ValueError as e:
+            raise ValueError(f"некорректный JSON: {e}") from None
 
     # Поиск колонок идёт в фоне (секунды), экран подключения опрашивает ход: GET /api/conn/find
     finder = {"running": False, "stage": "", "done": 0, "total": 0, "nets": [], "found": [], "error": None, "auto": None, "t": 0}
@@ -6770,6 +6998,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(local.stat().st_size))
             self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(name)}")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
             self.end_headers()
             with open(local, "rb") as f:
                 shutil.copyfileobj(f, self.wfile, 1 << 16)
@@ -6861,11 +7093,11 @@ class Handler(BaseHTTPRequestHandler):
         p = self.panel
         if p is None:
             if u.path in ("/", "/index.html"):
-                return self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+                return self._serve_file(STATIC / "index.html", "text/html; charset=utf-8", cache="no-cache")
             if u.path.startswith("/static/"):
                 f = (STATIC / unquote(u.path[len("/static/"):])).resolve()
                 if f.is_file() and STATIC in f.parents:
-                    return self._send(200, f.read_bytes(), MIME.get(f.suffix, "application/octet-stream"))
+                    return self._serve_file(f)
             if u.path.startswith("/api/"):
                 return self._send(503, {"error": "Колонка не подключена", "offline": True})
             return self._send(404, {"error": "not found"})
@@ -6908,23 +7140,30 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/fs/download":
             return self._download(q.get("path", ""))
         if u.path in ("/", "/index.html"):
-            return self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+            return self._serve_file(STATIC / "index.html", "text/html; charset=utf-8", cache="no-cache")
         if u.path.startswith("/static/"):
             f = (STATIC / unquote(u.path[len("/static/"):])).resolve()
             if f.is_file() and STATIC in f.parents:
-                return self._send(200, f.read_bytes(), MIME.get(f.suffix, "application/octet-stream"))
+                return self._serve_file(f)
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        # Тело читается вне _handle, поэтому ошибки Content-Length/JSON и
+        # превышение лимита ловим здесь: 400/413 вместо обрыва соединения.
+        try:
+            return self._do_POST()
+        except BodyTooLarge as e:
+            self.close_connection = True
+            return self._send(413, {"error": str(e)})
+        except ValueError as e:
+            return self._send(400, {"error": f"неверный запрос: {e}"})
+
+    def _do_POST(self):
         u = urlparse(self.path)
         if self._guard(u.path):
             return
         if u.path.startswith("/api/panel-auth/"):
-            try:
-                d = self._json()
-            except ValueError:
-                d = {}
-            return self._panel_auth_post(u.path, d)
+            return self._panel_auth_post(u.path, self._json())
         if u.path == "/api/conn/retry":
             if not self.panel or not getattr(self.panel, "conn", None):
                 return self._send(503, {"error": "Колонка не подключена", "offline": True})
@@ -6932,10 +7171,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/conn/find":
             return self._handle(lambda: self._conn_find(start=True))
         if u.path == "/api/conn/use":
-            try:
-                d = self._json()
-            except ValueError:
-                d = {}
+            d = self._json()
             self._jdata = d if isinstance(d, dict) else {}
             return self._handle(lambda: self._conn_use(self._jdata.get("serial")))
         if self._offline(u.path):
@@ -6945,24 +7181,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"error": "Колонка не подключена", "offline": True})
         if u.path == "/api/upload":
             name = unquote(self.headers.get("X-Filename", "upload.bin"))
-            body = self._body()
+            body = self._body(MEDIA_BODY_LIMIT)
             return self._handle(lambda: p.play_upload(name, body))
         if u.path == "/api/sounds/replace":
             name = unquote(self.headers.get("X-Sound", ""))
-            body = self._body()
+            body = self._body(SOUND_BODY_LIMIT)
             return self._handle(lambda: p.sound_replace(name, body))
         if u.path == "/api/led/gif":
-            return self._handle(lambda: p.led_gif(self._body()))
+            return self._handle(lambda: p.led_gif(self._body(MEDIA_BODY_LIMIT)))
         if u.path == "/api/boot/sound":
             name = unquote(self.headers.get("X-Filename", "sound"))
-            body = self._body()
+            body = self._body(SOUND_BODY_LIMIT)
             return self._handle(lambda: p.boot_sound_install(name, body))
         if u.path == "/api/alarms/sound":
             name = unquote(self.headers.get("X-Filename", "sound"))
-            body = self._body()
+            body = self._body(SOUND_BODY_LIMIT)
             return self._handle(lambda: p.alarm_sound_upload(name, body))
         if u.path == "/api/backup/restore":
-            body = self._body()
+            body = self._body(BACKUP_BODY_LIMIT)
             return self._handle(lambda: p.backup_restore(body))
         if u.path == "/api/backup":
             try:
@@ -6974,7 +7210,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/fs/upload":
             name = unquote(self.headers.get("X-Filename", ""))
             directory = unquote(self.headers.get("X-Dir", "/tmp"))
-            body = self._body()
+            body = self._body(FS_UPLOAD_BODY_LIMIT)
             return self._handle(lambda: p.fs_upload(directory, name, body))
         d = self._json()
         self._jdata = d if isinstance(d, dict) else {}
@@ -7362,10 +7598,67 @@ def load_settings():
 
 
 def save_settings(d):
+    """Атомарно сохраняет настройки (tmp + os.replace + fsync).
+
+    Если прежний файл был битым, кладём его копию рядом (.corrupt-*) —
+    иначе следующая неудачная запись заменила бы единственный экземпляр.
+    Ошибку не глотаем: пишем в журнал и возвращаем False, чтобы вызывающий
+    мог решить, что делать.
+    """
     try:
-        SETTINGS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+        data = json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8")
+    except (TypeError, ValueError) as e:
+        JOURNAL.add(f"настройки: не удалось сериализовать {SETTINGS_FILE.name}: {e}", "error")
+        return False
+
+    # Битый файл — единственная копия прежних настроек: сохраняем её до замены.
+    try:
+        old = SETTINGS_FILE.read_bytes()
     except OSError:
-        pass
+        old = b""
+    if old:
+        try:
+            json.loads(old.decode("utf-8-sig"))
+        except (ValueError, UnicodeDecodeError):
+            broken = SETTINGS_FILE.with_name(
+                f"{SETTINGS_FILE.name}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}")
+            try:
+                if not broken.exists() or broken.read_bytes() != old:
+                    broken.write_bytes(old)
+                JOURNAL.add(f"настройки: битый {SETTINGS_FILE.name} сохранён как {broken.name}", "warn")
+            except OSError as e:
+                # Не заменяем единственный экземпляр настроек, если копию
+                # повреждённого файла сохранить не удалось.
+                JOURNAL.add(f"настройки: не удалось сохранить копию битого файла: {e}", "error")
+                return False
+
+    tmp = SETTINGS_FILE.with_name(f"{SETTINGS_FILE.name}.tmp.{os.getpid()}.{threading.get_ident()}")
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, SETTINGS_FILE)
+        # На POSIX fsync каталога фиксирует сам rename; на Windows каталог не открыть — пропускаем.
+        try:
+            fd = os.open(str(SETTINGS_FILE.parent), os.O_RDONLY)
+        except (OSError, AttributeError):
+            fd = None
+        if fd is not None:
+            try:
+                os.fsync(fd)
+            except OSError:
+                pass      # замена уже состоялась; fsync каталога — дополнительная гарантия
+            finally:
+                os.close(fd)
+        return True
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        JOURNAL.add(f"настройки: не удалось сохранить {SETTINGS_FILE.name}: {e}", "error")
+        return False
 
 
 def main():
@@ -7409,8 +7702,11 @@ def main():
     # Адрес колонки: из аргумента/окружения, иначе — запомненный, иначе спросим (если есть кому ответить).
     settings = load_settings()
     device = normalize_device(args.device) or settings.get("device")
-    if args.find:
-        device = pick_device(find_adb(), args.find) or device
+    # --find важнее сохранённой настройки; если флаг не задан, берём find_subnet
+    # из env/JSON (PANEL_FIND_SUBNET или device.find_subnet).
+    find_where = args.find or cfg.device.find_subnet
+    if find_where:
+        device = pick_device(find_adb(cfg.device.use_pyadb), find_where) or device
     # С --open (start.bat/start.sh) не спрашиваем в консоли: страница сама найдёт колонку в сети
     if not device and not args.open and sys.stdin and sys.stdin.isatty():
         try:
@@ -7429,7 +7725,9 @@ def main():
     global PANEL_PROFILE
     PANEL_PROFILE = (model, auto)
 
-    adb_bin = "local" if device == "local" else find_adb()
+    # pyadb включается явно (PANEL_PYADB / device.use_pyadb): install() подменяет
+    # subprocess.run/Popen на весь процесс, поэтому только по запросу владельца.
+    adb_bin = "local" if device == "local" else find_adb(cfg.device.use_pyadb)
     adb = Adb(adb_bin, device)
     panel = Panel(adb, config=cfg)
     panel.auth = glagol.YandexAuth(AUTH_FILE)

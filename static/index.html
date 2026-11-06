@@ -2198,6 +2198,11 @@
           <b style="font-size:12px; margin-top:2px;">Полиция</b>
           <span class="meta" style="font-size:10px;">Спецсигнал</span>
         </button>
+        <button type="button" class="mode-card" data-mode="cinema">
+          <span style="font-size:22px;">🎬</span>
+          <b style="font-size:12px; margin-top:2px;">Кинотеатр 4D</b>
+          <span class="meta" style="font-size:10px;">Ambilight и спецэффекты</span>
+        </button>
       </div>
 
       <!-- Скорость и Яркость эффекта -->
@@ -2223,6 +2228,41 @@
             <span class="mono meta" id="party-slider-brightness-val" style="min-width:44px; text-align:right;">80%</span>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- Кинотеатр 4D -->
+    <section class="card" id="party-cinema-card">
+      <div class="card-head">
+        <h2>Кинотеатр 4D</h2>
+        <div class="actions">
+          <span class="badge" id="party-cinema-badge">—</span>
+        </div>
+      </div>
+      <p class="hint" id="party-cinema-title">Ambilight и магические спецэффекты в такт фильму. Запустите воспроизведение или выберите режим «Кинотеатр 4D».</p>
+      <div class="row" style="gap:12px; align-items:center; margin-top:2px;">
+        <span class="mono" id="party-cinema-time" style="font-weight:600;">0:00 / 0:00</span>
+        <span class="meta" id="party-cinema-scene">Сцена: —</span>
+        <span class="meta" id="party-cinema-spell">Спелл: —</span>
+        <span class="meta" id="party-cinema-offset">Смещение: 0.0 с</span>
+      </div>
+      <div class="row" style="gap:8px; margin-top:2px;">
+        <button class="btn sm primary" type="button" id="party-cinema-toggle">▶ Играть</button>
+        <button class="btn sm" type="button" id="party-cinema-sync">Sync 32s</button>
+        <button class="btn sm" type="button" id="party-cinema-back">−1 с</button>
+        <button class="btn sm" type="button" id="party-cinema-fwd">+1 с</button>
+      </div>
+      <div class="row" style="gap:10px; margin-top:2px;">
+        <input type="range" id="party-cinema-seek" min="0" max="0" step="1" value="0" style="flex:1;" aria-label="Позиция фильма">
+      </div>
+      <div class="row" id="party-cinema-spells" style="gap:6px; margin-top:2px;">
+        <button class="btn sm" type="button" data-spell="spell_lumos">Люмос</button>
+        <button class="btn sm" type="button" data-spell="spell_lumos_maxima">Люмос Максима</button>
+        <button class="btn sm" type="button" data-spell="spell_patronus">Экспекто Патронум</button>
+        <button class="btn sm" type="button" data-spell="spell_avada">Авада</button>
+        <button class="btn sm" type="button" data-spell="spell_expelliarmus">Экспеллиармус</button>
+        <button class="btn sm" type="button" data-spell="spell_bombarda">Бомбарда</button>
+        <button class="btn sm" type="button" data-spell="spell_ridikulus">Ридикулус</button>
       </div>
     </section>
 
@@ -2379,6 +2419,18 @@
         <div class="stat-box" style="background:var(--card-sub); border:1px solid var(--border); border-radius:12px; padding:12px;">
           <div class="meta" style="font-size:12px;">Приборов в работе</div>
           <div id="party-stat-workers" style="font-weight:600; margin-top:4px;">—</div>
+        </div>
+        <div class="stat-box" style="background:var(--card-sub); border:1px solid var(--border); border-radius:12px; padding:12px;">
+          <div class="meta" style="font-size:12px;">Лента</div>
+          <div id="party-stat-strip" style="font-weight:600; margin-top:4px; display:flex; align-items:center; gap:6px;">—</div>
+        </div>
+        <div class="stat-box" style="background:var(--card-sub); border:1px solid var(--border); border-radius:12px; padding:12px;">
+          <div class="meta" style="font-size:12px;">Аудиозахват</div>
+          <div id="party-stat-audio" style="font-weight:600; margin-top:4px; display:flex; align-items:center; gap:6px;">—</div>
+        </div>
+        <div class="stat-box" style="background:var(--card-sub); border:1px solid var(--border); border-radius:12px; padding:12px;">
+          <div class="meta" style="font-size:12px;">Ошибка</div>
+          <div id="party-stat-error" style="font-weight:600; margin-top:4px; overflow-wrap:anywhere;">—</div>
         </div>
       </div>
     </section>

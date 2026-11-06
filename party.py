@@ -27,6 +27,18 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+from party_store import (
+    DEFAULT_SETTINGS,
+    MODES,
+    PartyStore,
+    clamp,
+    clamp_int,
+    normalize_bulb,
+    normalize_bulbs,
+    normalize_settings,
+)
+from party_audio import BeatDetector
+
 try:
     import tinytuya
 except ImportError:
@@ -37,6 +49,10 @@ except ImportError:
         import tinytuya
     except ImportError:
         tinytuya = None
+
+
+class _Cancelled(Exception):
+    pass
 
 
 def run_android_cmd(args, ctx="u:r:shell:s0", timeout=2.0):
@@ -90,8 +106,15 @@ class BulbWorker(threading.Thread):
         self.last_reconnect_time = 0.0
         self.last_heartbeat = time.time()
         self.current_val = None
+        self.last_error = None
+        self.reconnect_count = 0
+        self._io_lock = threading.RLock()
 
     def connect(self):
+        with self._io_lock:
+            return self._connect_locked()
+
+    def _connect_locked(self):
         if not tinytuya or not self.ip or self.ip == "Unknown IP":
             return False
         try:
@@ -125,25 +148,36 @@ class BulbWorker(threading.Thread):
             self.connected = True
             self.is_white = False
             self.last_heartbeat = time.time()
+            self.last_error = None
+            self.reconnect_count += 1
             desc = f"{self.role.upper()} ({self.side})" if self.side else self.role.upper()
             print(f"[Party] Connected {desc} worker: {self.name} ({self.ip})")
             return True
-        except Exception:
+        except Exception as error:
             self.connected = False
             self.device = None
+            self.last_error = f"{type(error).__name__}: {error}"
             return False
 
     def disconnect(self):
-        self.connected = False
-        if self.device:
+        with self._io_lock:
+            self.connected = False
+            if self.device:
+                try:
+                    self.device.close()
+                except Exception:
+                    pass
+                self.device = None
+
+    def stop(self, timeout=0.5, restore=True):
+        self._stop_event.set()
+        # Погасить свет в тёплый белый до закрытия сокета: иначе лампа
+        # остаётся в последнем цвете эффекта навсегда.
+        if restore and self.connected and self.device:
             try:
-                self.device.close()
+                self.send_white(800, 800)
             except Exception:
                 pass
-            self.device = None
-
-    def stop(self, timeout=0.5):
-        self._stop_event.set()
         self.disconnect()
         if self.is_alive():
             self.join(timeout=timeout)
@@ -167,6 +201,10 @@ class BulbWorker(threading.Thread):
             self.disconnect()
 
     def send_color_val(self, val, nowait=True):
+        with self._io_lock:
+            return self._send_color_val_locked(val, nowait)
+
+    def _send_color_val_locked(self, val, nowait=True):
         if not self.connected or not self.device:
             return False
         sock = getattr(self.device, "socket", None)
@@ -191,6 +229,10 @@ class BulbWorker(threading.Thread):
             return False
 
     def send_white(self, brightness=800, temp=800):
+        with self._io_lock:
+            return self._send_white_locked(brightness, temp)
+
+    def _send_white_locked(self, brightness=800, temp=800):
         if not self.connected or not self.device:
             return False
         sock = getattr(self.device, "socket", None)
@@ -216,6 +258,10 @@ class BulbWorker(threading.Thread):
 
     def send_off(self):
         """Turn off this specific bulb completely."""
+        with self._io_lock:
+            return self._send_off_locked()
+
+    def _send_off_locked(self):
         if not self.connected or not self.device:
             return False
         try:
@@ -233,6 +279,10 @@ class BulbWorker(threading.Thread):
 
     def send_on(self):
         """Turn on this specific bulb."""
+        with self._io_lock:
+            return self._send_on_locked()
+
+    def _send_on_locked(self):
         if not self.connected or not self.device:
             return False
         try:
@@ -248,12 +298,13 @@ class BulbWorker(threading.Thread):
             return False
 
     def update_ip(self, new_ip):
-        if self.ip != new_ip or not self.connected:
-            self.ip = new_ip
-            self.disconnect()
-            self.connect()
-            if hasattr(self.manager, "save_bulb_ip"):
-                self.manager.save_bulb_ip(self.dev_id, new_ip)
+        with self._io_lock:
+            if self.ip != new_ip or not self.connected:
+                self.ip = new_ip
+                self.disconnect()
+                self.connect()
+                if hasattr(self.manager, "save_bulb_ip"):
+                    self.manager.save_bulb_ip(self.dev_id, new_ip)
 
     def set_position(self, pos_x, pos_y=0.0):
         self.pos_x = float(pos_x)
@@ -277,9 +328,10 @@ class BulbWorker(threading.Thread):
             if now - self.last_heartbeat > 15.0:
                 self.last_heartbeat = now
                 try:
-                    if self.device:
-                        self.device.heartbeat(nowait=True)
-                        self._drain_socket()
+                    with self._io_lock:
+                        if self.device:
+                            self.device.heartbeat(nowait=True)
+                            self._drain_socket()
                 except Exception:
                     self.disconnect()
 
@@ -304,6 +356,9 @@ class ZigbeeStripWorker(threading.Thread):
         self.token = None
         self.target_state = None  # ("hsv", hue, sat, bright) or ("white", temp_k, bright) or ("off",)
         self.last_sent_state = None
+        self.last_error = None
+        self._retry_delay = 1.0
+        self._send_lock = threading.Lock()
         self.cond = threading.Condition()
         self.running = True
         self.load_config()
@@ -316,17 +371,25 @@ class ZigbeeStripWorker(threading.Thread):
             self.join(timeout=timeout)
 
     def load_config(self):
-        if not self.config_path or not os.path.exists(self.config_path):
+        if not self.config_path and not getattr(self.manager, "store", None):
             return
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
+            if getattr(self.manager, "store", None):
+                cfg = self.manager.store.load_strip()
+            else:
+                if not self.config_path or not os.path.exists(self.config_path):
+                    return
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
             self.device_id = cfg.get("device_id")
             self.token = cfg.get("token")
             self.enabled = bool(cfg.get("enabled", True) and self.token and self.device_id)
             if self.enabled:
                 print(f"[Party] Loaded Zigbee Strip Ambient Sync: Device ID {self.device_id}")
+            else:
+                self.last_error = "strip config is disabled or incomplete"
         except Exception as e:
+            self.last_error = f"{type(e).__name__}: {e}"
             print(f"[Party] Failed to load strip config: {e}")
 
     def _is_stopping(self):
@@ -339,6 +402,28 @@ class ZigbeeStripWorker(threading.Thread):
             return True
         return False
 
+    def _actions_for_state(self, state):
+        if not state:
+            return None
+        if state[0] == "off":
+            return [{"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": False}}]
+        if state[0] == "white":
+            temp_k, bright = state[1], state[2]
+            return [
+                {"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": True}},
+                {"type": "devices.capabilities.color_setting", "state": {"instance": "temperature_k", "value": int(temp_k)}},
+                {"type": "devices.capabilities.range", "state": {"instance": "brightness", "value": int(bright)}}
+            ]
+        if state[0] == "hsv":
+            hue_deg, sat, bright = state[1], state[2], state[3]
+            bright = max(0, min(100, int(bright)))
+            return [
+                {"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": True}},
+                {"type": "devices.capabilities.range", "state": {"instance": "brightness", "value": bright}},
+                {"type": "devices.capabilities.color_setting", "state": {"instance": "hsv", "value": {"h": int(hue_deg) % 360, "s": max(0, min(100, int(sat))), "v": bright}}}
+            ]
+        return None
+
     def run(self):
         while not self._is_stopping():
             state = None
@@ -348,38 +433,38 @@ class ZigbeeStripWorker(threading.Thread):
                 if self._is_stopping():
                     break
                 state = self.target_state
-                self.last_sent_state = state
 
             if not self.enabled or not self.token or not self.device_id or not state:
                 time.sleep(0.2)
                 continue
 
-            actions = None
-            if state[0] == "off":
-                actions = [{"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": False}}]
-            elif state[0] == "white":
-                temp_k, bright = state[1], state[2]
-                actions = [
-                    {"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": True}},
-                    {"type": "devices.capabilities.color_setting", "state": {"instance": "temperature_k", "value": int(temp_k)}},
-                    {"type": "devices.capabilities.range", "state": {"instance": "brightness", "value": int(bright)}}
-                ]
-            elif state[0] == "hsv":
-                hue_deg, sat, bright = state[1], state[2], state[3]
-                actions = [
-                    {"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": True}},
-                    {"type": "devices.capabilities.range", "state": {"instance": "brightness", "value": int(bright)}},
-                    {"type": "devices.capabilities.color_setting", "state": {"instance": "hsv", "value": {"h": int(hue_deg), "s": int(sat), "v": 100}}}
-                ]
+            actions = self._actions_for_state(state)
 
             if actions:
-                self._send_action_sync(actions)
-                # Respect cloud rate limit - pause between calls
-                time.sleep(1.0)
+                if self._send_action_sync(actions):
+                    with self.cond:
+                        self.last_sent_state = state
+                    self._retry_delay = 1.0
+                    # Respect cloud rate limit - pause between calls
+                    time.sleep(1.0)
+                else:
+                    time.sleep(self._retry_delay)
+                    self._retry_delay = min(30.0, self._retry_delay * 2)
+
+    def restore_white(self, temp_k=3000, brightness=80):
+        """Best-effort synchronous warm-white restore used on service stop."""
+        if not self.enabled or not self.token or not self.device_id:
+            return False
+        actions = [
+            {"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": True}},
+            {"type": "devices.capabilities.color_setting", "state": {"instance": "temperature_k", "value": int(temp_k)}},
+            {"type": "devices.capabilities.range", "state": {"instance": "brightness", "value": int(brightness)}},
+        ]
+        return self._send_action_sync(actions)
 
     def _send_action_sync(self, actions):
         if not self.enabled or not self.token or not self.device_id:
-            return
+            return False
         try:
             from config import get_config
             iot_base = get_config().party.yandex_iot_api_base
@@ -390,64 +475,31 @@ class ZigbeeStripWorker(threading.Thread):
         headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=2.5) as resp:
-                resp.read()
-        except Exception:
-            pass
+            with self._send_lock:
+                with urllib.request.urlopen(req, timeout=2.5) as resp:
+                    resp.read()
+            self.last_error = None
+            return True
+        except Exception as error:
+            self.last_error = f"{type(error).__name__}: {error}"
+            return False
 
     def set_color(self, hue_deg, brightness=100, sat=100):
         with self.cond:
-            self.target_state = ("hsv", int(hue_deg) % 360, int(sat), int(brightness))
+            self.target_state = ("hsv", int(hue_deg) % 360, max(0, min(100, int(sat))),
+                                 max(0, min(100, int(brightness))))
             self.cond.notify()
 
     def set_white(self, temp_k=3000, brightness=80):
         with self.cond:
-            self.target_state = ("white", int(temp_k), int(brightness))
+            self.target_state = ("white", max(1500, min(9000, int(temp_k))),
+                                 max(0, min(100, int(brightness))))
             self.cond.notify()
 
     def set_off(self):
         with self.cond:
             self.target_state = ("off",)
             self.cond.notify()
-
-
-class BiquadBandPass:
-    def __init__(self, fc=800.0, fs=48000.0, q=1.0):
-        w0 = 2.0 * math.pi * fc / fs
-        alpha = math.sin(w0) / (2.0 * q)
-        cos_w0 = math.cos(w0)
-        b0 = alpha
-        b1 = 0.0
-        b2 = -alpha
-        a0 = 1.0 + alpha
-        a1 = -2.0 * cos_w0
-        a2 = 1.0 - alpha
-        self.b0 = b0 / a0
-        self.b1 = b1 / a0
-        self.b2 = b2 / a0
-        self.a1 = a1 / a0
-        self.a2 = a2 / a0
-        self.x1, self.x2 = 0.0, 0.0
-        self.y1, self.y2 = 0.0, 0.0
-
-    def process(self, samples):
-        sq = 0.0
-        n = len(samples)
-        if n == 0:
-            return 0.0
-        b0, b1, b2 = self.b0, self.b1, self.b2
-        a1, a2 = self.a1, self.a2
-        x1, x2 = self.x1, self.x2
-        y1, y2 = self.y1, self.y2
-        for s in samples:
-            x = float(s)
-            y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
-            x2, x1 = x1, x
-            y2, y1 = y1, y
-            sq += y * y
-        self.x1, self.x2 = x1, x2
-        self.y1, self.y2 = y1, y2
-        return math.sqrt(sq / n)
 
 
 # =====================================================================
@@ -457,8 +509,8 @@ class BiquadBandPass:
 def make_tuya_hex(hue_deg, sat_pct=100, val_pct=100):
     """Encodes HSV into standard 12-char Tuya DP 24 string: HHHHSSSSVVVV."""
     h = int(hue_deg) % 360
-    s = int(sat_pct * 10) # 0-1000
-    v = int(val_pct * 10) # 0-1000
+    s = max(0, min(1000, int(clamp(sat_pct, 0, 100, 100) * 10)))  # 0-1000
+    v = max(0, min(1000, int(clamp(val_pct, 0, 100, 100) * 10)))  # 0-1000
     return f"{h:04x}{s:04x}{v:04x}"
 
 
@@ -906,14 +958,78 @@ class MovieAmbilightEffect(BaseEffect):
         self.active_scene_desc = "Ожидание старта фильма"
         self.last_scene_idx = -1
 
+        # Единый sequencer спецэффектов: не даём десяткам потоков
+        # одновременно перекрашивать одни и те же лампы.
+        self._anim_run_lock = threading.Lock()
+        self._anim_state_lock = threading.Lock()
+        self._anim_event = threading.Event()
+        self._anim_generation = 0
+        self._current_anim_event = None
+        self._anim_thread = None
+
     def load_script(self):
         if os.path.exists(self.script_path):
             try:
                 with open(self.script_path, "r", encoding="utf-8") as f:
-                    self.script = json.load(f)
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("script root must be an object")
+                scenes = [s for s in data.get("scenes", []) if isinstance(s, dict) and isinstance(s.get("start"), (int, float))]
+                effects = [e for e in data.get("effects", []) if isinstance(e, dict) and isinstance(e.get("time"), (int, float))]
+                data["scenes"] = sorted(scenes, key=lambda item: item["start"])
+                data["effects"] = sorted(effects, key=lambda item: item["time"])
+                self.script = data
                 print(f"[Cinema] Loaded light script: {self.script.get('movie')} ({len(self.script.get('scenes', []))} scenes, {len(self.script.get('effects', []))} cues)")
             except Exception as e:
                 print(f"[Cinema] Error loading script: {e}")
+
+    def _cancel_animations(self):
+        with self._anim_state_lock:
+            self._anim_generation += 1
+            self._anim_event.set()
+            self._anim_event = threading.Event()
+
+    def _sleep(self, seconds):
+        event = self._current_anim_event or self._anim_event
+        if event.wait(max(0.0, float(seconds))):
+            raise _Cancelled()
+
+    def _start_anim(self, fn, *args, **kwargs):
+        """Один активный спецэффект за раз, с отменой предыдущего."""
+        with self._anim_state_lock:
+            self._anim_generation += 1
+            generation = self._anim_generation
+            self._anim_event.set()
+            event = threading.Event()
+            self._anim_event = event
+
+        def runner():
+            with self._anim_run_lock:
+                if generation != self._anim_generation:
+                    return
+                self._current_anim_event = event
+                try:
+                    fn(*args, **kwargs)
+                except _Cancelled:
+                    pass
+                except Exception as error:
+                    print(f"[Cinema] Spell error: {type(error).__name__}: {error}")
+                finally:
+                    if self._current_anim_event is event:
+                        self._current_anim_event = None
+                    if generation == self._anim_generation:
+                        self.beam_in_progress = False
+                        self.active_spell = None
+                        self.last_sent_val = None
+                        if self.playing:
+                            try:
+                                self._apply_ambient(force=True)
+                            except Exception:
+                                pass
+
+        thread = threading.Thread(target=runner, daemon=True, name="party-spell")
+        self._anim_thread = thread
+        thread.start()
 
     def start(self):
         """Called automatically when user switches to Cinema mode in the panel."""
@@ -924,6 +1040,7 @@ class MovieAmbilightEffect(BaseEffect):
         """Called when user switches away from Cinema mode."""
         self.playing = False
         self.active_spell = None
+        self._cancel_animations()
 
     def play(self):
         if not self.playing:
@@ -946,6 +1063,8 @@ class MovieAmbilightEffect(BaseEffect):
         if self.playing:
             self.playing = False
             self.current_time = time.monotonic() - self.start_wall_time
+            self.active_spell = None
+            self._cancel_animations()
             print(f"[Cinema] Movie paused at {self.current_time:.1f}s")
             # Restore cozy ambient white on pause so user can walk around
             for w in self.manager.workers.values():
@@ -954,29 +1073,33 @@ class MovieAmbilightEffect(BaseEffect):
                 self.manager.strip_worker.set_white(temp_k=2700, brightness=60)
 
     def seek(self, sec, play=True):
-        self.current_time = max(0.0, float(sec))
-        if play:
-            self.playing = True
+        duration = float(self.script.get("duration_sec", 8502) or 8502)
+        self.current_time = max(0.0, min(duration, float(sec)))
+        self.playing = bool(play)
+        if self.playing:
             self.start_wall_time = time.monotonic() - self.current_time
         self.last_checked_time = self.current_time
         self.last_sent_val = None
+        self._cancel_animations()
         if self.playing:
             self._apply_ambient(force=False)
 
     def set_offset(self, delta):
-        self.offset += delta
+        self.offset = clamp(self.offset + float(delta), -120.0, 120.0)
         print(f"[Cinema] Calibration offset: {self.offset:+.1f}s")
 
     def sync_to_cue(self, cue_time=32.0):
         """Instantly aligns current playback time to a well-known cue (e.g. 32.0s first Lumos)."""
         now = time.monotonic()
-        cue_sec = float(cue_time or 32.0)
+        duration = float(self.script.get("duration_sec", 8502) or 8502)
+        cue_sec = max(0.0, min(duration, float(cue_time or 32.0)))
         self.playing = True
         self.start_wall_time = now - cue_sec
         self.offset = 0.0
         self.current_time = cue_sec
         self.last_checked_time = cue_sec
         self.last_sent_val = None
+        self._cancel_animations()
         self.manager.settings["master_enabled"] = True
         self.manager.save_settings()
         print(f"[Cinema] Precision-synced to cue at {cue_sec:.1f}s")
@@ -990,63 +1113,47 @@ class MovieAmbilightEffect(BaseEffect):
         if fx_target == "off":
             return
         now = time.monotonic()
+        spell_type = str(spell_type or "").strip()
+        if not spell_type:
+            return
         print(f"[Cinema] >>> MAGIC SPELL TRIGGERED: {spell_type} (direction={direction}) <<<")
         self.active_spell = spell_type
 
-        # Dispatch specialized high-impact animation threads (strobes, sparks, lightning, flickers)
-        if spell_type in ("storm_lightning", "quidditch_lightning", "lightning_storm"):
-            threading.Thread(target=self._anim_lightning, kwargs={"intensity": 1.0, "direction": direction or "all"}, daemon=True).start()
-            return
-        elif spell_type == "storm_lightning_soft":
-            threading.Thread(target=self._anim_lightning, kwargs={"intensity": 0.6, "direction": direction or "all"}, daemon=True).start()
-            return
-        elif spell_type == "wand_spark":
-            threading.Thread(target=self._anim_lumos_spark, kwargs={"level": 1}, daemon=True).start()
-            return
-        elif spell_type == "spell_lumos":
-            threading.Thread(target=self._anim_lumos_spark, kwargs={"level": 1}, daemon=True).start()
-            return
-        elif spell_type == "spell_lumos_2":
-            threading.Thread(target=self._anim_lumos_spark, kwargs={"level": 2}, daemon=True).start()
-            return
-        elif spell_type in ("spell_lumos_maxima", "lumos_maxima_blast"):
-            threading.Thread(target=self._anim_lumos_spark, kwargs={"level": 3}, daemon=True).start()
-            return
-        elif spell_type in ("bulb_switch_flicker", "incandescent_switch"):
-            threading.Thread(target=self._anim_incandescent_switch, daemon=True).start()
-            return
-        elif spell_type in ("knight_bus_strobe", "knight_bus_jump", "knight_bus_brake_strobe"):
-            threading.Thread(target=self._anim_knight_bus_strobe, daemon=True).start()
-            return
-        elif spell_type == "glass_shatter":
-            threading.Thread(target=self._anim_glass_shatter, daemon=True).start()
-            return
-        elif spell_type in ("marge_pop", "marge_inflate"):
-            threading.Thread(target=self._anim_marge_inflate, daemon=True).start()
-            return
-        elif spell_type == "marge_float":
-            threading.Thread(target=self._anim_marge_float, daemon=True).start()
-            return
-        elif spell_type == "street_lamp_flicker":
-            threading.Thread(target=self._anim_street_lamp_flicker, daemon=True).start()
-            return
-        elif spell_type in ("dementor_freeze", "dementors_swarm"):
-            threading.Thread(target=self._anim_dementor_freeze, daemon=True).start()
-            return
-        elif spell_type == "time_turner_spin":
-            threading.Thread(target=self._anim_time_turner, daemon=True).start()
-            return
-        elif spell_type == "toad_choir":
-            threading.Thread(target=self._anim_toad_choir, daemon=True).start()
-            return
-        elif spell_type == "gryffindor_sweets":
-            threading.Thread(target=self._anim_gryffindor_sweets, daemon=True).start()
-            return
-        elif spell_type == "werewolf_moon":
-            threading.Thread(target=self._anim_werewolf_moon, daemon=True).start()
-            return
-        elif spell_type in ("spell_patronus", "great_patronus"):
-            threading.Thread(target=self._anim_great_patronus, kwargs={"direction": direction or "center_out"}, daemon=True).start()
+        animations = {
+            "storm_lightning": ("_anim_lightning", {"intensity": 1.0, "direction": direction or "all"}),
+            "quidditch_lightning": ("_anim_lightning", {"intensity": 1.0, "direction": direction or "all"}),
+            "lightning_storm": ("_anim_lightning", {"intensity": 1.0, "direction": direction or "all"}),
+            "storm_lightning_soft": ("_anim_lightning", {"intensity": 0.6, "direction": direction or "all"}),
+            "wand_spark": ("_anim_lumos_spark", {"level": 1}),
+            "spell_lumos": ("_anim_lumos_spark", {"level": 1}),
+            "spell_lumos_2": ("_anim_lumos_spark", {"level": 2}),
+            "spell_lumos_maxima": ("_anim_lumos_spark", {"level": 3}),
+            "lumos_maxima_blast": ("_anim_lumos_spark", {"level": 3}),
+            "bulb_switch_flicker": ("_anim_incandescent_switch", {}),
+            "incandescent_switch": ("_anim_incandescent_switch", {}),
+            "knight_bus_strobe": ("_anim_knight_bus_strobe", {}),
+            "knight_bus_jump": ("_anim_knight_bus_strobe", {}),
+            "knight_bus_brake_strobe": ("_anim_knight_bus_strobe", {}),
+            "glass_shatter": ("_anim_glass_shatter", {}),
+            "marge_pop": ("_anim_marge_inflate", {}),
+            "marge_inflate": ("_anim_marge_inflate", {}),
+            "marge_float": ("_anim_marge_float", {}),
+            "street_lamp_flicker": ("_anim_street_lamp_flicker", {}),
+            "dementor_freeze": ("_anim_dementor_freeze", {}),
+            "dementors_swarm": ("_anim_dementor_freeze", {}),
+            "time_turner_spin": ("_anim_time_turner", {}),
+            "toad_choir": ("_anim_toad_choir", {}),
+            "gryffindor_sweets": ("_anim_gryffindor_sweets", {}),
+            "werewolf_moon": ("_anim_werewolf_moon", {}),
+            "spell_patronus": ("_anim_great_patronus", {"direction": direction or "center_out"}),
+            "great_patronus": ("_anim_great_patronus", {"direction": direction or "center_out"}),
+            "marauders_map_ink": ("_anim_marauders_ink", {}),
+        }
+        if spell_type == "spell_ridikulus" and direction not in ("left", "right", "center_out"):
+            animations["spell_ridikulus"] = ("_anim_ridikulus", {})
+        if spell_type in animations:
+            method, kwargs = animations[spell_type]
+            self._start_anim(getattr(self, method), **kwargs)
             return
 
         if not direction:
@@ -1059,11 +1166,12 @@ class MovieAmbilightEffect(BaseEffect):
 
         # Launch directional beam if requested (sub-second wave animation)
         if direction in ("left", "right", "center_out"):
-            threading.Thread(target=self._cast_directional_beam, args=(spell_type, direction), daemon=True).start()
+            self._start_anim(self._cast_directional_beam, spell_type, direction)
             return
 
         dur = 0.8
-        if spell_type == "spell_avada": dur = 0.25
+        if spell_type == "spell_avada":
+            dur = 0.25
         self.spell_end_time = now + dur
 
     def _anim_lightning(self, intensity=1.0, direction="all"):
@@ -1080,29 +1188,29 @@ class MovieAmbilightEffect(BaseEffect):
             
             # Step 1: Pre-flash on wall sconces
             self.manager.broadcast_color(sconces or workers, cyan_flash)
-            time.sleep(0.035)
+            self._sleep(0.035)
             self.manager.broadcast_color(sconces or workers, black_cut)
-            time.sleep(0.025)
+            self._sleep(0.025)
             
             # Step 2: Main thunder strike on ALL bulbs
             self.manager.broadcast_color(workers, cyan_flash)
             if self.manager.strip_worker: self.manager.strip_worker.set_color(200, 100)
-            time.sleep(0.045)
+            self._sleep(0.045)
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.030)
+            self._sleep(0.030)
             
             # Step 3: Secondary electrical discharge
             self.manager.broadcast_color(workers, cyan_flash)
-            time.sleep(0.055)
+            self._sleep(0.055)
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.035)
+            self._sleep(0.035)
 
             # Step 4: Low rumble through chandelier
             rumble = make_tuya_hex(210, 50, int(45 * intensity))
             self.manager.broadcast_color(chands, rumble)
-            time.sleep(0.090)
+            self._sleep(0.090)
             self.manager.broadcast_color(chands, dim_blue)
-            time.sleep(0.040)
+            self._sleep(0.040)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1124,37 +1232,37 @@ class MovieAmbilightEffect(BaseEffect):
                 # First whisper: 2 crisp electrical sparks on center bulb, then warm glow
                 for _ in range(2):
                     self.manager.broadcast_color(center_w, white_spark)
-                    time.sleep(0.035)
+                    self._sleep(0.035)
                     self.manager.broadcast_color(center_w, black_cut)
-                    time.sleep(0.025)
+                    self._sleep(0.025)
                 self.manager.broadcast_color(center_w, warm_mid)
-                time.sleep(0.50)
+                self._sleep(0.50)
             elif level == 2:
                 # Second whisper: 3 sparks expanding from center outward
                 for _ in range(3):
                     self.manager.broadcast_color(center_w, white_spark)
-                    time.sleep(0.035)
+                    self._sleep(0.035)
                     self.manager.broadcast_color(center_w, black_cut)
-                    time.sleep(0.025)
+                    self._sleep(0.025)
                 self.manager.broadcast_color(workers, warm_mid)
-                time.sleep(0.70)
+                self._sleep(0.70)
             else:
                 # LUMOS MAXIMA: 5 rapid high-voltage full-room strobes (100% white <-> 0% pitch black)
                 for _ in range(5):
                     self.manager.broadcast_color(workers, white_spark)
                     if self.manager.strip_worker: self.manager.strip_worker.set_white(5000, 100)
-                    time.sleep(0.045)
+                    self._sleep(0.045)
                     self.manager.broadcast_color(workers, black_cut)
-                    time.sleep(0.035)
+                    self._sleep(0.035)
                 # Blinding flare hold
                 self.manager.broadcast_color(workers, white_spark)
-                time.sleep(0.75)
+                self._sleep(0.75)
                 # Cinematic fade down
                 for step in range(4):
                     fade_bright = int(75 - step * 18)
                     fade_val = make_tuya_hex(42, 30 + step * 15, fade_bright)
                     self.manager.broadcast_color(workers, fade_val)
-                    time.sleep(0.08)
+                    self._sleep(0.08)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1172,19 +1280,19 @@ class MovieAmbilightEffect(BaseEffect):
             
             # Click 1: 50Hz tungsten filament stutter
             self.manager.broadcast_color(workers, warm_amber)
-            time.sleep(0.030)
+            self._sleep(0.030)
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.020)
+            self._sleep(0.020)
             self.manager.broadcast_color(workers, warm_flicker)
-            time.sleep(0.035)
+            self._sleep(0.035)
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.020)
+            self._sleep(0.020)
             # Steady warm hallway light while Vernon checks the room
             self.manager.broadcast_color(workers, warm_amber)
-            time.sleep(3.0)
+            self._sleep(3.0)
             # Vernon clicks switch off -> instant blackout
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.20)
+            self._sleep(0.20)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1219,10 +1327,10 @@ class MovieAmbilightEffect(BaseEffect):
                 self.manager.broadcast_map(m)
                 if self.manager.strip_worker:
                     self.manager.strip_worker.set_color(290 if cycle % 2 == 0 else 180, 100)
-                time.sleep(0.045)
+                self._sleep(0.045)
                 # Crisp black cut between pulses
                 self.manager.broadcast_color(workers, black_cut)
-                time.sleep(0.025)
+                self._sleep(0.025)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1238,13 +1346,13 @@ class MovieAmbilightEffect(BaseEffect):
             red_wine = make_tuya_hex(350, 100, 90)
             black_cut = make_tuya_hex(0, 0, 0)
             self.manager.broadcast_color(workers, white_crack)
-            time.sleep(0.045)
+            self._sleep(0.045)
             self.manager.broadcast_color(workers, red_wine)
             if self.manager.strip_worker:
                 self.manager.strip_worker.set_color(350, 100)
-            time.sleep(0.120)
+            self._sleep(0.120)
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.050)
+            self._sleep(0.050)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1264,15 +1372,15 @@ class MovieAmbilightEffect(BaseEffect):
                 bright = int(35 + step * 16)
                 amber = make_tuya_hex(28, 90, bright)
                 self.manager.broadcast_color(chands, amber)
-                time.sleep(0.080)
+                self._sleep(0.080)
                 self.manager.broadcast_color(chands, black_cut)
-                time.sleep(0.040)
+                self._sleep(0.040)
             
             # Button pops off!
             self.manager.broadcast_color(workers, button_pop)
-            time.sleep(0.060)
+            self._sleep(0.060)
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.030)
+            self._sleep(0.030)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1288,7 +1396,7 @@ class MovieAmbilightEffect(BaseEffect):
             self.manager.broadcast_color(workers, sky_cyan)
             if self.manager.strip_worker:
                 self.manager.strip_worker.set_color(210, 80)
-            time.sleep(0.35)
+            self._sleep(0.35)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1308,9 +1416,9 @@ class MovieAmbilightEffect(BaseEffect):
             for i, d in enumerate(delays):
                 val = street_hi if (i % 2 == 0) else street_lo
                 self.manager.broadcast_color(lamp_w, val)
-                time.sleep(d)
+                self._sleep(d)
             self.manager.broadcast_color(lamp_w, street_hi)
-            time.sleep(0.3)
+            self._sleep(0.3)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1327,14 +1435,14 @@ class MovieAmbilightEffect(BaseEffect):
                 bright_hi = int(60 - step * 12)
                 ice_hi = make_tuya_hex(195, 70, bright_hi)
                 self.manager.broadcast_color(workers, ice_hi)
-                time.sleep(0.040)
+                self._sleep(0.040)
                 self.manager.broadcast_color(workers, black_cut)
-                time.sleep(0.025)
+                self._sleep(0.025)
             # Deep frozen chill
             ice_cold = make_tuya_hex(195, 85, 10)
             self.manager.broadcast_color(workers, ice_cold)
             if self.manager.strip_worker: self.manager.strip_worker.set_color(195, 15)
-            time.sleep(1.0)
+            self._sleep(1.0)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1361,7 +1469,7 @@ class MovieAmbilightEffect(BaseEffect):
                 elif rot % 4 == 2:
                     for s in sconces: m[s] = gold_dim
                 self.manager.broadcast_map(m)
-                time.sleep(0.055)
+                self._sleep(0.055)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1380,7 +1488,7 @@ class MovieAmbilightEffect(BaseEffect):
                     bright = random.randint(50, 90)
                     m[w] = make_tuya_hex(hue, 85, bright)
                 self.manager.broadcast_map(m)
-                time.sleep(0.12)
+                self._sleep(0.12)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1404,9 +1512,9 @@ class MovieAmbilightEffect(BaseEffect):
                 for w in workers:
                     if w not in m: m[w] = black_cut
                 self.manager.broadcast_map(m)
-                time.sleep(0.060)
+                self._sleep(0.060)
                 self.manager.broadcast_color(workers, black_cut)
-                time.sleep(0.030)
+                self._sleep(0.030)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1427,13 +1535,13 @@ class MovieAmbilightEffect(BaseEffect):
             # Moonlight swell on chandelier
             self.manager.broadcast_color(chands, moon_white)
             self.manager.broadcast_color(sconces, black_cut)
-            time.sleep(0.8)
+            self._sleep(0.8)
             # Werewolf howl: 3 aggressive red pulses
             for _ in range(3):
                 self.manager.broadcast_color(workers, blood_red)
-                time.sleep(0.050)
+                self._sleep(0.050)
                 self.manager.broadcast_color(workers, black_cut)
-                time.sleep(0.035)
+                self._sleep(0.035)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
@@ -1452,28 +1560,68 @@ class MovieAmbilightEffect(BaseEffect):
             # Initial explosive blast 100% white
             self.manager.broadcast_color(workers, silver_white)
             if self.manager.strip_worker: self.manager.strip_worker.set_white(6500, 100)
-            time.sleep(0.090)
+            self._sleep(0.090)
             self.manager.broadcast_color(workers, black_cut)
-            time.sleep(0.030)
+            self._sleep(0.030)
             
             # 3 expanding silver ripples from center outward
             center_w = [w for w in workers if abs(getattr(w, "pos_x", 0.0)) < 0.3]
             outer_w = [w for w in workers if abs(getattr(w, "pos_x", 0.0)) >= 0.3]
             for ripple in range(3):
                 self.manager.broadcast_color(center_w, silver_white)
-                time.sleep(0.040)
+                self._sleep(0.040)
                 self.manager.broadcast_color(outer_w, silver_white)
                 self.manager.broadcast_color(center_w, silver_dim)
-                time.sleep(0.050)
+                self._sleep(0.050)
                 self.manager.broadcast_color(outer_w, silver_dim)
-                time.sleep(0.030)
+                self._sleep(0.030)
             # Majestic silver glow hold
             self.manager.broadcast_color(workers, silver_white)
-            time.sleep(1.2)
+            self._sleep(1.2)
         finally:
             self.beam_in_progress = False
             self.last_sent_val = None
             if self.playing: self._apply_ambient(force=True)
+
+    def _anim_marauders_ink(self):
+        """Чернила Карты Мародёров: золотые волны по комнате."""
+        self.beam_in_progress = True
+        try:
+            workers = [w for w in self.manager.workers.values() if w.connected]
+            if not workers:
+                return
+            gold = make_tuya_hex(40, 95, 95)
+            dim = make_tuya_hex(40, 90, 8)
+            for _ in range(3):
+                self.manager.broadcast_color(workers, gold)
+                self._sleep(0.12)
+                self.manager.broadcast_color(workers, dim)
+                self._sleep(0.08)
+        finally:
+            self.beam_in_progress = False
+            self.last_sent_val = None
+            if self.playing:
+                self._apply_ambient(force=True)
+
+    def _anim_ridikulus(self):
+        """Ридикулус: весёлый жёлтый строб по всем лампам."""
+        self.beam_in_progress = True
+        try:
+            workers = [w for w in self.manager.workers.values() if w.connected]
+            if not workers:
+                return
+            yellow = make_tuya_hex(52, 90, 100)
+            dark = make_tuya_hex(52, 90, 5)
+            for _ in range(3):
+                self.manager.broadcast_color(workers, yellow)
+                self._sleep(0.08)
+                self.manager.broadcast_color(workers, dark)
+                self._sleep(0.06)
+        finally:
+            self.beam_in_progress = False
+            self.last_sent_val = None
+            if self.playing:
+                self._apply_ambient(force=True)
 
     def _cast_directional_beam(self, spell_type, direction="left"):
         """Fires a localized beam of magic traveling physically across the room."""
@@ -1567,12 +1715,12 @@ class MovieAmbilightEffect(BaseEffect):
                     self.manager.strip_worker.set_color(hue, brightness=100)
 
                 is_last = (i == len(stages) - 1)
-                time.sleep(impact_hold if is_last else hop_delay)
+                self._sleep(impact_hold if is_last else hop_delay)
 
             # 4. Impact dissipation
             if stages[-1]:
                 self.manager.broadcast_color(stages[-1], val_dim)
-                time.sleep(0.040)
+                self._sleep(0.040)
 
             # Special ripple for Expecto Patronum
             if spell_type in ("spell_patronus", "great_patronus"):
@@ -1580,7 +1728,7 @@ class MovieAmbilightEffect(BaseEffect):
                     fade_val = int(80 - step * 25)
                     wave_val = make_tuya_hex(hue, sat, fade_val)
                     self.manager.broadcast_color(workers, wave_val)
-                    time.sleep(0.08)
+                    self._sleep(0.08)
 
         finally:
             self.beam_in_progress = False
@@ -1615,17 +1763,20 @@ class MovieAmbilightEffect(BaseEffect):
             return
 
         self.active_scene_desc = active_scene.get("desc", "")
-        tuya_color = active_scene.get("color", "002803e8")
+        tuya_color = str(active_scene.get("color", "002803e8"))
         bright_factor = active_scene.get("brightness", 30) / 100.0
 
-        # Extract hue and generate balanced room lighting
-        hue_hex = tuya_color[:4]
+        # Extract hue (and saturation, if the scene provides HHHHSSSS).
         try:
-            hue_deg = int(hue_hex, 16)
-        except Exception:
+            hue_deg = int(tuya_color[:4], 16)
+        except (TypeError, ValueError):
             hue_deg = 40
-        room_bright = max(35, int(bright_factor * max(60, self.brightness)))
-        val = make_tuya_hex(hue_deg, sat_pct=95, val_pct=room_bright)
+        try:
+            sat_pct = clamp(int(tuya_color[4:8], 16) / 10.0, 0, 100, 95) if len(tuya_color) >= 8 else 95
+        except (TypeError, ValueError):
+            sat_pct = 95
+        room_bright = max(5, int(bright_factor * max(60, self.brightness)))
+        val = make_tuya_hex(hue_deg, sat_pct=sat_pct, val_pct=room_bright)
 
         # Send only when color changes, when forced, or on 4-second heartbeat
         if force or (val != self.last_sent_val) or (now - self.last_send_time >= 4.0):
@@ -1832,6 +1983,7 @@ class PartyManager:
             settings_path,
             [data_dir / sett_def, base_dir / sett_def, Path("/data/yapanel") / sett_def, Path("/data/local/tmp") / sett_def]
         )
+        self.store = PartyStore(self.settings_path, self.bulbs_config_path, self.strip_config_path)
 
         self.workers = WorkersDict()
         self.running = False
@@ -1842,25 +1994,19 @@ class PartyManager:
         self._discovery_thread = None
         self._audio_thread = None
         self._discovery_sock = None
+        self._discovery_sockets = []
         self.audio_proc = None
         self.strip_worker = None
         self.is_android = os.path.exists("/system/bin/tinycap2")
 
         # Settings
-        self.settings = {
-            "master_enabled": True,
-            "active_mode": "cinema",   # "cinema", "fireplace", "police", "orbit", "party"
-            "speed": 1.0,
-            "brightness": 80,
-            "bt_mode": "off",
-            "color_interval": 32,
-            "sync_mode": "split",
-            "silence_timeout": 10.0,
-            "ambilight_target": "strip_only",   # "strip_only", "bulbs_only", "all", "off"
-            "effects_enabled": True,            # True, False
-            "effects_target": "bulbs_only"      # "bulbs_only", "sconces_only", "all", "strip_only", "off"
-        }
-        self.load_settings()
+        self.settings = self.store.load_settings()
+        self._last_sound_time = 0.0
+        self._last_media_ok = 0.0
+        self._audio_error = None
+        self._media_error = None
+        self._scan_lock = threading.Lock()
+        self._discovery_suspended = threading.Event()
 
         # Effect Registry
         self.effects = {
@@ -1883,6 +2029,7 @@ class PartyManager:
         self.media_playing = False
         self.strobe_active = False
         self.strip_ambient_active = False
+        self._bt_ambient_prev = None
         self.last_sound_time = time.time()
         self.in_silence = True
 
@@ -1902,20 +2049,22 @@ class PartyManager:
         self.last_color_change_time = time.time()
         self.broadcast_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="PartyBcast")
 
-    def broadcast_color(self, workers, val, timeout=0.060):
+    def broadcast_color(self, workers, val, timeout=0.060, wait=True):
         """Concurrently sends color to multiple bulbs with sub-20ms latency."""
         if not workers:
             return
         active = [w for w in workers if getattr(w, "connected", False) and getattr(w, "device", None) and getattr(w.device, "socket", None)]
         if not active:
             return
-        if len(active) == 1:
+        if len(active) == 1 and wait:
             try:
                 active[0].send_color_val(val)
             except Exception:
                 pass
             return
         futures = [self.broadcast_pool.submit(w.send_color_val, val) for w in active]
+        if not wait:
+            return
         for f in futures:
             try:
                 f.result(timeout=timeout)
@@ -1936,6 +2085,16 @@ class PartyManager:
             except Exception:
                 pass
 
+    def broadcast_off(self, workers, wait=False):
+        active = [w for w in workers if getattr(w, "connected", False) and getattr(w, "device", None)]
+        futures = [self.broadcast_pool.submit(w.send_off) for w in active]
+        if wait:
+            for future in futures:
+                try:
+                    future.result(timeout=0.060)
+                except Exception:
+                    pass
+
     def _resolve_path(self, override, candidates):
         if override:
             return str(override)
@@ -1945,35 +2104,39 @@ class PartyManager:
         return str(candidates[0])
 
     def load_settings(self):
-        if self.settings_path and os.path.exists(self.settings_path):
-            try:
-                with open(self.settings_path, "r", encoding="utf-8") as f:
-                    self.settings.update(json.load(f))
-                print(f"[Party] Loaded settings: {self.settings}")
-            except Exception as e:
-                print(f"[Party] Error loading settings: {e}")
+        self.settings = self.store.load_settings()
+        print(f"[Party] Loaded settings: {self.settings}")
+        return self.settings
 
     def save_settings(self):
         try:
-            p = Path(self.settings_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.settings_path, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"[Party] Error saving settings: {e}")
+            self.settings = self.store.save_settings(self.settings)
+        except Exception as error:
+            print(f"[Party] Error saving settings: {error}")
 
     def load_bulbs(self):
-        if not self.bulbs_config_path or not os.path.exists(self.bulbs_config_path):
-            return
-        with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = self.store.load_bulbs()
         for item in data:
-            b_id = item.get("id")
-            if b_id and item.get("enabled", True) and item.get("role") in ["kick", "snare", "ambient"]:
-                w = BulbWorker(item, self)
-                self.workers[b_id] = w
-                w.start()
+            if not item.get("enabled", True) or item.get("role") not in ["kick", "snare", "ambient"]:
+                continue
+            try:
+                worker = BulbWorker(item, self)
+                self.workers[worker.dev_id] = worker
+                worker.start()
+            except Exception as error:
+                print(f"[Party] Bulb worker init error ({item.get('id')}): {error}")
         print(f"[Party] Started {len(self.workers)} dedicated bulb workers.")
+
+    def _apply_effect_settings(self, effect):
+        if not effect:
+            return
+        effect.speed = clamp(self.settings.get("speed"), 0.2, 2.5, 1.0)
+        effect.brightness = clamp_int(self.settings.get("brightness"), 10, 100, 80)
+
+    def _select_effect(self):
+        mode = self.settings.get("active_mode", "cinema")
+        self.current_effect = self.effects.get(mode) or self.effects["cinema"]
+        self._apply_effect_settings(self.current_effect)
 
     def start(self):
         with self._lifecycle_lock:
@@ -1982,26 +2145,62 @@ class PartyManager:
             self.running = True
             self._stop_event.clear()
             print("[Party] Starting Engine...")
-            self.load_bulbs()
-            self.strip_worker = ZigbeeStripWorker(self.strip_config_path, self)
-            self.strip_worker.start()
+            try:
+                self.settings = normalize_settings(self.settings)
+                for worker in list(self.workers.values()):
+                    try:
+                        worker.stop(timeout=0.2, restore=False)
+                    except Exception:
+                        pass
+                self.workers.clear()
+                self.load_bulbs()
+                self.strip_worker = ZigbeeStripWorker(self.strip_config_path, self)
+                self.strip_worker.start()
+                self._select_effect()
 
-            # Animation tick loop (~20 FPS)
-            self._ticker_thread = threading.Thread(target=self._effect_tick_loop, daemon=True, name="party-effect-ticker")
-            self._ticker_thread.start()
+                # Animation tick loop (~20 FPS)
+                self._ticker_thread = threading.Thread(target=self._effect_tick_loop, daemon=True, name="party-effect-ticker")
+                self._ticker_thread.start()
 
-            if self.is_android:
-                self._media_guard_thread = threading.Thread(target=self._media_guard_loop, daemon=True, name="party-media-guard")
-                self._media_guard_thread.start()
-                self._discovery_thread = threading.Thread(target=self._discovery_loop, daemon=True, name="party-discovery")
-                self._discovery_thread.start()
-                self._audio_thread = threading.Thread(target=self._audio_loop, daemon=True, name="party-audio-loop")
-                self._audio_thread.start()
-            else:
-                print("[Party] Not running on Android; audio capture disabled.")
+                # Дать эффекту возможность выполнить start(): для cinema это play().
+                try:
+                    self.current_effect.start()
+                    self.current_effect.tick(time.time())
+                except Exception as error:
+                    print(f"[Party] Effect start error: {error}")
+
+                if self.is_android:
+                    self._media_guard_thread = threading.Thread(target=self._media_guard_loop, daemon=True, name="party-media-guard")
+                    self._media_guard_thread.start()
+                    self._discovery_thread = threading.Thread(target=self._discovery_loop, daemon=True, name="party-discovery")
+                    self._discovery_thread.start()
+                    self._audio_thread = threading.Thread(target=self._audio_loop, daemon=True, name="party-audio-loop")
+                    self._audio_thread.start()
+                else:
+                    print("[Party] Not running on Android; audio capture disabled.")
+            except Exception:
+                self.running = False
+                self._stop_event.set()
+                if self._ticker_thread and self._ticker_thread.is_alive():
+                    self._ticker_thread.join(timeout=0.2)
+                    self._ticker_thread = None
+                if self.strip_worker:
+                    try:
+                        self.strip_worker.stop(timeout=0.2)
+                    except Exception:
+                        pass
+                    self.strip_worker = None
+                for worker in list(self.workers.values()):
+                    try:
+                        worker.stop(timeout=0.2, restore=False)
+                    except Exception:
+                        pass
+                self.workers.clear()
+                raise
 
     def stop(self):
         with self._lifecycle_lock:
+            was_running = self.running
             print("[Party] Stopping Engine...")
             self.running = False
             self._stop_event.set()
@@ -2013,11 +2212,17 @@ class PartyManager:
             if self._ticker_thread and self._ticker_thread.is_alive():
                 self._ticker_thread.join(timeout=0.5)
                 self._ticker_thread = None
+            # Вернуть тёплый свет до закрытия сокетов.
+            if was_running:
+                try:
+                    self.restore_white()
+                except Exception:
+                    pass
             if self.strip_worker:
                 self.strip_worker.stop(timeout=0.5)
                 self.strip_worker = None
             for w in list(self.workers.values()):
-                w.stop(timeout=0.5)
+                w.stop(timeout=0.5, restore=False)
             self.workers.clear()
             with self.kick_cond:
                 self.kick_cond.notify_all()
@@ -2029,6 +2234,12 @@ class PartyManager:
                 except Exception:
                     pass
                 self._discovery_sock = None
+            for sock in self._discovery_sockets:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            self._discovery_sockets = []
             if self._discovery_thread and self._discovery_thread.is_alive():
                 self._discovery_thread.join(timeout=0.5)
                 self._discovery_thread = None
@@ -2058,24 +2269,29 @@ class PartyManager:
         self.load_settings()
         self.start()
 
-    def set_mode(self, mode_name, params=None):
+    def set_mode(self, mode_name, params=None, _internal=False):
+        mode_name = str(mode_name or "").strip().lower()
         if mode_name not in self.effects:
             print(f"[Party] Unknown mode: {mode_name}")
             return False
+        if not _internal and self._bt_ambient_prev:
+            # Пользователь сам выбрал режим — авто-эмбиент для ТВ больше не восстанавливаем.
+            self._bt_ambient_prev = None
         if not self.running:
             self.start()
         if self.current_effect:
             self.current_effect.stop()
-        
+
         self.settings["active_mode"] = mode_name
         self.settings["master_enabled"] = True
         self.current_effect = self.effects[mode_name]
+        self._apply_effect_settings(self.current_effect)
         if params and isinstance(params, dict):
             if "speed" in params:
-                self.current_effect.speed = float(params["speed"])
+                self.current_effect.speed = clamp(params["speed"], 0.2, 2.5, self.current_effect.speed)
                 self.settings["speed"] = self.current_effect.speed
             if "brightness" in params:
-                self.current_effect.brightness = int(params["brightness"])
+                self.current_effect.brightness = clamp_int(params["brightness"], 10, 100, self.current_effect.brightness)
                 self.settings["brightness"] = self.current_effect.brightness
 
         # Ensure all bulb workers force power ON and colour mode on preset switch
@@ -2117,10 +2333,10 @@ class PartyManager:
         self.last_sound_time = now
         self.in_silence = False
         self.kick_count += 1
-        
-        interval = int(self.settings.get("color_interval", 16))
+
+        interval = clamp_int(self.settings.get("color_interval"), 1, 256, 32)
         max_duration = 30.0 if interval >= 16 else max(5.0, interval * 1.5)
-        
+
         if (self.kick_count % interval == 0) or (now - self.last_color_change_time >= max_duration):
             self.kick_hue_index = (self.kick_hue_index + 1) % len(self.HUES)
             self.last_color_change_time = now
@@ -2131,21 +2347,14 @@ class PartyManager:
             self.snare_val_hi = self.kick_val_hi
             self.snare_val_lo = self.kick_val_lo
 
-        # Fast strobe trigger
-        for w in self.workers.values():
-            if w.role == "kick":
-                w.send_color_val(self.kick_val_hi)
-        time.sleep(0.055)
-        for w in self.workers.values():
-            if w.role == "kick":
-                w.send_color_val(self.kick_val_lo)
+        self._flash_role("kick", self.kick_val_hi, self.kick_val_lo)
 
     def on_snare_internal(self, crest):
         self.last_sound_time = time.time()
         self.in_silence = False
         self.snare_count += 1
-        sync_mode = self.settings.get("sync_mode", "unison")
-        
+        sync_mode = self.settings.get("sync_mode", "split")
+
         snare_color_hi = self.snare_val_hi
         snare_color_lo = self.snare_val_lo
         if sync_mode == "split":
@@ -2154,23 +2363,38 @@ class PartyManager:
             snare_color_hi = contrast_hue + "03e803e8"
             snare_color_lo = contrast_hue + "03e80032"
 
-        for w in self.workers.values():
-            if w.role == "snare":
-                w.send_color_val(snare_color_hi)
-        time.sleep(0.055)
-        for w in self.workers.values():
-            if w.role == "snare":
-                w.send_color_val(snare_color_lo)
+        self._flash_role("snare", snare_color_hi, snare_color_lo)
+
+    def _flash_role(self, role, high, low, delay=0.055):
+        """Не блокирует аудиопоток: hi сразу, lo — отдельным таймером."""
+        workers = [w for w in self.workers.values() if w.role == role]
+        if not workers:
+            return
+        self.broadcast_color(workers, high, wait=False)
+
+        def low_pulse():
+            self.broadcast_color(workers, low, wait=False)
+
+        timer = threading.Timer(delay, low_pulse)
+        timer.daemon = True
+        timer.start()
 
     def restore_white(self):
         for w in self.workers.values():
-            w.send_white(800, 800)
+            try:
+                w.send_white(800, 800)
+            except Exception:
+                pass
         if self.strip_worker:
-            self.strip_worker.set_white(3000, 80)
+            try:
+                self.strip_worker.restore_white(3000, 80)
+            except Exception:
+                pass
 
     def reconnect_all(self):
         for w in self.workers.values():
             w.disconnect()
+            w.last_reconnect_time = 0.0
 
     def get_status(self):
         bulbs_info = []
@@ -2198,6 +2422,8 @@ class PartyManager:
                 "connected": w.connected,
                 "ip": w.ip,
                 "val": w.current_val,
+                "last_error": getattr(w, "last_error", None),
+                "reconnects": getattr(w, "reconnect_count", 0),
                 "sort": sort_order
             })
         bulbs_info.sort(key=lambda x: (x["sort"], x["ip"]))
@@ -2209,8 +2435,28 @@ class PartyManager:
             "offset_sec": cinema.offset if cinema else 0.0,
             "scene": cinema.active_scene_desc if cinema else "",
             "active_spell": cinema.active_spell if cinema else None,
-            "duration_sec": cinema.script.get("duration_sec", 8502) if cinema else 8502
+            "duration_sec": cinema.script.get("duration_sec", 8502) if cinema else 8502,
+            "title": cinema.script.get("movie") if cinema else "",
+            "script": cinema.script_path if cinema else "",
         }
+
+        strip = self.strip_worker
+        strip_info = {
+            "configured": bool(strip and strip.enabled),
+            "enabled": bool(strip and strip.enabled),
+            "device_id": getattr(strip, "device_id", None) if strip else None,
+            "last_error": getattr(strip, "last_error", None) if strip else None,
+            "last_sent": getattr(strip, "last_sent_state", None) if strip else None,
+        }
+        audio_info = {
+            "capturing": bool(self._audio_thread and self._audio_thread.is_alive()),
+            "media_playing": self.media_playing,
+            "last_beat_sec": max(0.0, time.time() - self.last_sound_time) if self.last_sound_time else None,
+            "error": self._audio_error,
+        }
+        silence_timeout = self.settings.get("silence_timeout", 10.0)
+        silent = (not self.media_playing) or (time.time() - self.last_sound_time > silence_timeout)
+        self.in_silence = bool(silent)
 
         modes_info = [
             {"id": "party", "title": "Светомузыка", "icon": "⚡", "desc": "Клубный строб под ритм музыки"},
@@ -2222,6 +2468,7 @@ class PartyManager:
             {"id": "lava", "title": "Лавовая лампа", "icon": "🌋", "desc": "Всплывающие пузыри рубина и магмы"},
             {"id": "orbit", "title": "Карусель", "icon": "💫", "desc": "Бегущий луч кометы по кругу"},
             {"id": "police", "title": "Полиция", "icon": "🚨", "desc": "Спецсигнал синий и красный"},
+            {"id": "cinema", "title": "Кинотеатр 4D", "icon": "🎬", "desc": "Ambilight и магические спецэффекты"},
         ]
 
         return {
@@ -2232,8 +2479,8 @@ class PartyManager:
             "speed": self.settings.get("speed", 1.0),
             "brightness": self.settings.get("brightness", 80),
             "bt_mode": self.settings.get("bt_mode", "off"),
-            "color_interval": self.settings.get("color_interval", 16),
-            "sync_mode": self.settings.get("sync_mode", "unison"),
+            "color_interval": self.settings.get("color_interval", 32),
+            "sync_mode": self.settings.get("sync_mode", "split"),
             "ambilight_target": self.settings.get("ambilight_target", "strip_only"),
             "effects_enabled": self.settings.get("effects_enabled", True),
             "effects_target": self.settings.get("effects_target", "bulbs_only"),
@@ -2245,96 +2492,97 @@ class PartyManager:
             "snare_count": self.snare_count,
             "workers_count": len(self.workers),
             "bulbs": bulbs_info,
-            "cinema": cinema_info
+            "cinema": cinema_info,
+            "strip": strip_info,
+            "audio": audio_info,
+            "last_error": self.store.last_error or self._audio_error or self._media_error,
         }
 
     def update_settings(self, data):
         if not isinstance(data, dict):
             return
-        if "master_enabled" in data:
-            self.settings["master_enabled"] = bool(data["master_enabled"])
-            if self.settings["master_enabled"] and not self.running:
-                self.start()
         if "active_mode" in data:
             self.set_mode(data["active_mode"])
-        if "speed" in data:
-            self.settings["speed"] = float(data["speed"])
-            if self.current_effect: self.current_effect.speed = self.settings["speed"]
-        if "brightness" in data:
-            self.settings["brightness"] = int(data["brightness"])
-            if self.current_effect: self.current_effect.brightness = self.settings["brightness"]
-        if "bt_mode" in data and data["bt_mode"] in ["off", "party", "ambilight"]:
-            self.settings["bt_mode"] = data["bt_mode"]
-        if "color_interval" in data:
-            self.settings["color_interval"] = int(data["color_interval"])
-        if "sync_mode" in data and data["sync_mode"] in ["unison", "split"]:
-            self.settings["sync_mode"] = data["sync_mode"]
+
+        candidate = dict(self.settings)
+        for key in ("speed", "brightness", "bt_mode", "color_interval", "sync_mode",
+                    "silence_timeout", "ambilight_target", "effects_enabled", "effects_target"):
+            if key in data:
+                candidate[key] = data[key]
+        self.settings = normalize_settings(candidate)
+        self._apply_effect_settings(self.current_effect)
+
         if "ambilight_target" in data:
-            self.settings["ambilight_target"] = str(data["ambilight_target"])
             self._bulbs_off_for_strip = False
             if self.current_effect and hasattr(self.current_effect, "_apply_ambient"):
-                self.current_effect._apply_ambient(force=True)
-        if "effects_enabled" in data:
-            self.settings["effects_enabled"] = bool(data["effects_enabled"])
-        if "effects_target" in data:
-            self.settings["effects_target"] = str(data["effects_target"])
+                try:
+                    self.current_effect._apply_ambient(force=True)
+                except Exception:
+                    pass
+
+        if "master_enabled" in data:
+            self.settings = normalize_settings({**self.settings, "master_enabled": data["master_enabled"]})
+            if self.settings["master_enabled"] and not self.running:
+                self.start()
+            elif not self.settings["master_enabled"] and not getattr(self.current_effect, "is_cinema", False):
+                # Не оставлять лампы в последнем цвете выключенного эффекта.
+                try:
+                    self.restore_white()
+                except Exception:
+                    pass
         self.save_settings()
 
     def update_bulb_position(self, bulb_id, pos_x, pos_y=0.0, name=None):
         """Updates spatial coordinates and optional label of a bulb for directional beam effects."""
-        w = self.workers.get(bulb_id)
-        if w:
-            w.set_position(pos_x, pos_y)
+        bulb_id = str(bulb_id or "").strip()
+        if not bulb_id:
+            raise ValueError("Bulb ID required")
+        x = clamp(pos_x, -5.0, 5.0, 0.0)
+        y = clamp(pos_y, -5.0, 5.0, 0.0)
+        worker = self.workers.get(bulb_id)
+        if worker:
+            worker.set_position(x, y)
             if name:
-                w.name = name
-        if self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
-            try:
-                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                for item in data:
-                    if item.get("id") == bulb_id:
-                        item["pos_x"] = float(pos_x)
-                        item["pos_y"] = float(pos_y)
-                        if name:
-                            item["name"] = name
-                        break
-                with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
-                print(f"[Party] Updated bulb {bulb_id} position: x={pos_x}, y={pos_y}, name={name}")
-            except Exception as e:
-                print(f"[Party] Error saving bulb position: {e}")
-        return {"status": "ok", "id": bulb_id, "pos_x": float(pos_x), "pos_y": float(pos_y)}
+                worker.name = str(name)[:80]
+
+        def mutate(items):
+            for item in items:
+                if item.get("id") == bulb_id:
+                    item["pos_x"] = x
+                    item["pos_y"] = y
+                    if name:
+                        item["name"] = str(name)[:80]
+                    break
+            return items
+
+        try:
+            self.store.update_bulbs(mutate)
+        except Exception as error:
+            print(f"[Party] Error saving bulb position: {error}")
+            raise
+        return {"status": "ok", "id": bulb_id, "pos_x": x, "pos_y": y}
 
     def save_bulb_ip(self, dev_id, new_ip):
         """Updates IP address in bulbs.json when dynamic auto-healing discovers a changed IP."""
-        if not self.bulbs_config_path or not os.path.exists(self.bulbs_config_path):
+        dev_id = str(dev_id or "").strip()
+        new_ip = str(new_ip or "").strip()
+        if not dev_id or not new_ip:
             return
         try:
-            with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            changed = False
-            for item in data:
-                if item.get("id") == dev_id and item.get("ip") != new_ip:
-                    item["ip"] = new_ip
-                    changed = True
-                    break
-            if changed:
-                with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
-                print(f"[Party] Saved updated IP for {dev_id}: {new_ip}")
-        except Exception as e:
-            print(f"[Party] Error saving bulb IP: {e}")
+            def mutate(items):
+                for item in items:
+                    if item.get("id") == dev_id:
+                        item["ip"] = new_ip
+                        break
+                return items
+            self.store.update_bulbs(mutate)
+            print(f"[Party] Saved updated IP for {dev_id}: {new_ip}")
+        except Exception as error:
+            print(f"[Party] Error saving bulb IP: {error}")
 
     def get_bulbs(self):
         """Returns full list of configured bulbs with connectivity status."""
-        bulbs_list = []
-        raw_items = []
-        if self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
-            try:
-                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
-                    raw_items = json.load(f)
-            except Exception as e:
-                print(f"[Party] Error reading bulbs config: {e}")
+        raw_items = self.store.load_bulbs()
 
         # If bulbs.json was missing or empty, but workers exist, fallback to workers
         if not raw_items and self.workers:
@@ -2352,98 +2600,58 @@ class PartyManager:
                     "enabled": True
                 })
 
+        bulbs_list = []
         for item in raw_items:
-            b_id = str(item.get("id") or "").strip()
-            if not b_id:
-                continue
+            b_id = item["id"]
             w = self.workers.get(b_id)
             bulbs_list.append({
-                "id": b_id,
-                "name": item.get("name") or (w.name if w else "Лампа"),
-                "ip": item.get("ip") or (w.ip if w else ""),
-                "key": item.get("key") or (getattr(w, "key", "") if w else ""),
-                "ver": float(item.get("ver", getattr(w, "ver", 3.5) if w else 3.5)),
-                "role": item.get("role") or (w.role if w else "kick"),
-                "side": item.get("side") or (getattr(w, "side", "") if w else ""),
-                "pos_x": float(item.get("pos_x", getattr(w, "pos_x", 0.0) if w else 0.0)),
-                "pos_y": float(item.get("pos_y", getattr(w, "pos_y", 0.0) if w else 0.0)),
-                "enabled": bool(item.get("enabled", True)),
+                **item,
                 "connected": bool(w.connected) if w else False,
-                "val": w.current_val if w else None
+                "val": w.current_val if w else None,
+                "last_error": getattr(w, "last_error", None) if w else None,
+                "reconnects": getattr(w, "reconnect_count", 0) if w else 0,
             })
         return bulbs_list
 
     def add_bulb(self, data):
         """Adds or updates a bulb in bulbs.json and spawns/reloads worker dynamically."""
         if not isinstance(data, dict):
-            return {"error": "Invalid payload, dict expected"}
-        b_id = str(data.get("id") or "").strip()
-        if not b_id:
-            return {"error": "Device ID (id) is required"}
-        ip = str(data.get("ip") or "").strip()
-        key = str(data.get("key") or "").strip()
-        name = str(data.get("name") or "").strip() or f"Лампа {ip or b_id[:6]}"
-        role = str(data.get("role", "kick")).strip().lower()
-        if role not in ["kick", "snare", "ambient"]:
-            role = "kick"
-        side = str(data.get("side", "")).strip().lower()
-        if side not in ["left", "right"]:
-            side = ""
-        pos_x = float(data.get("pos_x", -1.0 if side == "left" else (1.0 if side == "right" else 0.0)))
-        pos_y = float(data.get("pos_y", 0.0))
-        try:
-            ver = float(data.get("ver", 3.5))
-        except (ValueError, TypeError):
-            ver = 3.5
-        enabled = bool(data.get("enabled", True))
+            raise ValueError("Invalid payload, dict expected")
+        entry = normalize_bulb(data)
+        if not entry:
+            raise ValueError("Device ID (id) is required")
+        if not entry["key"]:
+            # При редактировании пустой ключ означает «оставить прежний».
+            existing = {item["id"]: item for item in self.store.load_bulbs()}
+            entry["key"] = existing.get(entry["id"], {}).get("key", "")
+        if not entry["ip"] and entry["enabled"]:
+            raise ValueError("IP address is required")
+        if not entry["key"] and entry["enabled"]:
+            raise ValueError("Local Key is required")
 
-        entry = {
-            "id": b_id,
-            "name": name,
-            "ip": ip,
-            "key": key,
-            "ver": ver,
-            "role": role,
-            "side": side,
-            "pos_x": pos_x,
-            "pos_y": pos_y,
-            "enabled": enabled
-        }
-
-        items = []
-        if self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
-            try:
-                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
-                    items = json.load(f)
-            except Exception:
-                items = []
-
-        found = False
-        for i, it in enumerate(items):
-            if it.get("id") == b_id:
-                items[i] = entry
-                found = True
-                break
-        if not found:
-            items.append(entry)
+        def mutate(items):
+            for index, item in enumerate(items):
+                if item.get("id") == entry["id"]:
+                    items[index] = entry
+                    break
+            else:
+                items.append(entry)
+            return items
 
         try:
-            p = Path(self.bulbs_config_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
-                json.dump(items, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            return {"error": f"Failed to save bulbs configuration: {e}"}
+            self.store.update_bulbs(mutate)
+        except Exception as error:
+            raise ValueError(f"Failed to save bulbs configuration: {error}")
 
         # Dynamically reload worker
-        old_w = self.workers.get(b_id)
+        old_w = self.workers.get(entry["id"])
         if old_w:
             old_w.stop(timeout=0.3)
-            del self.workers[b_id]
+            self.workers.pop(entry["id"], None)
 
-        if self.running and enabled:
+        if self.running and entry.get("enabled", True):
             new_w = BulbWorker(entry, self)
-            self.workers[b_id] = new_w
+            self.workers[new_w.dev_id] = new_w
             new_w.start()
 
         return {"status": "ok", "bulb": entry}
@@ -2452,108 +2660,47 @@ class PartyManager:
         """Removes bulb from bulbs.json and terminates its worker."""
         b_id = str(bulb_id or "").strip()
         if not b_id:
-            return {"error": "Bulb ID required"}
+            raise ValueError("Bulb ID required")
 
-        items = []
-        if self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
-            try:
-                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
-                    items = json.load(f)
-            except Exception:
-                items = []
-
-        new_items = [it for it in items if it.get("id") != b_id]
         try:
-            p = Path(self.bulbs_config_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
-                json.dump(new_items, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            return {"error": f"Failed to update bulbs configuration: {e}"}
+            self.store.update_bulbs(lambda items: [it for it in items if it.get("id") != b_id])
+        except Exception as error:
+            raise ValueError(f"Failed to update bulbs configuration: {error}")
 
         w = self.workers.get(b_id)
         if w:
             w.stop(timeout=0.3)
-            del self.workers[b_id]
+            self.workers.pop(b_id, None)
 
         return {"status": "ok", "id": b_id}
 
     def import_bulbs(self, list_data, overwrite=False):
         """Batch import bulbs from list or tinytuya devices export."""
-        if isinstance(list_data, dict):
-            if "bulbs" in list_data and isinstance(list_data["bulbs"], list):
-                raw_list = list_data["bulbs"]
-            elif "devices" in list_data and isinstance(list_data["devices"], list):
-                raw_list = list_data["devices"]
-            else:
-                raw_list = [list_data]
-        elif isinstance(list_data, list):
-            raw_list = list_data
-        else:
-            return {"error": "Expected list of bulbs or dict with devices"}
+        incoming = normalize_bulbs(list_data)
+        if not incoming:
+            raise ValueError("Expected list of bulbs or dict with devices")
 
-        existing = {}
-        if not overwrite and self.bulbs_config_path and os.path.exists(self.bulbs_config_path):
-            try:
-                with open(self.bulbs_config_path, "r", encoding="utf-8") as f:
-                    for it in json.load(f):
-                        if it.get("id"):
-                            existing[it["id"]] = it
-            except Exception:
-                pass
+        existing = {} if overwrite else {item["id"]: item for item in self.store.load_bulbs()}
+        added = 0
+        for item in incoming:
+            current = existing.get(item["id"], {})
+            if not item.get("key") and current.get("key"):
+                item["key"] = current["key"]
+            existing[item["id"]] = item
+            added += 1
 
-        count_added = 0
-        for item in raw_list:
-            if not isinstance(item, dict):
-                continue
-            b_id = str(item.get("id") or item.get("dev_id") or item.get("gwId") or "").strip()
-            if not b_id:
-                continue
-            key = str(item.get("key") or item.get("local_key") or "").strip()
-            ip = str(item.get("ip") or "").strip()
-            name = str(item.get("name") or f"Лампа {ip or b_id[:6]}").strip()
-            role = str(item.get("role", "kick")).strip().lower()
-            if role not in ["kick", "snare", "ambient"]:
-                role = "kick"
-            side = str(item.get("side", "")).strip().lower()
-            pos_x = float(item.get("pos_x", -1.0 if side == "left" else (1.0 if side == "right" else 0.0)))
-            pos_y = float(item.get("pos_y", 0.0))
-            try:
-                ver = float(item.get("ver", item.get("version", 3.5)))
-            except (ValueError, TypeError):
-                ver = 3.5
-            enabled = bool(item.get("enabled", True))
-
-            existing[b_id] = {
-                "id": b_id,
-                "name": name,
-                "ip": ip,
-                "key": key or (existing.get(b_id, {}).get("key") or ""),
-                "ver": ver,
-                "role": role,
-                "side": side,
-                "pos_x": pos_x,
-                "pos_y": pos_y,
-                "enabled": enabled
-            }
-            count_added += 1
-
-        final_items = list(existing.values())
         try:
-            p = Path(self.bulbs_config_path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.bulbs_config_path, "w", encoding="utf-8") as f:
-                json.dump(final_items, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            return {"error": f"Failed to save bulbs: {e}"}
+            final_items = self.store.save_bulbs(list(existing.values()))
+        except Exception as error:
+            raise ValueError(f"Failed to save bulbs: {error}")
 
         if self.running:
             for w in list(self.workers.values()):
-                w.stop(timeout=0.3)
+                w.stop(timeout=0.3, restore=False)
             self.workers.clear()
             self.load_bulbs()
 
-        return {"status": "ok", "count": count_added, "total": len(final_items)}
+        return {"status": "ok", "count": added, "total": len(final_items)}
 
     @staticmethod
     def _parse_tuya_udp_packet(data, udp_key=None):
@@ -2598,6 +2745,16 @@ class PartyManager:
         return None
 
     def scan_network(self, timeout=3.0):
+        timeout = clamp(timeout, 1.0, 15.0, 3.0)
+        with self._scan_lock:
+            self._discovery_suspended.set()
+            self._close_discovery_sockets()
+            try:
+                return self._scan_network_locked(timeout)
+            finally:
+                self._discovery_suspended.clear()
+
+    def _scan_network_locked(self, timeout):
         """Scans LAN for Tuya smart bulbs via UDP broadcasts & optional tinytuya scan."""
         found = {}
         if tinytuya and hasattr(tinytuya, "deviceScan"):
@@ -2807,6 +2964,7 @@ class PartyManager:
 
                 self.yandex_playing = yp
                 self.bt_playing = bp
+                self._media_error = None
                 master_on = self.settings.get("master_enabled", True)
                 bt_mode = self.settings.get("bt_mode", "off")
 
@@ -2815,96 +2973,172 @@ class PartyManager:
                     self.strobe_active = False
                 elif yp or (bp and bt_mode != "off"):
                     self.media_playing = True
-                    self.strobe_active = True
                 else:
                     self.media_playing = False
-                    self.strobe_active = False
 
-            except Exception:
-                pass
+                if bp and bt_mode == "ambilight" and self.settings.get("active_mode") == "party" and not self._bt_ambient_prev:
+                    self._bt_ambient_prev = "party"
+                    self.set_mode("aurora", _internal=True)
+                elif not bp and self._bt_ambient_prev:
+                    previous = self._bt_ambient_prev
+                    self._bt_ambient_prev = None
+                    self.set_mode(previous, _internal=True)
+
+            except Exception as error:
+                self._media_error = f"{type(error).__name__}: {error}"
             if self._stop_event.wait(1.0):
                 break
 
+    def _close_discovery_sockets(self):
+        for sock in self._discovery_sockets:
+            try:
+                sock.close()
+            except Exception:
+                pass
+        self._discovery_sockets = []
+        self._discovery_sock = None
+
     def _discovery_loop(self):
+        sockets = []
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(('', 6667))
-            s.settimeout(2.0)
-            self._discovery_sock = s
             while self.running and not self._stop_event.is_set():
-                try:
-                    data, addr = s.recvfrom(2048)
-                    ip = addr[0]
-                    for b_id, w in self.workers.items():
-                        if b_id.encode() in data:
-                            if w.ip != ip or not w.connected:
-                                w.update_ip(ip)
-                except socket.timeout:
-                    continue
-                except Exception:
-                    if self._stop_event.wait(1.0):
+                if self._discovery_suspended.is_set():
+                    for sock in sockets:
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                    sockets = []
+                    self._discovery_sockets = []
+                    self._discovery_sock = None
+                    if self._stop_event.wait(0.2):
                         break
-            s.close()
-        except Exception:
-            pass
+                    continue
+                if not sockets:
+                    sockets = self._open_discovery_sockets()
+                    self._discovery_sockets = sockets
+                    self._discovery_sock = sockets[0] if sockets else None
+                    if not sockets:
+                        if self._stop_event.wait(1.0):
+                            break
+                        continue
+                try:
+                    ready, _, _ = select.select(sockets, [], [], 0.5)
+                except (OSError, ValueError):
+                    for sock in sockets:
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                    sockets = []
+                    continue
+                for sock in ready:
+                    try:
+                        data, addr = sock.recvfrom(2048)
+                    except (OSError, ValueError):
+                        continue
+                    ip = addr[0]
+                    parsed = self._parse_tuya_udp_packet(data)
+                    dev_id = ""
+                    if isinstance(parsed, dict):
+                        dev_id = str(parsed.get("gwId") or parsed.get("id") or "")
+                    for b_id, w in list(self.workers.items()):
+                        if dev_id:
+                            matched = dev_id == b_id
+                        else:
+                            # Совместимость со старыми прошивками: точное вхождение ID.
+                            matched = b_id.encode("ascii", "ignore") in data
+                        if matched and (w.ip != ip or not w.connected):
+                            w.update_ip(ip)
+        except Exception as error:
+            self._media_error = f"discovery: {type(error).__name__}: {error}"
         finally:
+            for sock in sockets:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            self._discovery_sockets = []
             self._discovery_sock = None
+
+    def _open_discovery_sockets(self):
+        sockets = []
+        for port in (6666, 6667):
+            sock = None
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(("", port))
+                sock.settimeout(0.5)
+                sockets.append(sock)
+            except OSError:
+                if sock:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+        return sockets
 
     def _audio_loop(self):
         cmd = ["/system/bin/tinycap2", "--", "-D", "1", "-d", "1", "-c", "2", "-r", "48000", "-p", "512", "-n", "6"]
         try:
             self.audio_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except Exception as e:
+            self._audio_error = f"tinycap2 start: {type(e).__name__}: {e}"
             print(f"[Party] tinycap2 start error: {e}")
             return
 
         chunk_size = 2048
-        bpf_kick = BiquadBandPass(fc=85.0, fs=48000.0, q=1.2)
-        bpf_snare = BiquadBandPass(fc=1000.0, fs=48000.0, q=1.2)
-        alpha = 0.02
-        moving_avg_kick = 400.0
-        moving_avg_snare = 600.0
-        last_kick, last_snare = 0.0, 0.0
-        p2_kick, p1_kick = 0.0, 0.0
-        p2_snare, p1_snare = 0.0, 0.0
+        detector = BeatDetector(fs=48000.0)
 
         try:
             while self.running:
-                if self.audio_proc.poll() is not None:
+                proc = self.audio_proc
+                if proc is None:
+                    break
+                if proc.poll() is not None:
                     if not self.running: break
+                    self._audio_error = "tinycap2 exited; restarting"
                     time.sleep(1.0)
-                    self.audio_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                    detector.reset()
+                    try:
+                        self.audio_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                    except Exception as error:
+                        self._audio_error = f"tinycap2 restart: {type(error).__name__}: {error}"
+                        if self._stop_event.wait(2.0):
+                            break
                     continue
 
-                raw = self.audio_proc.stdout.read(chunk_size)
+                raw = proc.stdout.read(chunk_size)
                 if not raw or len(raw) < chunk_size:
                     time.sleep(0.01)
                     continue
+                self._audio_error = None
 
                 count = len(raw) // 2
                 samples = struct.unpack(f"<{count}h", raw)
-                left = samples[::2]
+                # Стерео → моно: иначе звук, панорамированный вправо, теряется.
+                mono = [(samples[i] + samples[i + 1]) * 0.5 for i in range(0, count - 1, 2)]
                 now = time.time()
 
-                if self.media_playing and self.settings.get("active_mode") == "party":
-                    curr_kick = bpf_kick.process(left)
-                    thresh_kick = max(moving_avg_kick * 1.30, 250.0)
-                    if p1_kick > p2_kick and p1_kick >= curr_kick:
-                        if p1_kick > thresh_kick and (now - last_kick > 0.22):
-                            if self.current_effect: self.current_effect.on_kick(p1_kick)
-                            last_kick = now
-                    moving_avg_kick = (1.0 - alpha) * moving_avg_kick + alpha * curr_kick
-                    p2_kick, p1_kick = p1_kick, curr_kick
+                master = bool(self.settings.get("master_enabled", True))
+                active_party = self.settings.get("active_mode") == "party"
+                bt_allowed = not (self.bt_playing and self.settings.get("bt_mode") == "off")
+                if master and active_party and bt_allowed:
+                    events = detector.process(mono, now=now)
+                    if events["kick"]:
+                        if self.current_effect:
+                            self.current_effect.on_kick(events["kick_level"])
+                        self.strobe_active = True
+                    if events["snare"]:
+                        if self.current_effect:
+                            self.current_effect.on_snare(events["snare_level"])
+                        self.strobe_active = True
 
-                    curr_snare = bpf_snare.process(left)
-                    thresh_snare = max(moving_avg_snare * 1.25, 350.0)
-                    if p1_snare > p2_snare and p1_snare >= curr_snare:
-                        if p1_snare > thresh_snare and (now - last_snare > 0.18):
-                            if self.current_effect: self.current_effect.on_snare(p1_snare)
-                            last_snare = now
-                    moving_avg_snare = (1.0 - alpha) * moving_avg_snare + alpha * curr_snare
-                    p2_snare, p1_snare = p1_snare, curr_snare
+                silence_timeout = float(self.settings.get("silence_timeout", 10.0))
+                if now - self.last_sound_time > silence_timeout:
+                    self.in_silence = True
+                    self.strobe_active = False
         finally:
             if self.audio_proc:
                 try:

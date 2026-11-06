@@ -4070,7 +4070,15 @@ echo @@BLUEZ
         elif action == "sync":
             cinema.sync_to_cue(float(val or 32.0))
         elif action == "load":
-            cinema.load_script(str(val or ""))
+            from pathlib import Path
+            movies = (Path(__file__).resolve().parent / "movies").resolve()
+            candidate = Path(str(val or "")).expanduser()
+            if not candidate.is_absolute():
+                candidate = movies / candidate
+            candidate = candidate.resolve()
+            if candidate.suffix.lower() != ".json" or (candidate != movies and movies not in candidate.parents):
+                raise AdbError("Сценарий должен быть JSON-файлом в папке movies")
+            cinema.load_script(str(candidate))
         return self.party.get_status().get("cinema", {})
 
     def party_cinema_spell(self, spell, direction=None):
@@ -4115,7 +4123,8 @@ echo @@BLUEZ
         if pos is None and tv_box:
             try:
                 import subprocess, re
-                cmd = ["adb", "-s", tv_box, "shell", "dumpsys media_session | grep -m 1 PlaybackState ; cat /proc/uptime"]
+                adb_bin = getattr(self.adb, "adb", None) or "adb"
+                cmd = [adb_bin, "-s", tv_box, "shell", "dumpsys media_session | grep -m 1 PlaybackState ; cat /proc/uptime"]
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
                 lines = [l.strip() for l in res.stdout.splitlines() if l.strip()]
                 if len(lines) >= 2:
@@ -7042,7 +7051,7 @@ class PanelUpdater:
     """Проверка новых релизов панели на GitHub и обновление — в зависимости от того, как панель установлена:
     zip (Windows-сборка, Download ZIP) — скачать релиз и заменить файлы панели; git — git pull --ff-only;
     docker — только подсказать команду (образ изнутри не обновить)."""
-    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "dsp_max.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
+    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "dsp_max.py", "assistant_max.py", "party.py", "party_store.py", "party_audio.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
     DIRS = ("api", "static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно

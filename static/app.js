@@ -1769,6 +1769,26 @@ let partyTimer = null;
 let partyData = null;
 let partyBulbsConfig = [];
 let partyEventsBound = false;
+let partyCinemaSeeking = false;
+
+const CINEMA_SPELL_NAMES = {
+  wand_spark: 'Люмос',
+  spell_lumos: 'Люмос',
+  spell_lumos_2: 'Люмос',
+  spell_lumos_maxima: 'Люмос Максима',
+  spell_patronus: 'Экспекто Патронум',
+  great_patronus: 'Экспекто Патронум',
+  spell_avada: 'Авада',
+  spell_expelliarmus: 'Экспеллиармус',
+  spell_bombarda: 'Бомбарда',
+  spell_ridikulus: 'Ридикулус',
+};
+
+const fmtCinemaTime = s => {
+  s = Math.max(0, Math.floor(Number(s) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return (h > 0 ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(sec).padStart(2, '0');
+};
 
 async function loadParty() {
   clearTimeout(partyTimer);
@@ -1812,10 +1832,11 @@ function renderParty() {
   // Active Mode Grid & Badge
   const activeMode = d.active_mode || 'party';
   const modeBtn = $(`#party-modes-grid button[data-mode="${activeMode}"]`);
+  const modeInfo = Array.isArray(d.modes) ? d.modes.find(m => m.id === activeMode) : null;
   const activeBadge = $('#party-active-mode-badge');
   if (activeBadge) {
-    const iconSpan = modeBtn?.querySelector('span')?.textContent || '';
-    const nameB = modeBtn?.querySelector('b')?.textContent || activeMode;
+    const iconSpan = modeBtn?.querySelector('span')?.textContent || modeInfo?.icon || '';
+    const nameB = modeBtn?.querySelector('b')?.textContent || modeInfo?.title || (activeMode === 'cinema' ? 'Кинотеатр 4D' : activeMode);
     activeBadge.textContent = `${iconSpan} ${nameB}`.trim();
   }
   $$('#party-modes-grid button').forEach(b => {
@@ -1888,6 +1909,47 @@ function renderParty() {
   $$('#party-sync-mode button').forEach(b => {
     b.classList.toggle('active', b.dataset.v === syncMode);
   });
+
+  // Cinema 4D
+  const cin = d.cinema || {};
+  const cinPlaying = !!cin.playing;
+  const cinTime = Math.max(0, Math.round(Number(cin.time_sec) || 0));
+  const cinDuration = Math.max(0, Math.round(Number(cin.duration_sec) || 0));
+  const cinSeekMax = Math.max(1, cinDuration);
+  const cinOffset = Number(cin.offset_sec) || 0;
+  const cinBadge = $('#party-cinema-badge');
+  if (cinBadge) {
+    cinBadge.textContent = d.cinema ? (cinPlaying ? '▶ Играет' : '⏸ Пауза') : '—';
+    cinBadge.className = 'badge' + (cinPlaying ? ' ok' : '');
+  }
+  const cinTitle = $('#party-cinema-title');
+  if (cinTitle) {
+    cinTitle.textContent = cin.title
+      ? `${cin.title} · Ambilight и магические спецэффекты`
+      : 'Ambilight и магические спецэффекты в такт фильму. Запустите воспроизведение или выберите режим «Кинотеатр 4D».';
+  }
+  const cinToggle = $('#party-cinema-toggle');
+  if (cinToggle) {
+    cinToggle.textContent = cinPlaying ? '⏸ Пауза' : '▶ Играть';
+    cinToggle.className = 'btn sm' + (cinPlaying ? '' : ' primary');
+  }
+  const cinSeek = $('#party-cinema-seek');
+  if (cinSeek) {
+    if (Number(cinSeek.max) !== cinSeekMax) cinSeek.max = cinSeekMax;
+    if (!partyCinemaSeeking) cinSeek.value = Math.min(cinTime, cinSeekMax);
+  }
+  const cinShownTime = partyCinemaSeeking && cinSeek ? Number(cinSeek.value) : cinTime;
+  const cinTimeEl = $('#party-cinema-time');
+  if (cinTimeEl) cinTimeEl.textContent = `${fmtCinemaTime(cinShownTime)} / ${fmtCinemaTime(cinDuration)}`;
+  const cinScene = $('#party-cinema-scene');
+  if (cinScene) cinScene.textContent = `Сцена: ${cin.scene || '—'}`;
+  const cinSpell = $('#party-cinema-spell');
+  if (cinSpell) {
+    const spellName = cin.active_spell ? (CINEMA_SPELL_NAMES[cin.active_spell] || cin.active_spell) : '—';
+    cinSpell.textContent = `Спелл: ${spellName}`;
+  }
+  const cinOffsetEl = $('#party-cinema-offset');
+  if (cinOffsetEl) cinOffsetEl.textContent = `Смещение: ${cinOffset > 0 ? '+' : ''}${cinOffset.toFixed(1)} с`;
 
   // Bulbs list & count
   const cfgList = Array.isArray(partyBulbsConfig) ? partyBulbsConfig : [];
@@ -1966,6 +2028,43 @@ function renderParty() {
   const statWorkers = $('#party-stat-workers');
   if (statWorkers) {
     statWorkers.textContent = `${d.workers_count || bulbs.length} ламп + лента`;
+  }
+
+  const strip = d.strip || {};
+  const statStrip = $('#party-stat-strip');
+  if (statStrip) {
+    if (strip.enabled) {
+      statStrip.innerHTML = '<span class="dot on"></span><span>Активна</span>';
+      statStrip.title = strip.device_id ? `Устройство: ${strip.device_id}` : '';
+    } else if (strip.configured) {
+      statStrip.innerHTML = '<span class="dot"></span><span class="meta">Настроена, выкл.</span>';
+      statStrip.title = strip.device_id ? `Устройство: ${strip.device_id}` : '';
+    } else {
+      statStrip.innerHTML = '<span class="dot"></span><span class="meta">Не настроена</span>';
+      statStrip.title = '';
+    }
+  }
+
+  const audio = d.audio || {};
+  const statAudio = $('#party-stat-audio');
+  if (statAudio) {
+    if (audio.capturing) {
+      statAudio.innerHTML = `<span class="dot on"></span><span>${audio.media_playing ? 'Захват · звук идёт' : 'Захват активен'}</span>`;
+      const beat = Number(audio.last_beat_sec);
+      statAudio.title = Number.isFinite(beat) ? `Последний бит: ${beat.toFixed(1)} с назад` : '';
+    } else {
+      statAudio.innerHTML = '<span class="dot"></span><span class="meta">Нет захвата</span>';
+      statAudio.title = '';
+    }
+  }
+
+  const statError = $('#party-stat-error');
+  if (statError) {
+    const lastError = String(strip.last_error || audio.error || d.last_error || '').trim();
+    statError.innerHTML = lastError
+      ? `<span style="color:var(--danger); font-weight:600;">${esc(lastError)}</span>`
+      : '<span class="meta">—</span>';
+    statError.title = lastError;
   }
 }
 
@@ -2080,6 +2179,85 @@ function initPartyEvents() {
         await api('/api/party/settings', { sync_mode: mode });
         await loadParty();
       });
+    };
+  }
+
+  // --- Кинотеатр 4D ---
+  const cinToggle = $('#party-cinema-toggle');
+  if (cinToggle) {
+    cinToggle.onclick = e => {
+      const isPlaying = !!(partyData && partyData.cinema && partyData.cinema.playing);
+      return act(e.currentTarget, async () => {
+        await api('/api/party/cinema/control', { action: isPlaying ? 'pause' : 'play' });
+        await loadParty();
+      }, isPlaying ? 'Кинотеатр: пауза' : 'Кинотеатр: воспроизведение');
+    };
+  }
+
+  const cinSync = $('#party-cinema-sync');
+  if (cinSync) {
+    cinSync.onclick = e => {
+      return act(e.currentTarget, async () => {
+        await api('/api/party/cinema/control', { action: 'sync', value: 32 });
+        await loadParty();
+      }, 'Синхронизация с cue 32 с');
+    };
+  }
+
+  const cinBack = $('#party-cinema-back');
+  if (cinBack) {
+    cinBack.onclick = e => {
+      return act(e.currentTarget, async () => {
+        await api('/api/party/cinema/control', { action: 'offset', value: -1 });
+        await loadParty();
+      }, 'Смещение: −1 с');
+    };
+  }
+
+  const cinFwd = $('#party-cinema-fwd');
+  if (cinFwd) {
+    cinFwd.onclick = e => {
+      return act(e.currentTarget, async () => {
+        await api('/api/party/cinema/control', { action: 'offset', value: 1 });
+        await loadParty();
+      }, 'Смещение: +1 с');
+    };
+  }
+
+  const cinSeek = $('#party-cinema-seek');
+  if (cinSeek) {
+    const markSeeking = () => { partyCinemaSeeking = true; };
+    const releaseSeeking = () => { partyCinemaSeeking = false; };
+    cinSeek.addEventListener('pointerdown', markSeeking);
+    cinSeek.addEventListener('pointerup', releaseSeeking);
+    cinSeek.addEventListener('pointercancel', releaseSeeking);
+    cinSeek.addEventListener('blur', releaseSeeking);
+    cinSeek.oninput = () => {
+      partyCinemaSeeking = true;
+      const t = $('#party-cinema-time');
+      if (t) t.textContent = `${fmtCinemaTime(cinSeek.value)} / ${fmtCinemaTime(cinSeek.max)}`;
+    };
+    cinSeek.onchange = e => {
+      const val = Number(cinSeek.value) || 0;
+      const wasPlaying = !!(partyData && partyData.cinema && partyData.cinema.playing);
+      partyCinemaSeeking = false;
+      act(e.target, async () => {
+        await api('/api/party/cinema/control', { action: 'seek', value: val });
+        if (!wasPlaying) await api('/api/party/cinema/control', { action: 'pause' });
+        await loadParty();
+      });
+    };
+  }
+
+  const cinSpells = $('#party-cinema-spells');
+  if (cinSpells) {
+    cinSpells.onclick = e => {
+      const btn = e.target.closest('button[data-spell]');
+      if (!btn) return;
+      return act(btn, async () => {
+        await api('/api/party/cinema/spell', { spell: btn.dataset.spell, direction: null });
+        await loadParty();
+      }, `Спелл: ${btn.textContent.trim()}`);
     };
   }
 

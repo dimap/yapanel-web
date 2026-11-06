@@ -2005,6 +2005,7 @@ class PartyManager:
         self._media_error = None
         self._scan_lock = threading.Lock()
         self._discovery_suspended = threading.Event()
+        self._discovery_released = threading.Event()
 
         # Effect Registry
         self.effects = {
@@ -2746,7 +2747,10 @@ class PartyManager:
         timeout = clamp(timeout, 1.0, 15.0, 3.0)
         with self._scan_lock:
             self._discovery_suspended.set()
+            self._discovery_released.clear()
             self._close_discovery_sockets()
+            if self._discovery_thread and self._discovery_thread.is_alive():
+                self._discovery_released.wait(timeout=1.5)
             try:
                 return self._scan_network_locked(timeout)
             finally:
@@ -3009,6 +3013,7 @@ class PartyManager:
                     sockets = []
                     self._discovery_sockets = []
                     self._discovery_sock = None
+                    self._discovery_released.set()
                     if self._stop_event.wait(0.2):
                         break
                     continue

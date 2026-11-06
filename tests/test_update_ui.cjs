@@ -2,6 +2,10 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('p
 const html=fs.readFileSync(path.join(__dirname,'../static/index.html'),'utf8');
 const app=fs.readFileSync(path.join(__dirname,'../static/app.js'),'utf8');
 const ui=html+'\n'+app;
+// The updater row must exist in the real shell, not only in the test mocks.
+for(const id of ['upd-check','upd-repo','upd-row','upd-latest','upd-how','upd-notes','upd-go']){
+  assert(html.includes(`id="${id}"`),`missing updater element #${id}`);
+}
 // A syntax error anywhere in the main shell prevents connection handling and
 // every widget from starting; extracting individual functions misses this.
 for(const match of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)){

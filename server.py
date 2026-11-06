@@ -7318,19 +7318,55 @@ class PanelUpdater:
         return (ka[0][:4], ka[1]) > (kb[0][:4], kb[1])
 
     def check(self, refresh=False):
-        """Проверка обновлений отключена (локальный форк)."""
+        """Проверяет последний релиз на GitHub и сравнивает его с VERSION.
+
+        Ответ кешируется на 6 часов, чтобы панель не дёргала GitHub на каждый
+        запрос. ``refresh=True`` (кнопка «Проверить») обходит кеш. Ошибки сети
+        не мешают панели работать: возвращается словарь с ``error``, а при
+        наличии прошлого успешного ответа показывается он.
+        """
         repo = getattr(self.config.server, "github_repo", REPO) if hasattr(self, "config") and self.config else REPO
-        return {
+        at, rel = self.cache
+        if not isinstance(rel, dict):
+            rel = None
+        err = None
+        if refresh or rel is None or time.time() - at > 6 * 3600:
+            try:
+                req = urllib.request.Request(
+                    f"https://api.github.com/repos/{repo}/releases/latest",
+                    headers={"User-Agent": f"yapanel-web/{VERSION}",
+                             "Accept": "application/vnd.github+json"},
+                )
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    payload = json.load(response)
+                if not isinstance(payload, dict):
+                    raise ValueError("GitHub вернул не объект JSON")
+                rel = payload
+                self.cache = (time.time(), rel)
+            except urllib.error.HTTPError as e:
+                err = ("релизов пока нет или репозиторий закрыт" if e.code == 404
+                       else f"GitHub ответил {e.code}")
+            except (OSError, ValueError) as e:
+                err = f"GitHub недоступен: {e}"
+
+        result = {
             "version": VERSION,
             "install": self.kind(),
             "repo": f"https://github.com/{repo}",
-            "checked": time.time(),
-            "latest": VERSION,
-            "latest_date": "",
-            "url": f"https://github.com/{repo}",
-            "update": False,
-            "disabled": True,
-            "message": "Обновления панели отключены (форк)",
+            "checked": self.cache[0] or None,
+        }
+        if rel is None:
+            return {**result, "error": err or "нет данных о релизе"}
+
+        latest = str(rel.get("tag_name") or "").lstrip("v")
+        if err:
+            result["error"] = err
+        return {
+            **result,
+            "latest": latest,
+            "latest_date": (rel.get("published_at") or "")[:10],
+            "url": rel.get("html_url") or result["repo"],
+            "update": bool(latest) and self._newer(latest, VERSION),
         }
 
     def update(self):
@@ -7341,7 +7377,7 @@ class PanelUpdater:
             if info.get("error") and not info.get("latest"):
                 raise AdbError(info["error"])
             if not info.get("update"):
-                raise AdbError("уже установлена последняя версия (обновления отключены)")
+                raise AdbError("уже установлена последняя версия")
             kind = info["install"]
             if kind == "docker":
                 raise AdbError("в Docker обновите образ: docker compose pull && docker compose up -d")

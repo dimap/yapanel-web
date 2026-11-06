@@ -29,6 +29,7 @@ from pathlib import Path
 
 from party_store import (
     PartyStore,
+    as_bool,
     clamp,
     clamp_int,
     normalize_bulb,
@@ -96,6 +97,7 @@ class BulbWorker(threading.Thread):
             self.pos_x = 0.0
         self.pos_y = float(dev_info.get("pos_y", 0.0))
         self.manager = manager
+        self._manager_generation = getattr(manager, "_run_generation", 0)
         
         self.device = None
         self.connected = False
@@ -106,6 +108,8 @@ class BulbWorker(threading.Thread):
         self.current_val = None
         self.last_error = None
         self.reconnect_count = 0
+        self.is_on = True
+        self._restore_on_exit = True
         self._io_lock = threading.RLock()
 
     def connect(self):
@@ -132,7 +136,7 @@ class BulbWorker(threading.Thread):
             d.set_socketTimeout(_cfg_party.socket_timeout if _cfg_party else 0.25)
             d.socketRetryLimit = _cfg_party.socket_retry if _cfg_party else 1
             d.socketRetryDelay = _cfg_party.socket_delay if _cfg_party else 0.05
-            d.set_multiple_values({"20": True, "21": "colour"}, nowait=True)
+            d.set_multiple_values({"20": bool(self.is_on), "21": "colour"}, nowait=True)
             sock = getattr(d, "socket", None)
             if not sock or not hasattr(sock, "fileno") or sock.fileno() == -1:
                 self.connected = False
@@ -169,6 +173,7 @@ class BulbWorker(threading.Thread):
 
     def stop(self, timeout=0.5, restore=True):
         self._stop_event.set()
+        self._restore_on_exit = restore
         # Погасить свет в тёплый белый до закрытия сокета: иначе лампа
         # остаётся в последнем цвете эффекта навсегда.
         if restore and self.connected and self.device:
@@ -212,10 +217,11 @@ class BulbWorker(threading.Thread):
         try:
             self._drain_socket()
             force_on = getattr(self, "force_full_power_on", False)
-            if force_on or getattr(self, "is_white", True):
+            if force_on or getattr(self, "is_white", True) or not getattr(self, "is_on", True):
                 self.device.set_multiple_values({"20": True, "21": "colour", "24": val}, nowait=nowait)
                 self.is_white = False
                 self.force_full_power_on = False
+                self.is_on = True
             else:
                 self.device.set_value("24", val, nowait=nowait)
             self.current_val = val
@@ -246,6 +252,7 @@ class BulbWorker(threading.Thread):
                 "23": temp
             }, nowait=True)
             self.is_white = True
+            self.is_on = True
             self.current_val = "white"
             self.last_heartbeat = time.time()
             self._drain_socket()
@@ -268,6 +275,7 @@ class BulbWorker(threading.Thread):
                 return False
             self.device.set_value("20", False, nowait=True)
             self.current_val = "off"
+            self.is_on = False
             self.last_heartbeat = time.time()
             self._drain_socket()
             return True
@@ -288,6 +296,7 @@ class BulbWorker(threading.Thread):
             if not self.device:
                 return False
             self.device.set_value("20", True, nowait=True)
+            self.is_on = True
             self.last_heartbeat = time.time()
             self._drain_socket()
             return True
@@ -310,7 +319,9 @@ class BulbWorker(threading.Thread):
 
     def run(self):
         self.connect()
-        while self.manager.running and not self._stop_event.is_set():
+        while (self.manager.running
+               and getattr(self.manager, "_run_generation", 0) == self._manager_generation
+               and not self._stop_event.is_set()):
             now = time.time()
             # Auto-reconnect if dropped
             if not self.connected or not self.device:
@@ -336,7 +347,7 @@ class BulbWorker(threading.Thread):
             if self._stop_event.wait(0.1):
                 break
 
-        if self.connected and self.device:
+        if self._restore_on_exit and self.connected and self.device:
             try:
                 self.send_white()
                 self.device.close()
@@ -349,9 +360,11 @@ class ZigbeeStripWorker(threading.Thread):
         super().__init__(daemon=True, name="zigbee-strip-worker")
         self.config_path = config_path
         self.manager = manager
+        self._manager_generation = getattr(manager, "_run_generation", 0)
         self.enabled = False
         self.device_id = None
         self.token = None
+        self.configured = False
         self.target_state = None  # ("hsv", hue, sat, bright) or ("white", temp_k, bright) or ("off",)
         self.last_sent_state = None
         self.last_error = None
@@ -381,11 +394,14 @@ class ZigbeeStripWorker(threading.Thread):
                     cfg = json.load(f)
             self.device_id = cfg.get("device_id")
             self.token = cfg.get("token")
-            self.enabled = bool(cfg.get("enabled", True) and self.token and self.device_id)
+            self.configured = bool(self.token and self.device_id)
+            self.enabled = bool(cfg.get("enabled", True) and self.configured)
             if self.enabled:
                 print(f"[Party] Loaded Zigbee Strip Ambient Sync: Device ID {self.device_id}")
+            elif not self.configured:
+                self.last_error = None
             else:
-                self.last_error = "strip config is disabled or incomplete"
+                self.last_error = "strip config is disabled"
         except Exception as e:
             self.last_error = f"{type(e).__name__}: {e}"
             print(f"[Party] Failed to load strip config: {e}")
@@ -394,6 +410,8 @@ class ZigbeeStripWorker(threading.Thread):
         if not self.running:
             return True
         if getattr(self.manager, "running", True) is False:
+            return True
+        if getattr(self.manager, "_run_generation", 0) != self._manager_generation:
             return True
         stop_ev = getattr(self.manager, "_stop_event", None)
         if stop_ev is not None and hasattr(stop_ev, "is_set") and stop_ev.is_set() is True:
@@ -444,21 +462,28 @@ class ZigbeeStripWorker(threading.Thread):
                         self.last_sent_state = state
                     self._retry_delay = 1.0
                     # Respect cloud rate limit - pause between calls
-                    time.sleep(1.0)
+                    if self.manager._stop_event.wait(1.0):
+                        break
                 else:
-                    time.sleep(self._retry_delay)
+                    if self.manager._stop_event.wait(self._retry_delay):
+                        break
                     self._retry_delay = min(30.0, self._retry_delay * 2)
 
     def restore_white(self, temp_k=3000, brightness=80):
         """Best-effort synchronous warm-white restore used on service stop."""
         if not self.enabled or not self.token or not self.device_id:
             return False
-        actions = [
-            {"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": True}},
-            {"type": "devices.capabilities.color_setting", "state": {"instance": "temperature_k", "value": int(temp_k)}},
-            {"type": "devices.capabilities.range", "state": {"instance": "brightness", "value": int(brightness)}},
-        ]
-        return self._send_action_sync(actions)
+        state = ("white", int(temp_k), int(brightness))
+        with self.cond:
+            self.target_state = state
+            self.last_sent_state = None
+            self.cond.notify()
+        actions = self._actions_for_state(state)
+        if self._send_action_sync(actions):
+            with self.cond:
+                self.last_sent_state = state
+            return True
+        return False
 
     def _send_action_sync(self, actions):
         if not self.enabled or not self.token or not self.device_id:
@@ -549,7 +574,9 @@ class FireplaceEffect(BaseEffect):
         self.last_flicker = now
 
         for b_id, w in self.manager.workers.items():
-            offset = self.offsets.get(b_id, 0)
+            if b_id not in self.offsets:
+                self.offsets[b_id] = random.uniform(0, 100)
+            offset = self.offsets[b_id]
             t = (now * 3.5 * self.speed) + offset
             
             # Fire noise: superposition of sines + small random jitter
@@ -697,7 +724,9 @@ class AuroraEffect(BaseEffect):
         self.last_tick = now
 
         for b_id, w in self.manager.workers.items():
-            off = self.offsets.get(b_id, 0.0)
+            if b_id not in self.offsets:
+                self.offsets[b_id] = random.uniform(0, math.pi * 2)
+            off = self.offsets[b_id]
             t = (now * 0.9 * self.speed) + off
             
             # Slow harmonic color drift
@@ -895,7 +924,9 @@ class LavaEffect(BaseEffect):
         self.last_tick = now
 
         for b_id, w in self.manager.workers.items():
-            ph = self.phases.get(b_id, 0.0)
+            if b_id not in self.phases:
+                self.phases[b_id] = random.uniform(0, math.pi * 2)
+            ph = self.phases[b_id]
             t = (now * 1.1 * self.speed) + ph
             
             blob = (math.sin(t) * 0.5 + math.sin(t * 1.9) * 0.3 + math.sin(t * 3.1) * 0.2 + 1.0) / 2.0
@@ -965,7 +996,9 @@ class MovieAmbilightEffect(BaseEffect):
         self._current_anim_event = None
         self._anim_thread = None
 
-    def load_script(self):
+    def load_script(self, script_path=None):
+        if script_path:
+            self.script_path = str(script_path)
         if os.path.exists(self.script_path):
             try:
                 with open(self.script_path, "r", encoding="utf-8") as f:
@@ -1038,17 +1071,21 @@ class MovieAmbilightEffect(BaseEffect):
         """Called when user switches away from Cinema mode."""
         self.playing = False
         self.active_spell = None
+        self._bulbs_off_for_strip = False
         self._cancel_animations()
 
     def play(self):
         if not self.playing:
             self.playing = True
+            self._bulbs_off_for_strip = False
             self.start_wall_time = time.monotonic() - self.current_time
             self.last_checked_time = self.current_time
             self.last_sent_val = None
             self.active_spell = None
             # Ensure master enabled is active so ticks run reliably
             self.manager.settings["master_enabled"] = True
+            if getattr(self.manager, "_bt_ambient_prev", None):
+                self.manager._bt_ambient_prev = None
             if self.manager.settings.get("active_mode") != "cinema":
                 self.manager.settings["active_mode"] = "cinema"
                 self.manager.current_effect = self
@@ -1070,7 +1107,17 @@ class MovieAmbilightEffect(BaseEffect):
             if self.manager.strip_worker:
                 self.manager.strip_worker.set_white(temp_k=2700, brightness=60)
 
+    def _activate(self):
+        if not self.manager.running:
+            self.manager.start()
+        self.manager.settings["active_mode"] = "cinema"
+        self.manager.settings["master_enabled"] = True
+        self.manager.current_effect = self
+        self.manager.save_settings()
+
     def seek(self, sec, play=True):
+        self._activate()
+        self._bulbs_off_for_strip = False
         duration = float(self.script.get("duration_sec", 8502) or 8502)
         self.current_time = max(0.0, min(duration, float(sec)))
         self.playing = bool(play)
@@ -1088,6 +1135,8 @@ class MovieAmbilightEffect(BaseEffect):
 
     def sync_to_cue(self, cue_time=32.0):
         """Instantly aligns current playback time to a well-known cue (e.g. 32.0s first Lumos)."""
+        self._activate()
+        self._bulbs_off_for_strip = False
         now = time.monotonic()
         duration = float(self.script.get("duration_sec", 8502) or 8502)
         cue_sec = max(0.0, min(duration, float(cue_time or 32.0)))
@@ -1147,8 +1196,8 @@ class MovieAmbilightEffect(BaseEffect):
             "great_patronus": ("_anim_great_patronus", {"direction": direction or "center_out"}),
             "marauders_map_ink": ("_anim_marauders_ink", {}),
         }
-        if spell_type == "spell_ridikulus" and direction not in ("left", "right", "center_out"):
-            animations["spell_ridikulus"] = ("_anim_ridikulus", {})
+        if spell_type in ("spell_ridikulus", "spell_riddikulus") and direction not in ("left", "right", "center_out"):
+            animations[spell_type] = ("_anim_ridikulus", {})
         if spell_type in animations:
             method, kwargs = animations[spell_type]
             self._start_anim(getattr(self, method), **kwargs)
@@ -1787,9 +1836,8 @@ class MovieAmbilightEffect(BaseEffect):
 
             # 2. Update Bulbs
             if target_mode == "strip_only":
-                if not getattr(self, "_bulbs_off_for_strip", False):
-                    for w in self.manager.workers.values():
-                        w.send_off()
+                if force or not getattr(self, "_bulbs_off_for_strip", False):
+                    self.manager.broadcast_off(list(self.manager.workers.values()), wait=True)
                     self._bulbs_off_for_strip = True
             else:
                 self._bulbs_off_for_strip = False
@@ -1985,8 +2033,10 @@ class PartyManager:
 
         self.workers = WorkersDict()
         self.running = False
-        self._lifecycle_lock = threading.Lock()
+        self._lifecycle_lock = threading.RLock()
         self._stop_event = threading.Event()
+        self._run_stop = threading.Event()
+        self._run_generation = 0
         self._ticker_thread = None
         self._media_guard_thread = None
         self._discovery_thread = None
@@ -2029,6 +2079,9 @@ class PartyManager:
         self.strobe_active = False
         self.strip_ambient_active = False
         self._bt_ambient_prev = None
+        self._bt_ambient_manual = False
+        self._silence_white_done = False
+        self._white_hold_until = 0.0
         self.last_sound_time = time.time()
         self.in_silence = True
 
@@ -2143,6 +2196,10 @@ class PartyManager:
                 return
             self.running = True
             self._stop_event.clear()
+            self._run_generation += 1
+            generation = self._run_generation
+            run_stop = threading.Event()
+            self._run_stop = run_stop
             print("[Party] Starting Engine...")
             try:
                 self.settings = normalize_settings(self.settings)
@@ -2158,7 +2215,7 @@ class PartyManager:
                 self._select_effect()
 
                 # Animation tick loop (~20 FPS)
-                self._ticker_thread = threading.Thread(target=self._effect_tick_loop, daemon=True, name="party-effect-ticker")
+                self._ticker_thread = threading.Thread(target=self._effect_tick_loop, args=(generation, run_stop), daemon=True, name="party-effect-ticker")
                 self._ticker_thread.start()
 
                 # Дать эффекту возможность выполнить start(): для cinema это play().
@@ -2169,11 +2226,11 @@ class PartyManager:
                     print(f"[Party] Effect start error: {error}")
 
                 if self.is_android:
-                    self._media_guard_thread = threading.Thread(target=self._media_guard_loop, daemon=True, name="party-media-guard")
+                    self._media_guard_thread = threading.Thread(target=self._media_guard_loop, args=(generation, run_stop), daemon=True, name="party-media-guard")
                     self._media_guard_thread.start()
-                    self._discovery_thread = threading.Thread(target=self._discovery_loop, daemon=True, name="party-discovery")
+                    self._discovery_thread = threading.Thread(target=self._discovery_loop, args=(generation, run_stop), daemon=True, name="party-discovery")
                     self._discovery_thread.start()
-                    self._audio_thread = threading.Thread(target=self._audio_loop, daemon=True, name="party-audio-loop")
+                    self._audio_thread = threading.Thread(target=self._audio_loop, args=(generation, run_stop), daemon=True, name="party-audio-loop")
                     self._audio_thread.start()
                 else:
                     print("[Party] Not running on Android; audio capture disabled.")
@@ -2203,6 +2260,8 @@ class PartyManager:
             print("[Party] Stopping Engine...")
             self.running = False
             self._stop_event.set()
+            self._run_stop.set()
+            self._run_generation += 1
             if self.current_effect:
                 try:
                     self.current_effect.stop()
@@ -2269,20 +2328,31 @@ class PartyManager:
         self.start()
 
     def set_mode(self, mode_name, params=None, _internal=False):
+        with self._lifecycle_lock:
+            return self._set_mode_locked(mode_name, params, _internal)
+
+    def _set_mode_locked(self, mode_name, params=None, _internal=False):
         mode_name = str(mode_name or "").strip().lower()
         if mode_name not in self.effects:
             print(f"[Party] Unknown mode: {mode_name}")
             return False
+        if _internal and not self.running:
+            return False
         if not _internal and self._bt_ambient_prev:
             # Пользователь сам выбрал режим — авто-эмбиент для ТВ больше не восстанавливаем.
             self._bt_ambient_prev = None
+        if not _internal and mode_name == "party":
+            self._bt_ambient_manual = True
         if not self.running:
             self.start()
         if self.current_effect:
+            if getattr(self.current_effect, "is_cinema", False):
+                self.current_effect._bulbs_off_for_strip = False
             self.current_effect.stop()
 
         self.settings["active_mode"] = mode_name
         self.settings["master_enabled"] = True
+        self._white_hold_until = 0.0
         self.current_effect = self.effects[mode_name]
         self._apply_effect_settings(self.current_effect)
         if params and isinstance(params, dict):
@@ -2307,10 +2377,20 @@ class PartyManager:
         print(f"[Party] Active mode switched to: {mode_name} ({self.current_effect.title})")
         return True
 
-    def _effect_tick_loop(self):
+    def _alive(self, generation, stop_event):
+        return (self.running and self._run_generation == generation
+                and not stop_event.is_set())
+
+    def _effect_tick_loop(self, generation=None, stop_event=None):
         """High-frequency animation loop (~20 FPS)."""
-        while self.running and not self._stop_event.is_set():
+        generation = self._run_generation if generation is None else generation
+        stop_event = self._stop_event if stop_event is None else stop_event
+        while self._alive(generation, stop_event):
             now = time.time()
+            if now < self._white_hold_until:
+                if stop_event.wait(0.045):
+                    break
+                continue
             if self.current_effect:
                 # In cinema mode, tick whenever movie is playing or spell is active, regardless of music master switch
                 should_tick = True
@@ -2324,13 +2404,15 @@ class PartyManager:
                         self.current_effect.tick(now)
                     except Exception as e:
                         print(f"[Party] Effect tick error: {e}")
-            if self._stop_event.wait(0.045):
+            if stop_event.wait(0.045):
                 break
 
     def on_kick_internal(self, crest):
         now = time.time()
         self.last_sound_time = now
         self.in_silence = False
+        self._silence_white_done = False
+        self._white_hold_until = 0.0
         self.kick_count += 1
 
         interval = clamp_int(self.settings.get("color_interval"), 1, 256, 32)
@@ -2351,6 +2433,8 @@ class PartyManager:
     def on_snare_internal(self, crest):
         self.last_sound_time = time.time()
         self.in_silence = False
+        self._silence_white_done = False
+        self._white_hold_until = 0.0
         self.snare_count += 1
         sync_mode = self.settings.get("sync_mode", "split")
 
@@ -2379,7 +2463,8 @@ class PartyManager:
         timer.start()
 
     def restore_white(self):
-        for w in self.workers.values():
+        self._white_hold_until = time.time() + 2.5
+        for w in list(self.workers.values()):
             try:
                 w.send_white(800, 800)
             except Exception:
@@ -2397,7 +2482,7 @@ class PartyManager:
 
     def get_status(self):
         bulbs_info = []
-        for b_id, w in self.workers.items():
+        for b_id, w in list(self.workers.items()):
             if w.role == "snare":
                 friendly = "Бра правая" if w.side == "right" else "Бра левая"
                 sort_order = 10 if w.side == "left" else 11
@@ -2441,7 +2526,7 @@ class PartyManager:
 
         strip = self.strip_worker
         strip_info = {
-            "configured": bool(strip and strip.enabled),
+            "configured": bool(strip and getattr(strip, "configured", strip.enabled)),
             "enabled": bool(strip and strip.enabled),
             "device_id": getattr(strip, "device_id", None) if strip else None,
             "last_error": getattr(strip, "last_error", None) if strip else None,
@@ -2454,7 +2539,9 @@ class PartyManager:
             "error": self._audio_error,
         }
         silence_timeout = self.settings.get("silence_timeout", 10.0)
-        silent = (not self.media_playing) or (time.time() - self.last_sound_time > silence_timeout)
+        recent = bool(self.last_sound_time) and (time.time() - self.last_sound_time <= silence_timeout)
+        capturing = bool(self._audio_thread and self._audio_thread.is_alive())
+        silent = not recent or (not capturing and not self.media_playing)
         self.in_silence = bool(silent)
 
         modes_info = [
@@ -2498,6 +2585,10 @@ class PartyManager:
         }
 
     def update_settings(self, data):
+        with self._lifecycle_lock:
+            return self._update_settings_locked(data)
+
+    def _update_settings_locked(self, data):
         if not isinstance(data, dict):
             return
         if "active_mode" in data:
@@ -2616,13 +2707,17 @@ class PartyManager:
         """Adds or updates a bulb in bulbs.json and spawns/reloads worker dynamically."""
         if not isinstance(data, dict):
             raise ValueError("Invalid payload, dict expected")
-        entry = normalize_bulb(data)
+        existing_items = {item["id"]: item for item in self.store.load_bulbs()}
+        bulb_id = str(data.get("id") or "").strip()
+        payload = {**existing_items.get(bulb_id, {}), **data}
+        if "side" in data and "pos_x" not in data:
+            payload.pop("pos_x", None)
+        entry = normalize_bulb(payload)
         if not entry:
             raise ValueError("Device ID (id) is required")
         if not entry["key"]:
             # При редактировании пустой ключ означает «оставить прежний».
-            existing = {item["id"]: item for item in self.store.load_bulbs()}
-            entry["key"] = existing.get(entry["id"], {}).get("key", "")
+            entry["key"] = existing_items.get(entry["id"], {}).get("key", "")
         if not entry["ip"] and entry["enabled"]:
             raise ValueError("IP address is required")
         if not entry["key"] and entry["enabled"]:
@@ -2809,19 +2904,21 @@ class PartyManager:
                 pass
 
         res_list = []
+        configured_ids = {item["id"] for item in self.store.load_bulbs()}
         for ip, dev in found.items():
             matched_worker = None
-            for w in self.workers.values():
+            for w in list(self.workers.values()):
                 if w.ip == ip or w.dev_id == dev["id"]:
                     matched_worker = w
                     break
+            paired = matched_worker is not None or dev["id"] in configured_ids
             res_list.append({
                 "ip": dev["ip"],
                 "id": dev["id"],
                 "ver": dev.get("ver", "3.3"),
                 "product_key": dev.get("product_key", ""),
                 "name": matched_worker.name if matched_worker else f"Лампа {ip}",
-                "is_paired": matched_worker is not None
+                "is_paired": paired
             })
         res_list.sort(key=lambda x: x["ip"])
         return res_list
@@ -2894,14 +2991,21 @@ class PartyManager:
 
     def set_ambilight_frame(self, data):
         """Live 3-zone Ambilight frame distribution across bulbs & strip."""
+        if not isinstance(data, dict):
+            raise ValueError("bad ambilight frame")
         target_mode = data.get("target") or self.settings.get("ambilight_target", "strip_only")
+        if target_mode not in ("strip_only", "bulbs_only", "all", "off", "sconces_only"):
+            raise ValueError("bad ambilight target")
         if target_mode == "off":
             return {"status": "ok", "mode": "off"}
 
         left_val = data.get("left")
         center_val = data.get("center")
         right_val = data.get("right")
-        strobe = data.get("strobe", False)
+        for value in (left_val, center_val, right_val):
+            if value not in (None, "") and not re.fullmatch(r"[0-9a-fA-F]{8,12}", str(value)):
+                raise ValueError("bad ambilight color")
+        strobe = as_bool(data.get("strobe", False))
         
         # 1. Update Zigbee LED strip (when mode is "strip_only" or "all")
         if target_mode in ("strip_only", "all") and self.strip_worker and center_val:
@@ -2944,8 +3048,10 @@ class PartyManager:
         return {"status": "ok"}
 
 
-    def _media_guard_loop(self):
-        while self.running:
+    def _media_guard_loop(self, generation=None, stop_event=None):
+        generation = self._run_generation if generation is None else generation
+        stop_event = self._stop_event if stop_event is None else stop_event
+        while self._alive(generation, stop_event):
             try:
                 res = run_android_cmd(["dumpsys", "media_session"])
                 out = res.stdout
@@ -2978,17 +3084,21 @@ class PartyManager:
                 else:
                     self.media_playing = False
 
-                if bp and bt_mode == "ambilight" and self.settings.get("active_mode") == "party" and not self._bt_ambient_prev:
+                if not self._alive(generation, stop_event):
+                    break
+                if master_on and bp and bt_mode == "ambilight" and self.settings.get("active_mode") == "party" and not self._bt_ambient_prev and not self._bt_ambient_manual:
                     self._bt_ambient_prev = "party"
                     self.set_mode("aurora", _internal=True)
-                elif not bp and self._bt_ambient_prev:
-                    previous = self._bt_ambient_prev
-                    self._bt_ambient_prev = None
-                    self.set_mode(previous, _internal=True)
+                elif not bp:
+                    self._bt_ambient_manual = False
+                    if self._bt_ambient_prev:
+                        previous = self._bt_ambient_prev
+                        self._bt_ambient_prev = None
+                        self.set_mode(previous, _internal=True)
 
             except Exception as error:
                 self._media_error = f"{type(error).__name__}: {error}"
-            if self._stop_event.wait(1.0):
+            if stop_event.wait(1.0):
                 break
 
     def _close_discovery_sockets(self):
@@ -3000,10 +3110,12 @@ class PartyManager:
         self._discovery_sockets = []
         self._discovery_sock = None
 
-    def _discovery_loop(self):
+    def _discovery_loop(self, generation=None, stop_event=None):
+        generation = self._run_generation if generation is None else generation
+        stop_event = self._stop_event if stop_event is None else stop_event
         sockets = []
         try:
-            while self.running and not self._stop_event.is_set():
+            while self._alive(generation, stop_event):
                 if self._discovery_suspended.is_set():
                     for sock in sockets:
                         try:
@@ -3014,7 +3126,7 @@ class PartyManager:
                     self._discovery_sockets = []
                     self._discovery_sock = None
                     self._discovery_released.set()
-                    if self._stop_event.wait(0.2):
+                    if stop_event.wait(0.2):
                         break
                     continue
                 if not sockets:
@@ -3022,7 +3134,7 @@ class PartyManager:
                     self._discovery_sockets = sockets
                     self._discovery_sock = sockets[0] if sockets else None
                     if not sockets:
-                        if self._stop_event.wait(1.0):
+                        if stop_event.wait(1.0):
                             break
                         continue
                 try:
@@ -3082,10 +3194,14 @@ class PartyManager:
                         pass
         return sockets
 
-    def _audio_loop(self):
+    def _audio_loop(self, generation=None, stop_event=None):
+        generation = self._run_generation if generation is None else generation
+        stop_event = self._stop_event if stop_event is None else stop_event
         cmd = ["/system/bin/tinycap2", "--", "-D", "1", "-d", "1", "-c", "2", "-r", "48000", "-p", "512", "-n", "6"]
+        proc = None
         try:
             self.audio_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            proc = self.audio_proc
         except Exception as e:
             self._audio_error = f"tinycap2 start: {type(e).__name__}: {e}"
             print(f"[Party] tinycap2 start error: {e}")
@@ -3095,26 +3211,32 @@ class PartyManager:
         detector = BeatDetector(fs=48000.0)
 
         try:
-            while self.running:
+            while self._alive(generation, stop_event):
                 proc = self.audio_proc
                 if proc is None:
                     break
                 if proc.poll() is not None:
-                    if not self.running: break
+                    if not self._alive(generation, stop_event):
+                        break
                     self._audio_error = "tinycap2 exited; restarting"
-                    time.sleep(1.0)
+                    if stop_event.wait(1.0):
+                        break
+                    if not self._alive(generation, stop_event):
+                        break
                     detector.reset()
                     try:
                         self.audio_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                        proc = self.audio_proc
                     except Exception as error:
                         self._audio_error = f"tinycap2 restart: {type(error).__name__}: {error}"
-                        if self._stop_event.wait(2.0):
+                        if stop_event.wait(2.0):
                             break
                     continue
 
                 raw = proc.stdout.read(chunk_size)
                 if not raw or len(raw) < chunk_size:
-                    time.sleep(0.01)
+                    if stop_event.wait(0.01):
+                        break
                     continue
                 self._audio_error = None
 
@@ -3142,11 +3264,21 @@ class PartyManager:
                 if now - self.last_sound_time > silence_timeout:
                     self.in_silence = True
                     self.strobe_active = False
+                    if not self._silence_white_done:
+                        self._silence_white_done = True
+                        try:
+                            self.restore_white()
+                            self._white_hold_until = time.time() + 3600.0
+                        except Exception:
+                            pass
+                else:
+                    self._silence_white_done = False
         finally:
-            if self.audio_proc:
+            if proc and proc.poll() is None:
                 try:
-                    self.audio_proc.terminate()
-                    self.audio_proc.wait(timeout=1.0)
+                    proc.terminate()
+                    proc.wait(timeout=1.0)
                 except Exception:
                     pass
+            if self.audio_proc is proc:
                 self.audio_proc = None

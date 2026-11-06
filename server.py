@@ -4059,6 +4059,8 @@ echo @@BLUEZ
         if not cinema:
             raise AdbError("Эффект кинотеатра не найден")
         action = str(action or "").lower()
+        if action in ("play", "seek", "sync") and not self.party.running:
+            self.party.start()
         if action == "play":
             cinema.play()
         elif action == "pause":

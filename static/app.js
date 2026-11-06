@@ -5327,6 +5327,10 @@ async function loadAlarms() {
 }
 function renderAlarms() {
   const d = alarmsData; if (!d) return;
+  // На Станции Макс будильники не поддерживаются, и ответ может быть без
+  // массива log/alarms. Не роняем остальную панель из-за необязательных полей.
+  if (!Array.isArray(d.alarms)) d.alarms = [];
+  if (!Array.isArray(d.log)) d.log = [];
   const on = d.alarms.filter(a => a.on);
   const next = on.map(a => [a, nextFire(a)]).filter(x => x[1]).sort((x, y) => x[1] - y[1])[0];
   $('#al-badge').textContent = !d.alarms.length ? 'нет' : next ? `ближайший ${inText(next[1] - Date.now())}` : 'все выключены';

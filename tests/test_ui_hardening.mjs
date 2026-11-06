@@ -5,6 +5,14 @@ import { readFile } from 'node:fs/promises';
 const app = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
 const html = await readFile(new URL('../static/index.html', import.meta.url), 'utf8');
 
+// Every id (and every tab page) must be unique: a duplicated <main> makes the
+// browser show two copies of the same page side by side.
+const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
+assert.deepEqual(duplicateIds, [], `duplicate ids in index.html: ${duplicateIds.join(', ')}`);
+const pageIds = [...html.matchAll(/<main[^>]*\bid="(tab-[^"]+)"/g)].map(match => match[1]);
+assert.equal(new Set(pageIds).size, pageIds.length, 'each tab page must appear once');
+
 // ---------- 1. Единый visibility-aware планировщик ----------
 assert(app.includes('const Scheduler = (() => {'), 'Scheduler must exist');
 assert(app.includes("document.addEventListener('visibilitychange'"), 'Scheduler must listen to visibilitychange');

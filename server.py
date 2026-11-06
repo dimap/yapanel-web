@@ -47,6 +47,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 import access
 import agent as agentlink
+import api
 import glagol
 from config import get_config, PanelConfig, set_config
 _cfg = get_config()
@@ -6719,7 +6720,11 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self, fn):
         started, error = time.time(), None
         try:
-            self._send(200, fn())
+            result = fn()
+            if isinstance(result, api.Response):
+                self._send(result.status, result.body, result.content_type, result.headers)
+            else:
+                self._send(200, result)
         except (AdbError, glagol.AuthError, ValueError, KeyError) as e:
             error = f"{e}" if not isinstance(e, KeyError) else f"нет поля {e}"
             self._send(400, {"error": str(e)})
@@ -6853,6 +6858,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path.startswith("/api/"):
                 return self._send(503, {"error": "Колонка не подключена", "offline": True})
             return self._send(404, {"error": "not found"})
+        route = api.ROUTER.match("GET", u.path)
+        if route:
+            return self._handle(lambda: route(api.ApiRequest(p, q)))
         routes = {
             "/api/status": p.status,
             "/api/wakeword/status": p.wakeword_status,
@@ -6864,8 +6872,6 @@ class Handler(BaseHTTPRequestHandler):
             "/api/logs": p.logs_list,
             "/api/log": lambda: p.log(q.get("name", ""), q.get("lines", 300)),
             "/api/devices": lambda: {"text": p.adb.devices()},
-            "/api/fs/list": lambda: p.fs_list(q.get("path", "/")),
-            "/api/fs/read": lambda: p.fs_read(q.get("path", "")),
             "/api/clock/frames": lambda: p.clock_frames(q.get("name", "")),
             "/api/clock/boot": p.boot_status,
             "/api/clock/state": p.clock_state,
@@ -6878,44 +6884,13 @@ class Handler(BaseHTTPRequestHandler):
             "/api/report": self._report,
             "/api/anim/original": lambda: p.anim_original(q.get("kind", ""), q.get("name", "")),
             "/api/led/patterns": p.led_patterns,
-            "/api/yam/status": p.yam_status,
-            "/api/music": p.music,
-            "/api/music/info": lambda: p.music_info(q.get("id", "")),
-            "/api/music/lyrics": lambda: p.music_lyrics(q.get("id", "")) if q.get("id") else
-                p.ymusic.lyrics_by_name(q.get("title", ""), q.get("artist", ""), q.get("album"), float(q.get("duration") or 0)),
-            "/api/music/queue": p.music_queue,
-            "/api/music/similar": lambda: (p._need_login(), p.ymusic.similar(q.get("id", "")))[1],
-            "/api/music/artist": lambda: (p._need_login(), p.ymusic.artist(q.get("id", "")))[1],
-            "/api/auth": lambda: {**p.auth.info(), "oauth_url": glagol.OAUTH_URL},
-            "/api/auth/qr": p.auth_qr_status,
-            "/api/yam/registry": lambda: p.yam_registry(q.get("refresh") == "1"),
-            "/api/yam/plugins": p.yam_plugins,
-            "/api/yam/logs": lambda: p.yam_logs(q.get("id", "")),
-            "/api/yam/settings": p.yam_settings,
-            "/api/yam/version": lambda: p.yam_version(q.get("refresh") == "1"),
-            "/api/yam2/status": lambda: p.yam2_status(q.get("refresh") == "1"),
-            "/api/yam2/packages": p.yam2_packages,
-            "/api/yam2/catalog": lambda: p.yam2_catalog(q.get("refresh") == "1"),
-            "/api/yam2/log": lambda: p.yam2_service_log(q.get("id", "")),
             "/api/alarms": p.alarms,
             "/api/scenes": p.scenes,
             "/api/footprint": p.footprint,
             "/api/privacy": p.privacy_status,
             "/api/assistant": p.assistant_status,
-            "/api/viz": p.viz_status,
-            "/api/radio": p.radio_status,
-            "/api/radio/search": lambda: p.radio_search(q.get("q", ""), q.get("country", "")),
             "/api/panel/version": lambda: self.updater.check(q.get("refresh") == "1"),
-            "/api/bt": p.bt_state,
-            "/api/btout/eq": p.btout_eq_status,
             "/api/metrics": lambda: p.metrics.get(q.get("range", 3600)),
-            "/api/party/status": p.party_status,
-            "/api/party/bulbs": p.party_bulbs_get,
-            "/api/party/bulbs/scan": lambda: p.party_bulbs_scan(float(q.get("timeout", 3.0))),
-            "/api/party/cinema/status": p.party_cinema_status,
-            "/api/party/cinema/sync_tv": p.party_cinema_sync_tv,
-            "/api/dsp": p.dsp_status,
-
         }
         if u.path in routes:
             return self._handle(routes[u.path])
@@ -6923,14 +6898,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._download(q.get("path", ""))
         if u.path in ("/", "/index.html"):
             return self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
-        if u.path == "/api/radio/logo":
-            try:
-                logo = self.panel.radio_logo(q.get("name", ""))
-            except AdbError as e:
-                return self._send(400, {"error": str(e)})
-            if not logo:
-                return self._send(404, {"error": "логотип не найден"})
-            return self._send(200, logo[0], logo[1], headers=[("Content-Security-Policy", "default-src 'none'")])
         if u.path.startswith("/static/"):
             f = (STATIC / unquote(u.path[len("/static/"):])).resolve()
             if f.is_file() and STATIC in f.parents:
@@ -7003,6 +6970,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/wakeword/proxy":
             return self._wakeword_proxy(str(self._jdata.get("method", "POST")).upper(),
                                         str(self._jdata.get("path", "")), self._jdata.get("body"))
+        route = api.ROUTER.match("POST", u.path)
+        if route:
+            return self._handle(lambda: route(api.ApiRequest(p, {}, self._jdata)))
         routes = {
             "/api/volume": lambda: p.set_volume(d),
             "/api/mute": lambda: p.set_mute(bool(d.get("on"))),
@@ -7036,40 +7006,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/boot/sound/reset": p.boot_sound_reset,
             "/api/boot/sound/play": lambda: p.boot_sound_play(d.get("which", "default")),
             "/api/clock/boot/always": lambda: p.boot_always(bool(d["enabled"])),
-            "/api/yam/start": p.yam_start,
-            "/api/yam/install-daemon": lambda: p.yam_install_daemon(**({"drop_backups": True} if d.get("drop_backups") else {})),
             "/api/display": lambda: p.display_set(d),
             "/api/display/stop": p.display_stop,
             "/api/ring/reset": p.ring_reset,
-            "/api/music/cmd": lambda: p.music_cmd(d),
-            "/api/music/like": lambda: p.music_like(d["id"], bool(d.get("like", True))),
-            "/api/music/dislike": lambda: p.music_dislike(d["id"]),
-            "/api/music/play": lambda: p.music_play(d["id"], d.get("type", "track")),
-            "/api/auth/qr": p.auth_qr_start,
-            "/api/auth/oauth": lambda: p.auth_oauth(d["url"]),
-            "/api/auth/logout": p.auth_logout,
-            "/api/yam/autostart": lambda: p.yam_autostart(bool(d["enabled"])),
-            "/api/yam/install": lambda: p.yam_install(d["id"], d["version"]),
-            "/api/yam/action": lambda: p.yam_action(d["action"], d["id"]),
-            "/api/yam/settings": lambda: p.yam_settings(d),
-            "/api/yam2/install": p.yam2_install,
-            "/api/yam2/update": p.yam2_update,
-            "/api/yam2/uninstall": p.yam2_uninstall,
-            "/api/yam2/registry": p.yam2_registry_add,
-            "/api/yam2/doctor": lambda: p.yam2_doctor(bool(d.get("repair"))),
-            "/api/yam2/pkg": lambda: p.yam2_pkg(d.get("action"), d["name"], bool(d.get("yes"))),
-            "/api/yam2/service": lambda: p.yam2_service(d["id"], d["action"], bool(d.get("stop_legacy"))),
-            "/api/bt": lambda: p.bt_action(d),
-            "/api/btout/scan": lambda: p.btout_scan(d.get("seconds", 12)),
-            "/api/btout/use": lambda: p.btout_use(d.get("mac")),
-            "/api/btout/off": p.btout_off,
-            "/api/btout/eq": lambda: p.btout_eq(d.get("preset"), d.get("bands")),
             "/api/system": lambda: p.system(d["action"]),
-            "/api/fs/write": lambda: p.fs_write(d["path"], d["text"]),
-            "/api/fs/delete": lambda: p.fs_delete(d["path"]),
-            "/api/fs/rename": lambda: p.fs_rename(d["path"], d["name"]),
-            "/api/fs/mkdir": lambda: p.fs_mkdir(d["path"]),
-            "/api/fs/play": lambda: p.fs_play(d["path"]),
             "/api/alarms": lambda: p.alarms_save(d),
             "/api/alarms/test": lambda: p.alarm_test(d.get("id")),
             "/api/alarms/cmd": lambda: p.alarm_cmd(d.get("action")),
@@ -7083,14 +7023,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/assistant/ask": lambda: p.assistant_ask(d.get("text")),
             "/api/assistant/stop": lambda: p.assistant_command({"stop": True}),
             "/api/assistant/mode": lambda: p.assistant_command({"mode": bool(d.get("on"))}),
-            "/api/radio": lambda: p.radio_set(d),
-            "/api/radio/play": lambda: p.radio_play(d),
-            "/api/radio/stop": p.radio_stop,
-            "/api/radio/miss-seen": lambda: p.assistant_command({"radio_miss_seen": True}),
-            "/api/radio/check": lambda: p.radio_check(d.get("url")),
-            "/api/radio/alice": lambda: p.radio_alice(d.get("name")),
             "/api/assistant/remove": p.assistant_remove,
-            "/api/viz": lambda: p.viz_set(bool(d.get("on"))),
             "/api/assistant/models": lambda: p.assistant_models(d),
             "/api/panel/update": lambda: self.updater.update(),
             "/api/metrics/clear": lambda: p.metrics.clear(),
@@ -7099,23 +7032,6 @@ class Handler(BaseHTTPRequestHandler):
             "/api/scenes/run": lambda: p.scene_run(d.get("id")),
             "/api/say": lambda: p.say(d.get("text"), d.get("voice", "alice")),
             "/api/scenes/stop": lambda: p.scene_stop(d.get("id")),
-            "/api/party/settings": lambda: p.party_settings(d),
-            "/api/party/restore_white": p.party_restore_white,
-            "/api/party/reconnect_all": p.party_reconnect,
-            "/api/party/service": lambda: p.party_service(d.get("action")),
-            "/api/party/mode": lambda: p.party_mode(d.get("mode"), d.get("params")),
-            "/api/party/cinema/control": lambda: p.party_cinema_control(d.get("action"), d.get("value")),
-            "/api/party/cinema/spell": lambda: p.party_cinema_spell(d.get("spell"), d.get("direction")),
-            "/api/party/cinema/sync_tv": lambda: p.party_cinema_sync_tv(),
-            "/api/dsp": lambda: p.dsp_action(d),
-            "/api/party/bulbs/position": lambda: p.party_bulb_position(d.get("id"), d.get("pos_x"), d.get("pos_y", 0.0), d.get("name")),
-            "/api/party/bulbs/test": lambda: p.party_bulb_test(d.get("id"), d.get("action", "solo"), d.get("color", "white")),
-            "/api/party/bulbs/add": lambda: p.party_bulb_add(d),
-            "/api/party/bulbs/update": lambda: p.party_bulb_update(d),
-            "/api/party/bulbs/delete": lambda: p.party_bulb_delete(d.get("id")),
-            "/api/party/bulbs/import": lambda: p.party_bulbs_import(d),
-            "/api/party/ambilight/frame": lambda: p.party_ambilight_frame(d),
-
         }
         if u.path in routes:
             return self._handle(routes[u.path])
@@ -7128,7 +7044,7 @@ class PanelUpdater:
     docker — только подсказать команду (образ изнутри не обновить)."""
     FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "dsp_max.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
-    DIRS = ("static", "device")
+    DIRS = ("api", "static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно
 
     def __init__(self, restart=None, config=None):

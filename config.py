@@ -86,7 +86,7 @@ class ServerConfig:
     ready_file: Optional[Path] = None
     install_mode: str = "standalone"
     open_browser: bool = False
-    github_repo: str = "dimap/yapanel-web"
+    github_repo: str = "Timobzdecc/yapanel-web_max"
     analytics_hosts: Tuple[str, ...] = (
         "clck.yandex.net",
         "report.appmetrica.yandex.net",

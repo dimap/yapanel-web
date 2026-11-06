@@ -16,9 +16,10 @@ for(const path of ['/', '/index.html','/speaker/room-a/','/speaker/room-b/index.
   else assert.equal(context.storageKey('fs.path'),'fs.path');
 }
 const html=await readFile(new URL('../static/index.html',import.meta.url),'utf8');
-assert(!/\bfetch\(/.test(html.replaceAll('PanelContext.fetch(','')));
+const app=await readFile(new URL('../static/app.js',import.meta.url),'utf8');
+assert(!/\bfetch\(/.test((html+app).replaceAll('PanelContext.fetch(','')));
 assert(!/href="\/(static|ca\.crt|manifest)/.test(html));
-assert(html.includes('new WebSocket(PanelContext.websocket('));
+assert(app.includes('new WebSocket(PanelContext.websocket('));
 // Firefox ignores an import map that appears after the first module script; keep it in the head.
 const firstModule=html.search(/<script[^>]*\btype=["']module["']/);
 const importMap=html.indexOf('type="importmap"');

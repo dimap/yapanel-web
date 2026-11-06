@@ -1,12 +1,15 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('path');
 const html=fs.readFileSync(path.join(__dirname,'../static/index.html'),'utf8');
+const app=fs.readFileSync(path.join(__dirname,'../static/app.js'),'utf8');
+const ui=html+'\n'+app;
 // A syntax error anywhere in the main shell prevents connection handling and
 // every widget from starting; extracting individual functions misses this.
 for(const match of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)){
   if(/src=|type=["'](?:module|importmap)/.test(match[1])||!match[2].trim())continue;
   new vm.Script(match[2],{filename:'static/index.html',lineOffset:html.slice(0,match.index).split('\n').length-1});
 }
-const source=html.slice(html.indexOf('async function loadPanelVersion'),html.indexOf('\nloadPanelVersion().catch'));
+new vm.Script(app,{filename:'static/app.js'});
+const source=ui.slice(ui.indexOf('async function loadPanelVersion'),ui.indexOf('\nloadPanelVersion().catch'));
 const elements={},storage={},requests=[];
 const node=id=>elements[id]||=( {style:{},hidden:true,classList:{toggle(){}},setAttribute(){}} );
 const c={$:node,store:{get:k=>storage[k],set:(k,v)=>storage[k]=v},confirmAnswer:false,confirm:()=>c.confirmAnswer,
@@ -48,8 +51,8 @@ vm.runInContext('let panelVer=null;'+source,c);
 const volumeNodes={};
 const volumeContext={$:id=>volumeNodes[id]||=( {} )};
 vm.createContext(volumeContext);
-const volumeStart=html.indexOf('function showLevel(');
-vm.runInContext(html.slice(volumeStart,html.indexOf('\n}',volumeStart)+2),volumeContext);
+const volumeStart=ui.indexOf('function showLevel(');
+vm.runInContext(ui.slice(volumeStart,ui.indexOf('\n}',volumeStart)+2),volumeContext);
 for(const value of [null,undefined,NaN]){
   volumeContext.value=value;vm.runInContext('showLevel(value)',volumeContext);
   assert.equal(volumeNodes['#vol-big'].textContent,'—');
@@ -63,10 +66,10 @@ for(const value of [0,40]){
 console.log('Unknown volume, zero volume and reconnected scale cases passed');
 
 (async()=>{
-  const start=html.indexOf('function btOutUse(');
-  const end=html.indexOf("$('#bt-out-toggle')",start);
+  const start=ui.indexOf('function btOutUse(');
+  const end=ui.indexOf("$('#bt-out-toggle')",start);
   // Extract just the function; the following toggle handler is outside its contract.
-  const btSource=html.slice(start,html.indexOf('\n}',start)+2);
+  const btSource=ui.slice(start,ui.indexOf('\n}',start)+2);
   for(const fail of [false,true]){
     let finish;
     const pending=new Promise((resolve,reject)=>{finish=()=>fail?reject(new Error('connection failed')):resolve({restarted:false});});
@@ -84,7 +87,7 @@ console.log('Unknown volume, zero volume and reconnected scale cases passed');
   const ctx={$:id=>hookNodes[id]||=( {hidden:false,textContent:'',append(){}} ),
     hookInfo:{broken:true,possible:false,hook:false,users:['ассистент'],supported:false,reason:'Модель не поддерживает хук'}};
   vm.createContext(ctx);
-  vm.runInContext(html.slice(html.indexOf('function renderHook()'),html.indexOf("$('#hook-repair').onclick")),ctx);
+  vm.runInContext(ui.slice(ui.indexOf('function renderHook()'),ui.indexOf("$('#hook-repair').onclick")),ctx);
   ctx.renderHook();
   assert.equal(hookNodes['#hook-repair'].hidden,true);
   assert.equal(hookNodes['#hook-warn-text'].textContent,ctx.hookInfo.reason);

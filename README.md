@@ -55,6 +55,7 @@ adb shell mkdir -p /data/yapanel
 
 # Копирование исходного кода и статики
 adb push server.py profiles.py max_profile.py assistant_max.py dsp_max.py party.py config.py access.py glagol.py multi.py pyadb.py /data/yapanel/
+adb push api /data/yapanel/
 adb push static /data/yapanel/
 adb push device /data/yapanel/
 ```

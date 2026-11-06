@@ -27,6 +27,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY server.py access.py agent.py glagol.py profiles.py max_profile.py assistant_max.py config.py multi.py pyadb.py dsp_max.py party.py speakers.example.json VERSION ./
+COPY api ./api
 COPY static ./static
 COPY device ./device
 COPY --from=assistant /out/assistantd /out/VERSION ./device/assistant/build/

@@ -1,6 +1,8 @@
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const html = fs.readFileSync(require('path').join(__dirname,'../static/index.html'),'utf8');
-const source = html.slice(html.indexOf('function vcmp('), html.indexOf("$('#yam-filter').oninput = renderYam;"));
+const app = fs.readFileSync(require('path').join(__dirname,'../static/app.js'),'utf8');
+const ui = html + '\n' + app;
+const source = ui.slice(ui.indexOf('function vcmp('), ui.indexOf("$('#yam-filter').oninput = renderYam;"));
 const elements = {};
 const node = id => elements[id] ||= {value:'',innerHTML:'',textContent:''};
 const context = {$:node,$$:()=>[],esc:x=>String(x??''),icon:()=>'',yam:{plugins:[{manifest:{id:'station-airplay',name:'Station airplay',version:'1.4.0',launch:{mode:'service'}},enabled:true,running:true,compatible:true}],registry:[{id:'station-airplay',name:'Station airplay',version:'1.1.5',description:''},{id:'station-airplay',name:'Station airplay',version:'1.4.0',description:''},{id:'station-airplay',name:'Station airplay',version:'1.2.0',description:''},{id:'sqlite',name:'sqlite',version:'3.45.3',description:''}]}};
@@ -19,7 +21,7 @@ console.log('PASS: one latest version per ID; one installed badge; update and se
 
 
 (async () => {
-  const pkgSource = html.slice(html.indexOf('async function yam2Pkg('), html.indexOf('async function yam2Svc('));
+  const pkgSource = ui.slice(ui.indexOf('async function yam2Pkg('), ui.indexOf('async function yam2Svc('));
   for (const action of ['install', 'remove']) {
     const calls = [];
     const nav = {hidden: true};

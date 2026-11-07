@@ -19,8 +19,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X 
   && cp /VERSION /out-viz/VERSION
 
 # ARM32 userspace library for the microphone tap (the daemon itself is ARM64).
-FROM alpine:3.23 AS microphone
-RUN apk add --no-cache curl xz
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS microphone
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
+    && rm -rf /var/lib/apt/lists/*
 COPY .github/setup-zig.sh /tmp/setup-zig.sh
 RUN sh /tmp/setup-zig.sh /opt/zig
 ENV PATH="/opt/zig:${PATH}"

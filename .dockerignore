@@ -1,5 +1,8 @@
 .git
 .github
+!.github/
+.github/*
+!.github/setup-zig.sh
 __pycache__
 *.pyc
 .yandex_auth.json

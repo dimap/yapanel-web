@@ -246,6 +246,7 @@ services:
 * **Активация Алисы через штатный SDK**: Frida-агент внутри `com.yandex.io.sdk` вызывает `startConversation()`, поэтому микрофон остаётся у SDK и второй `AudioRecord` не создаётся.
 * **Без отдельного пакета и панели**: демон, Frida-супервизор и автозапуск управляются вкладкой «Активация»; API демона слушает только `127.0.0.1:8780`.
 * **Прогресс обучения**: отдельная карточка со стадиями `загрузка → обработка записей → обучение → проверка`, проценты и сообщение о завершении.
+* **Автор оригинала**: [tangenx](https://github.com/tangenx) — проект [station-wakeword](https://github.com/tangenx/station-wakeword); порт для Станции Макс и интеграция в yapanel — доработка этого форка.
 
 ### 💡 LED-матрица 25×16 и 24 RGB кольцо
 * **Монохромная матрица (400 светодиодов)**: отображение текущего времени, таймеров, погоды, произвольного текста и кастомных анимаций.
@@ -300,6 +301,7 @@ services:
 
 * Исходный код панели распространяется под лицензией **[MIT](LICENSE)**.
 * Базовый веб-интерфейс основан на разработках комьюнити **yapanel-web** / **[dimap](https://github.com/dimap/yandex-station-web)** и оптимизирован под архитектуру Станции Макс.
+* Вкладка «Активация» основана на проекте **[station-wakeword](https://github.com/tangenx/station-wakeword)** автора **[tangenx](https://github.com/tangenx)**; порт для Станции Макс, Frida-активация и интеграция в панель — доработка этого форка.
 * Библиотеки: [three.js](https://threejs.org) (MIT), [xterm.js](https://xtermjs.org) (MIT), [QRCode.js](https://davidshimjs.github.io/qrcodejs/) (MIT).
 * Тексты песен предоставляются сервисом [LRCLIB](https://lrclib.net).
 * Протокол локального управления Glagol исследован благодаря сообществу [YandexStation для Home Assistant](https://github.com/AlexxIT/YandexStation).

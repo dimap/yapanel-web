@@ -1,0 +1,37 @@
+name: release-notes
+
+# Обновляет описание уже опубликованного релиза по файлу docs/release-notes/<tag>.md.
+# Запускается при изменении заметок или вручную (workflow_dispatch).
+on:
+  push:
+    paths:
+      - ".github/workflows/release-notes.yml"
+      - "docs/release-notes/v0.3.3.md"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег релиза, например v0.3.3"
+        required: true
+        default: "v0.3.3"
+      notes_file:
+        description: "Файл с описанием"
+        required: true
+        default: "docs/release-notes/v0.3.3.md"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Обновить описание релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || 'v0.3.3' }}
+          NOTES_FILE: ${{ github.event.inputs.notes_file || 'docs/release-notes/v0.3.3.md' }}
+        run: |
+          test -f "$NOTES_FILE" || { echo "нет файла $NOTES_FILE"; exit 1; }
+          gh release edit "$TAG" --notes-file "$NOTES_FILE"
+          echo "описание $TAG обновлено"

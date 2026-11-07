@@ -2288,19 +2288,17 @@ echo @@BLUEZ
 
     def set_mute(self, on):
         """Выключить/вернуть звук: запоминаем громкость и ставим 0 через тот же путь, что и ползунок."""
-        s = load_settings()
         if on:
-            if not s.get("mute_before"):
+            if not load_settings().get("mute_before"):
                 vol = self._volume_level()
                 if vol is None:
                     raise AdbError("не удалось узнать громкость колонки")
                 if vol > 0:
-                    s["mute_before"] = vol / 100
-                    save_settings(s)
+                    update_settings_section("mute_before", vol / 100)
             self.set_volume({"level": 0})
             return {"muted": True, "volume": 0}
-        before = round(float(s.pop("mute_before", 0.5)) * 100)
-        save_settings(s)
+        before = round(float(load_settings().get("mute_before", 0.5)) * 100)
+        remove_settings_keys("mute_before")
         self.set_volume({"level": before})
         return {"muted": False, "volume": before}
 
@@ -2308,9 +2306,8 @@ echo @@BLUEZ
         if "level" in data:
             level = max(0, min(100, round(float(data["level"]) / 5) * 5))
             if level > 0:   # пользователь выставил громкость — режим mute снимаем
-                s = load_settings()
-                if s.pop("mute_before", None) is not None:
-                    save_settings(s)
+                if load_settings().get("mute_before") is not None:
+                    remove_settings_keys("mute_before")
             # Через Glagol громкость ставит сам Quasar — тогда на колонке те же цифры и та же логика.
             if self.glagol.ws:
                 self.glagol.send({"command": "setVolume", "volume": level / 100})
@@ -4299,13 +4296,14 @@ echo @@BLUEZ
         scene = str(scene or "").strip() if action == "scene" else ""
         if action == "scene" and scene not in {x["id"] for x in self.scenes()["scenes"]}:
             raise AdbError("нет такого сценария")
-        s = load_settings()
-        acts = s.setdefault(WAKE_ACTIONS_KEY, {})
-        if action == "alice":
-            acts.pop(word, None)
-        else:
-            acts[word] = {"type": action, "scene": scene}
-        save_settings(s)
+        def mutate(data):
+            acts = data.setdefault(WAKE_ACTIONS_KEY, {})
+            if action == "alice":
+                acts.pop(word, None)
+            else:
+                acts[word] = {"type": action, "scene": scene}
+            return data
+        update_settings(mutate)
         self._wakeword_apply_dry_run()
         return self.wakeword_actions()
 
@@ -6051,7 +6049,12 @@ echo @@BLUEZ
             self.adb.shell(f"mkdir -p {VIZ_DIR}", check=False)
             self.adb.push(f, EQ_FILE + ".new")
         self.adb.shell(f"chmod 644 {EQ_FILE}.new && mv {EQ_FILE}.new {EQ_FILE}")
-        save_settings(s)
+        def save_eq(data):
+            data["eq_preset"] = preset
+            if preset == "custom":
+                data["eq_custom"] = custom
+            return data
+        update_settings(save_eq)
         st = self.btout_eq_status()
         st["preset"] = preset
         return st
@@ -6895,7 +6898,7 @@ class Handler(BaseHTTPRequestHandler):
         if not serial or not re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}:\d{1,5}", serial) \
                 or not ipaddress.ip_address(serial.rpartition(":")[0]).is_private:
             raise AdbError("нужен IP колонки в домашней сети, например 192.168.1.50")
-        save_settings({**load_settings(), "device": serial})
+        update_settings_section("device", serial)
         JOURNAL.add(f"выбрана колонка {serial} — перезапуск панели")
         threading.Timer(0.5, restart_self, kwargs={"device": serial}).start()
         return {"ok": True, "serial": serial}
@@ -7568,7 +7571,7 @@ def watch_model(adb, conn, active):
         return
     settings = load_settings()
     if settings.get("model") != model:
-        save_settings({**settings, "model": model})
+        update_settings_section("model", model)
     if model != active:
         print(f"Подключена {profiles.PROFILES[model]['name']} (платформа {platform}) — перезапуск с её профилем")
         restart_self()
@@ -7624,6 +7627,11 @@ class TLSServer(ThreadingHTTPServer):
 
     def handle_error(self, request, client_address):
         pass
+
+
+# Сериализует read-modify-write настроек: несколько потоков (DSP, mute,
+# Bluetooth EQ, wakeword) не должны затирать секции друг друга.
+_SETTINGS_RW_LOCK = threading.RLock()
 
 
 def load_settings():
@@ -7697,6 +7705,54 @@ def save_settings(d):
         return False
 
 
+def update_settings(mutator):
+    """Атомарно меняет настройки под общим lock.
+
+    ``mutator`` получает текущий dict, меняет его и может вернуть новый dict.
+    Вернув ``False``, отменяет запись. Это защищает секции от потерянных
+    обновлений: чтение и запись идут под одним RLock.
+    """
+    with _SETTINGS_RW_LOCK:
+        data = load_settings()
+        if not isinstance(data, dict):
+            data = {}
+        try:
+            result = mutator(data)
+        except Exception as e:  # noqa: BLE001 — вызывающий не должен падать из-за записи
+            JOURNAL.add(f"настройки: ошибка изменения: {e}", "error")
+            return False
+        if result is False:
+            return False
+        if isinstance(result, dict):
+            data = result
+        return save_settings(data)
+
+
+def update_settings_section(key, value):
+    """Записывает одну секцию, не перетирая параллельные изменения других."""
+    def mutate(data):
+        data[key] = value
+        return data
+    return update_settings(mutate)
+
+
+def merge_settings(**updates):
+    """Меняет несколько плоских ключей одной атомарной записью."""
+    def mutate(data):
+        data.update(updates)
+        return data
+    return update_settings(mutate)
+
+
+def remove_settings_keys(*keys):
+    """Удаляет ключи одной атомарной записью."""
+    def mutate(data):
+        for key in keys:
+            data.pop(key, None)
+        return data
+    return update_settings(mutate)
+
+
 def main():
     import profiles
     ap = argparse.ArgumentParser(description="Веб-панель для Яндекс Станций")
@@ -7750,7 +7806,7 @@ def main():
         except EOFError:
             device = None
     if device and device != settings.get("device"):
-        save_settings({**settings, "device": device})
+        update_settings_section("device", device)
         settings = load_settings()
 
     # Профиль: явный --model или auto — запомненный (до первого подключения — Лайт 2), сверка после подключения.

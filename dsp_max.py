@@ -4,12 +4,14 @@ Integrates with YapAnel: biquad calculation, register flashing,
 profile switching, filter toggles, persistence, and frequency response modeling.
 """
 
+import copy
 import os
 import math
 import time
 import json
 import logging
 import functools
+import re
 import threading
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
@@ -248,6 +250,10 @@ class MaxDSP:
         self.adb = getattr(panel, "adb", None)
         self.active_profile = "hifi"
         self._restored = False
+        self._restore_attempts = 0
+        self._last_restore_ts = 0.0
+        self._last_reapply_ts = 0.0
+        self._expected_regs: Dict[Tuple[str, str], str] = {}
         self.filters = {
             "subsonic": True,
             "notch120": True,
@@ -304,18 +310,170 @@ class MaxDSP:
             res = self._apply_custom_state(save=False)
         else:
             res = self.apply_profile(self.active_profile, save=False)
-        self._restored = True
+        if res.get("ok"):
+            self._restored = True
+            self._restore_attempts = 0
+            self._last_restore_ts = time.time()
+        else:
+            self._restored = False
+            self._restore_attempts += 1
         return res
+
+    def maybe_restore(self) -> bool:
+        """Повторяет restore с backoff, пока он не завершится успешно.
+
+        Вызывается из GET /api/dsp, поэтому в успешном состоянии это только
+        проверка флага. После неудачи (шина занята, драйвер ещё не готов)
+        попытки идут с нарастающей паузой, а не на каждый запрос.
+        """
+        if self._restored:
+            return True
+        if not self.is_supported():
+            return False
+        now = time.time()
+        delay = min(300, 10 * (2 ** min(self._restore_attempts, 5)))
+        if now - self._last_restore_ts < delay:
+            return False
+        self._last_restore_ts = now
+        before = self._restore_attempts
+        res = self.restore_hardware_state()
+        ok = bool(res.get("ok"))
+        if ok:
+            self._restore_attempts = 0
+        elif self._restore_attempts == before:
+            self._restore_attempts = before + 1
+        return ok
+
+    @staticmethod
+    def _expected_from_commands(commands: List[Tuple[str, str, str]]) -> Dict[Tuple[str, str], str]:
+        """Собирает ожидаемые EQ/DRC-регистры из уже готового списка команд.
+
+        Mute/unmute-регистры (03/06/22) и паузы исключены: после успешного
+        батча они возвращаются в рабочее состояние и не являются профилем.
+        """
+        expected: Dict[Tuple[str, str], str] = {}
+        for target, _addr, payload in commands:
+            if target == "__SLEEP__":
+                continue
+            parts = str(payload).split(None, 1)
+            if len(parts) != 2:
+                continue
+            reg = parts[0].upper()
+            if reg in ("03", "06", "22"):
+                continue
+            expected[(target, reg)] = " ".join(str(payload).upper().split())
+        return expected
+
+    def _remember_expected(self, commands: List[Tuple[str, str, str]]) -> None:
+        self._expected_regs = self._expected_from_commands(commands)
+
+    @staticmethod
+    def _register_values(text: str) -> Dict[str, str]:
+        """Достаёт пары «регистр → значение» из ответа sysfs.
+
+        Формат драйвера не документирован: это может быть `3A FC ...`, строка
+        с `w 54 3A ...` или полный дамп. Ищем hex-токены регистров и берём
+        следующие за ними байты. Пустой/частичный ответ не считается ошибкой.
+        """
+        tokens = str(text or "").upper().split()
+        values: Dict[str, str] = {}
+        for index, token in enumerate(tokens):
+            if re.fullmatch(r"[0-9A-F]{2}", token):
+                tail = tokens[index + 1:index + 21]
+                if tail and all(re.fullmatch(r"[0-9A-F]{2}", item) for item in tail):
+                    values[token] = " ".join(tail)
+        return values
+
+    @_serialized_hardware
+    def verify_registers(self) -> Optional[bool]:
+        """True — регистры совпадают, False — явное расхождение, None — нет read-back."""
+        expected = dict(self._expected_regs)
+        if not expected:
+            return None
+        by_target: Dict[str, List[Tuple[str, str]]] = {}
+        for (target, reg), value in expected.items():
+            by_target.setdefault(target, []).append((reg, value))
+
+        texts: Dict[str, str] = {}
+        is_local = os.path.exists(WOOFER_SYS) and os.path.exists(TWEETER_SYS)
+        if is_local:
+            for target in by_target:
+                try:
+                    with open(target, "r", errors="replace") as f:
+                        texts[target] = f.read(16384)
+                except OSError:
+                    return None
+        else:
+            if not self.adb:
+                return None
+            try:
+                command = "; echo __DSP_SEP__; ".join(f"cat {target}" for target in by_target)
+                out, _err, code = self.adb.shell(command, check=False)
+                if code != 0:
+                    return None
+                parts = str(out).split("__DSP_SEP__")
+                if len(parts) != len(by_target):
+                    return None
+                texts = dict(zip(by_target, parts))
+            except Exception:
+                return None
+
+        found = 0
+        for target, pairs in by_target.items():
+            text = texts.get(target, "")
+            if not text.strip():
+                return None
+            values = self._register_values(text)
+            for reg, expected_value in pairs:
+                actual = values.get(reg)
+                if actual is None:
+                    continue
+                found += 1
+                expected_bytes = " ".join(expected_value.split()[1:]).upper()
+                if actual != expected_bytes:
+                    logger.info("[DSP] Register %s on %s changed: expected %s, got %s",
+                                reg, target, expected_bytes, actual)
+                    return False
+        if not found:
+            return None
+        # Полный дамп: всё нашли и всё совпало. Частичный — не приговор.
+        return True if found == len(expected) else None
+
+    @_serialized_hardware
+    def ensure_applied(self, force: bool = False) -> Optional[bool]:
+        """Проверяет/возвращает сохранённый профиль после потери регистров."""
+        if not self._expected_regs or not self.is_supported():
+            return None
+        verified = self.verify_registers()
+        if verified is True:
+            return True
+        now = time.time()
+        cooldown = 5.0 if force else 15.0
+        if now - self._last_reapply_ts < cooldown:
+            return False
+        if verified is False or force:
+            logger.info("[DSP] Re-applying %s profile (verify=%s, force=%s)",
+                        self.active_profile, verified, force)
+            self._last_reapply_ts = now
+            if self.active_profile == "custom":
+                res = self._apply_custom_state(save=False)
+            else:
+                res = self.apply_profile(self.active_profile, save=False)
+            if res.get("ok"):
+                self._restored = True
+                self._restore_attempts = 0
+                return True
+            self._restored = False
+            self._restore_attempts += 1
+            return False
+        return None
 
     def _save_state(self) -> bool:
         """Save the DSP section to panel settings and verify persistence.
 
-        ``server.save_settings`` writes the whole JSON file, so after saving we
-        check its status and re-read the settings to detect a silent failure.
-        A dedicated ``save_settings_section("dsp", section)`` API in server.py
-        would allow writing just this section and avoid clobbering concurrent
-        updates made by other modules; dsp_max.py cannot do that safely on its
-        own.
+        New server.py exposes ``update_settings_section`` so only the dsp
+        section is replaced under a shared lock.  Older panels fall back to a
+        whole-file read-modify-write with a read-back check.
         """
         try:
             import server
@@ -324,22 +482,29 @@ class MaxDSP:
             return False
 
         try:
-            s = server.load_settings()
-            if not isinstance(s, dict):
-                logger.error("[DSP] Settings payload is not a dict; refusing to save DSP state")
-                return False
             section = {
                 "profile": self.active_profile,
                 "filters": dict(self.filters),
                 "params": dict(self.params),
             }
+            # Новый server.py умеет атомарно менять только dsp-секцию, не
+            # затирая mute/EQ/wakeword, которые пишутся параллельно.
+            update_section = getattr(server, "update_settings_section", None)
+            if callable(update_section):
+                if update_section("dsp", section) is False:
+                    logger.error("[DSP] update_settings_section('dsp') reported a write failure")
+                    return False
+                return True
+
+            # Совместимость с панелью старой версии на колонке.
+            s = server.load_settings()
+            if not isinstance(s, dict):
+                logger.error("[DSP] Settings payload is not a dict; refusing to save DSP state")
+                return False
             s["dsp"] = section
             if server.save_settings(s) is False:
                 logger.error("[DSP] server.save_settings() reported a write failure")
                 return False
-
-            # Read-back catches a silent failure on filesystems that accept
-            # replace() but lose the data (or an older server.py without status).
             persisted = server.load_settings()
             saved_section = persisted.get("dsp") if isinstance(persisted, dict) else None
             if saved_section != section:
@@ -499,6 +664,9 @@ class MaxDSP:
         if profile_name == "custom":
             return self._apply_custom_state(save=save)
 
+        old_profile = self.active_profile
+        old_filters = copy.deepcopy(self.filters)
+        old_params = copy.deepcopy(self.params)
         cmds: List[Tuple[str, str, str]] = []
         cmds.extend(self._build_mute_cmds())
 
@@ -627,10 +795,15 @@ class MaxDSP:
         ok = self._write_i2c_batch(cmds)
         if ok:
             self.active_profile = profile_name
+            self._remember_expected(cmds)
+            self._restored = True
+            self._restore_attempts = 0
             if save:
                 self._save_state()
                 self._update_boot_script()
             return {"ok": True, "profile": profile_name}
+        # Не оставляем в памяти профиль, которого нет в железе и настройках.
+        self.active_profile, self.filters, self.params = old_profile, old_filters, old_params
         return {"ok": False, "error": "Ошибка записи в I2C драйвер SY6045S"}
 
     @_serialized_hardware
@@ -650,9 +823,14 @@ class MaxDSP:
         else:
             return {"ok": False, "error": "Параметр enabled должен быть boolean"}
 
+        old_profile = self.active_profile
+        old_filters = copy.deepcopy(self.filters)
         self.filters[filter_id] = enabled_bool
         self.active_profile = "custom"
-        return self._apply_custom_state(save=save)
+        res = self._apply_custom_state(save=save)
+        if not res.get("ok"):
+            self.active_profile, self.filters = old_profile, old_filters
+        return res
 
     @_serialized_hardware
     def set_params(self, params: Dict[str, Any], save: bool = True) -> Dict[str, Any]:
@@ -690,13 +868,21 @@ class MaxDSP:
         if not updates:
             return {"ok": False, "error": "Не заданы параметры DSP"}
 
+        old_profile = self.active_profile
+        old_params = copy.deepcopy(self.params)
         self.params.update(updates)
         self.active_profile = "custom"
-        return self._apply_custom_state(save=save)
+        res = self._apply_custom_state(save=save)
+        if not res.get("ok"):
+            self.active_profile, self.params = old_profile, old_params
+        return res
 
     @_serialized_hardware
     def _apply_custom_state(self, save: bool = True) -> Dict[str, Any]:
         """Compile and write the custom filter state to hardware."""
+        old_profile = self.active_profile
+        old_filters = copy.deepcopy(self.filters)
+        old_params = copy.deepcopy(self.params)
         cmds: List[Tuple[str, str, str]] = []
         cmds.extend(self._build_mute_cmds())
 
@@ -753,23 +939,33 @@ class MaxDSP:
 
         ok = self._write_i2c_batch(cmds)
         if ok:
+            self._remember_expected(cmds)
+            self._restored = True
+            self._restore_attempts = 0
             if save:
                 self._save_state()
                 self._update_boot_script()
             return {"ok": True, "profile": self.active_profile, "filters": self.filters, "params": self.params}
+        self.active_profile, self.filters, self.params = old_profile, old_filters, old_params
         return {"ok": False, "error": "Ошибка применения параметров DSP"}
 
     def _update_boot_script(self) -> bool:
-        """Update the boot-time DSP marker file (best effort, never raises)."""
+        """Ensure the boot watchdog marker exists for every profile.
+
+        The external watchdog applies golden Hi-Fi whenever the marker is
+        missing.  Deleting it for ``stock`` therefore re-enabled Hi-Fi a couple
+        of seconds later.  The marker now means "the panel owns the DSP state",
+        not "the Hi-Fi profile is active".
+        """
         flag_file = Path(DSP_FLAG_FILE)
+        is_local = getattr(self.adb, "is_local", False) or not self.adb
         try:
-            if self.active_profile == "stock":
-                if flag_file.exists():
-                    flag_file.unlink(missing_ok=True)
-                    logger.info("[DSP] Removed boot marker %s (stock profile)", flag_file)
-            else:
+            if is_local:
                 flag_file.touch(exist_ok=True)
                 logger.debug("[DSP] Updated boot marker %s", flag_file)
+            else:
+                self.adb.shell(": > /tmp/hifi_dsp_applied", check=False)
+                logger.debug("[DSP] Updated boot marker on device")
             return True
         except OSError as e:
             logger.warning("[DSP] Cannot update boot marker %s: %s", flag_file, e)

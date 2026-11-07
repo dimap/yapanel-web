@@ -377,9 +377,11 @@ def test_boot_marker_is_updated_and_errors_are_contained(local_dsp, monkeypatch)
     assert MaxDSP._update_boot_script(dsp) is True
     assert marker.exists()
 
+    # Маркер означает «панель управляет DSP», а не «включён Hi-Fi»:
+    # watchdog не должен возвращать golden-профиль поверх stock.
     dsp.active_profile = "stock"
     assert MaxDSP._update_boot_script(dsp) is True
-    assert not marker.exists()
+    assert marker.exists()
 
     monkeypatch.setattr(
         dsp_max, "DSP_FLAG_FILE", marker.parent / "missing-dir" / "hifi_dsp_applied"

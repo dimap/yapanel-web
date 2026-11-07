@@ -2240,18 +2240,73 @@ exit 0
     P.footprint = max_footprint
     P._footprint_reset = max_footprint_reset
 
+    def _dsp_monitor(self):
+        """Следит за сменой трека/потока и возвращает DSP после сброса.
+
+        Регистры SY6045S может переинициализировать аудиотракт при смене
+        трека, рестарте Quasar или переподключении BT. Проверка каждую секунду
+        дешёвая: тяжёлая работа выполняется только при реальном событии или
+        расхождении read-back.
+        """
+        if getattr(self, "_dsp_monitor_started", False):
+            return
+        if not hasattr(self, "_max_dsp") or not getattr(self, "glagol", None):
+            return
+        self._dsp_monitor_started = True
+
+        def loop():
+            st = getattr(self.glagol, "state", None) or {}
+            p = st.get("playerState") if isinstance(st, dict) else None
+            p = p if isinstance(p, dict) else {}
+            last_track = str(p.get("id") or p.get("trackId") or "")
+            last_playing = bool(st.get("playing") or p.get("playing")) if isinstance(st, dict) else False
+            last_ws = bool(getattr(self.glagol, "ws", None))
+            last_event = last_verify = 0.0
+            while True:
+                time.sleep(1)
+                dsp = getattr(self, "_max_dsp", None)
+                if dsp is None:
+                    continue
+                try:
+                    st = getattr(self.glagol, "state", None) or {}
+                    p = st.get("playerState") if isinstance(st, dict) else None
+                    p = p if isinstance(p, dict) else {}
+                    track = str(p.get("id") or p.get("trackId") or "")
+                    playing = bool(st.get("playing") or p.get("playing")) if isinstance(st, dict) else False
+                    ws = bool(getattr(self.glagol, "ws", None))
+                    now = time.time()
+                    event = track != last_track or (playing and not last_playing) or (ws and not last_ws)
+                    if event and now - last_event >= 2.0:
+                        last_event = now
+                        last_verify = now
+                        dsp.ensure_applied(force=True)
+                    elif now - last_verify >= 30.0:
+                        last_verify = now
+                        if not getattr(dsp, "_restored", False):
+                            dsp.maybe_restore()
+                        else:
+                            dsp.ensure_applied()
+                    last_track, last_playing, last_ws = track, playing, ws
+                except Exception as e:  # фоновая проверка не должна ронять панель
+                    _log.debug("DSP monitor: %s", e)
+
+        threading.Thread(target=loop, daemon=True, name="dsp-monitor").start()
+
+    P._dsp_monitor = _dsp_monitor
+
     def max_dsp_status(self):
         if not hasattr(self, "_max_dsp"):
             from dsp_max import MaxDSP
             self._max_dsp = MaxDSP(self)
-        elif not getattr(self._max_dsp, "_restored", False):
-            self._max_dsp.restore_hardware_state()
+        self._max_dsp.maybe_restore()
+        self._dsp_monitor()
         return self._max_dsp.status()
 
     def max_dsp_action(self, data):
         if not hasattr(self, "_max_dsp"):
             from dsp_max import MaxDSP
             self._max_dsp = MaxDSP(self)
+        self._dsp_monitor()
         return self._max_dsp.action(data)
 
     P.dsp_status = max_dsp_status

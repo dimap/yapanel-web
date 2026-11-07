@@ -3251,6 +3251,7 @@ function wwRender() {
   const on = wwOn(), running = !!ww.running;
   const isMax = ww.platform === 'yandexstation_2';
   const fr = ww.frida || {};
+  const filesOk = ww.files_ok !== false;
   const stateEl = $('#ww-state'), dot = $('#ww-dot');
   stateEl.textContent = !ww.installed ? 'не установлен' : !ww.supported ? 'не поддерживается'
     : running ? (ww.error ? 'процесс запущен, API недоступен' : 'работает') : 'остановлен';
@@ -3265,8 +3266,10 @@ function wwRender() {
         : 'Демон работает. Запись и обучение идут с микрофонов колонки — говорите рядом с ней.')
     : 'Демон установлен, но не запущен — нажмите «Запустить демон».';
   if (isMax && running && !fr.running) hint += ' Frida-агент не запущен — Алиса не откроется по слову.';
+  if (ww.installed && ww.supported && !filesOk)
+    hint = 'Не хватает файлов демона или Frida-агента. Нажмите «Установить/починить файлы».';
   $('#ww-hint').textContent = hint;
-  $('#ww-install').hidden = ww.installed;
+  $('#ww-install').hidden = ww.installed && filesOk;
   $('#ww-install').textContent = isMax ? 'Установить/починить файлы' : 'Установить пакет';
   $('#ww-start').hidden = !on || running;
   $('#ww-stop').hidden = !on || !running;

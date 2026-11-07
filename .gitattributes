@@ -3,6 +3,9 @@
 *.command text eol=lf
 device/* text eol=lf
 device/wakeword/build/wakeword binary
+device/wakeword/bin/frida-inject binary
+device/wakeword/negatives.bin binary
+device/wakeword/lib/audiocapture.jar binary
 device/wakeword/frida/*.js text eol=lf
 *.bat text eol=crlf
 *.png binary

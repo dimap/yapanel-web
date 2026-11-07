@@ -2056,6 +2056,11 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             f"[ -f {s.WAKE_BIN} ] && echo @bin; "
             f"[ -x {s.WAKE_BIN} ] && echo @sha:$(sha256sum {s.WAKE_BIN} 2>/dev/null | cut -d' ' -f1); "
             f"find {s.WAKE_DATA}/words -name model.json -type f 2>/dev/null | grep -q . && echo @model; "
+            f"[ -f {s.WAKE_NEGATIVES} ] && echo @neg; "
+            f"[ -f {s.WAKE_JAR} ] && echo @jar; "
+            f"[ -x {s.WAKE_FRIDA_INJECT} ] && echo @inject; "
+            f"[ -f {s.WAKE_FRIDA_JS} ] && echo @fjs; "
+            f"[ -f {s.WAKE_FRIDA_SH} ] && echo @fsh; "
             f"[ -f {s.WAKE_PID} ] && kill -0 $(cat {s.WAKE_PID}) 2>/dev/null && echo @pid; "
             f"pidof wakeword >/dev/null 2>&1 && echo @proc; "
             f"[ -f {s.WAKE_AUTOSTART} ] && echo @auto; "
@@ -2065,9 +2070,14 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         sha = next((l[5:] for l in lines if l.startswith("@sha:")), "")
         pin = str(getattr(s, "WAKE_BIN_SHA256", "") or "")
         bin_ok = bool(sha) and (sha == pin if pin else True)
+        files_ok = bool(bin_ok and "@neg" in lines and "@jar" in lines and "@inject" in lines
+                        and "@fjs" in lines and "@fsh" in lines)
         info = {"installed": bool("@bin" in lines or "@model" in lines),
                 "version": version, "bin": "@bin" in lines, "bin_ok": bin_ok,
                 "sha256": sha, "model": "@model" in lines,
+                "negatives": "@neg" in lines, "jar": "@jar" in lines,
+                "inject": "@inject" in lines, "frida_js": "@fjs" in lines,
+                "frida_sh": "@fsh" in lines, "files_ok": files_ok,
                 "pid": "@pid" in lines, "process": "@proc" in lines, "auto": "@auto" in lines}
         self._ww_info, self._ww_info_at = dict(info), now
         return info
@@ -2112,6 +2122,53 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         self.adb.shell(
             f"chmod 755 {s.WAKE_FRIDA_SH} 2>/dev/null; chmod 644 {s.WAKE_FRIDA_JS} 2>/dev/null; true",
             check=False)
+        return pushed
+
+    def max_wakeword_push_bulk_assets(self):
+        """Кладёт крупные файлы (бинарник, negatives, jar, frida-inject), если их нет."""
+        base = Path(__file__).resolve().parent / "device" / "wakeword"
+        self.adb.shell(
+            f"mkdir -p {s.WAKE_DATA} {posixpath.dirname(s.WAKE_NEGATIVES)} "
+            f"{posixpath.dirname(s.WAKE_JAR)} {posixpath.dirname(s.WAKE_FRIDA_INJECT)}",
+            check=False)
+        info = self._wakeword_installed(force=True)
+        pushed = False
+        if not info.get("bin_ok"):
+            local = base / "build" / "wakeword"
+            if local.is_file():
+                self.adb.shell(f"rm -f {s.WAKE_BIN}.new", check=False)
+                self.adb.push(local, f"{s.WAKE_BIN}.new", timeout=300)
+                self.adb.shell(f"chmod 755 {s.WAKE_BIN}.new; mv -f {s.WAKE_BIN}.new {s.WAKE_BIN}",
+                               check=False)
+                pushed = True
+            elif not info.get("bin"):
+                raise AdbError(f"нет {s.WAKE_BIN} и локальной копии device/wakeword/build/wakeword")
+            else:
+                raise AdbError("бинарник не совпадает с проверенным, а локальной копии нет")
+        if not info.get("negatives"):
+            local = base / "negatives.bin"
+            if local.is_file():
+                self.adb.shell(f"rm -f {s.WAKE_NEGATIVES}.new", check=False)
+                self.adb.push(local, f"{s.WAKE_NEGATIVES}.new", timeout=300)
+                self.adb.shell(f"mv -f {s.WAKE_NEGATIVES}.new {s.WAKE_NEGATIVES}", check=False)
+                pushed = True
+        if not info.get("jar"):
+            local = base / "lib" / "audiocapture.jar"
+            if local.is_file():
+                self.adb.shell(f"rm -f {s.WAKE_JAR}.new", check=False)
+                self.adb.push(local, f"{s.WAKE_JAR}.new", timeout=120)
+                self.adb.shell(f"mv -f {s.WAKE_JAR}.new {s.WAKE_JAR}", check=False)
+                pushed = True
+        if not info.get("inject"):
+            local = base / "bin" / "frida-inject"
+            if local.is_file():
+                self.adb.shell(f"rm -f {s.WAKE_FRIDA_INJECT}.new", check=False)
+                self.adb.push(local, f"{s.WAKE_FRIDA_INJECT}.new", timeout=300)
+                self.adb.shell(
+                    f"chmod 755 {s.WAKE_FRIDA_INJECT}.new; mv -f {s.WAKE_FRIDA_INJECT}.new {s.WAKE_FRIDA_INJECT}",
+                    check=False)
+                pushed = True
+        self._ww_info = None
         return pushed
 
     def max_wakeword_frida_start(self):
@@ -2212,19 +2269,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
     def max_wakeword_install(self):
         """Проверить/починить файлы в /data/wakeword без YAM-пакета."""
         self.max_wakeword_push_assets()
-        self.adb.shell(
-            f"mkdir -p {s.WAKE_DATA} {posixpath.dirname(s.WAKE_NEGATIVES)} {posixpath.dirname(s.WAKE_JAR)}",
-            check=False)
-        info = self._wakeword_installed(force=True)
-        if not info.get("bin_ok"):
-            local = Path(__file__).resolve().parent / "device" / "wakeword" / "build" / "wakeword"
-            if local.is_file():
-                self.adb.shell(f"rm -f {s.WAKE_BIN}.new", check=False)
-                self.adb.push(local, f"{s.WAKE_BIN}.new")
-                self.adb.shell(f"chmod 755 {s.WAKE_BIN}.new; mv -f {s.WAKE_BIN}.new {s.WAKE_BIN}", check=False)
-            else:
-                raise AdbError("бинарник не совпадает с проверенным, а локальной копии "
-                               "device/wakeword/build/wakeword нет")
+        self.max_wakeword_push_bulk_assets()
         self.adb.shell(f"[ -f {s.WAKE_DATA}/VERSION ] || echo 0.3.0-maxpkg > {s.WAKE_DATA}/VERSION; true",
                        check=False)
         self._ww_info = None
@@ -2268,6 +2313,10 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         st["dry_run"] = False
         st["bin_ok"] = bool(info.get("bin_ok"))
         st["bin_sha256"] = info.get("sha256") or ""
+        st["files_ok"] = bool(info.get("files_ok"))
+        st["negatives_ok"] = bool(info.get("negatives"))
+        st["jar_ok"] = bool(info.get("jar"))
+        st["inject_ok"] = bool(info.get("inject"))
         st["frida"] = self._wakeword_frida_probe()
         return st
 
@@ -2279,6 +2328,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
     P._drop_hook_if_unused = max_drop_hook_if_unused
     P._wakeword_installed = max_wakeword_installed
     P.max_wakeword_push_assets = max_wakeword_push_assets
+    P.max_wakeword_push_bulk_assets = max_wakeword_push_bulk_assets
     P._wakeword_frida_probe = max__wakeword_frida_probe
     P.wakeword_frida_status = max_wakeword_frida_status
     P.wakeword_frida_start = max_wakeword_frida_start

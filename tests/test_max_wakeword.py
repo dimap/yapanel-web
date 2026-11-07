@@ -67,7 +67,7 @@ def test_installed_parses_sha_version_and_model():
     pin = "643c279b3327f1a110a8c65bc9e48bc70d305b4bee1efba1e491d9f94f61849f"
 
     def responder(cmd):
-        return (f"0.3.0-maxpkg\n@bin\n@sha:{pin}\n@model\n@auto\n", "", 0)
+        return (f"0.3.0-maxpkg\n@bin\n@sha:{pin}\n@model\n@neg\n@jar\n@inject\n@fjs\n@fsh\n@auto\n", "", 0)
 
     s, p = max_panel(responder)
     info = p._wakeword_installed(force=True)
@@ -75,6 +75,21 @@ def test_installed_parses_sha_version_and_model():
     assert info["version"] == "0.3.0-maxpkg"
     assert info["sha256"] == pin
     assert info["model"] and info["auto"]
+    assert info["negatives"] and info["jar"] and info["inject"]
+    assert info["frida_js"] and info["frida_sh"] and info["files_ok"]
+
+
+def test_installed_missing_bulk_files_is_not_complete():
+    pin = "643c279b3327f1a110a8c65bc9e48bc70d305b4bee1efba1e491d9f94f61849f"
+
+    def responder(cmd):
+        return (f"0.3.0-maxpkg\n@bin\n@sha:{pin}\n@fjs\n@fsh\n", "", 0)
+
+    s, p = max_panel(responder)
+    info = p._wakeword_installed(force=True)
+    assert info["installed"] and info["bin_ok"]
+    assert not info["negatives"] and not info["jar"] and not info["inject"]
+    assert not info["files_ok"]
 
 
 def test_start_refuses_unverified_binary():
@@ -163,7 +178,7 @@ def test_frida_assets_are_bound_to_panel():
     assert s.WAKE_FRIDA_SH in remotes
 
 
-def test_install_uses_local_binary_not_yam():
+def test_install_uses_local_binary_and_bulk_assets_not_yam():
     s, p = max_panel()
     p._wakeword_installed = Mock(return_value={
         "installed": True, "bin": True, "bin_ok": False, "sha256": "deadbeef"})
@@ -171,6 +186,11 @@ def test_install_uses_local_binary_not_yam():
     p.wakeword_install()
     remotes = [remote for _, remote in p.adb.pushed]
     assert f"{s.WAKE_BIN}.new" in remotes
+    assert f"{s.WAKE_NEGATIVES}.new" in remotes
+    assert f"{s.WAKE_JAR}.new" in remotes
+    assert f"{s.WAKE_FRIDA_INJECT}.new" in remotes
+    assert s.WAKE_FRIDA_JS in remotes
+    assert s.WAKE_FRIDA_SH in remotes
     assert not any("yam" in c for c in p.adb.commands)
 
 

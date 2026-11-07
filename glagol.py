@@ -341,10 +341,41 @@ class Glagol:
         finally:
             self.waiters.pop(rid, None)
 
+    def audio_play(self, url, title="", subtitle="", offset_ms=0, set_pause=False, timeout=6):
+        """Станции отдаётся ссылка на поток: играет её штатный плеер, Алиса остаётся живой."""
+        return self.send({"command": "externalCommandBypass",
+                          "data": audio_play_data(url, title, subtitle, offset_ms, set_pause)},
+                         timeout=timeout)
+
     def reconnect(self):
         if self.ws:
             self.ws.close()
         self.wake.set()
+
+
+def _pb_string(out, field, value):
+    out.append((field << 3) | 2)
+    data = value.encode()
+    n = len(data)
+    while n >= 0x80:
+        out.append((n & 0x7f) | 0x80)
+        n >>= 7
+    out.append(n)
+    out.extend(data)
+
+
+def audio_play_data(url, title="", subtitle="", offset_ms=0, set_pause=False):
+    """protobuf {1:"audio_play", 2: JSON{stream:{...},set_pause}} → base64 (как в zvukd)."""
+    stream = {"url": url, "format": "MP3", "type": "Track", "offset_ms": int(offset_ms)}
+    if title:
+        stream["title"] = title
+    if subtitle:
+        stream["subtitle"] = subtitle
+    payload = json.dumps({"stream": stream, "set_pause": bool(set_pause)}, ensure_ascii=False)
+    raw = bytearray()
+    _pb_string(raw, 1, "audio_play")
+    _pb_string(raw, 2, payload)
+    return base64.b64encode(bytes(raw)).decode()
 
 
 class YandexMusic:

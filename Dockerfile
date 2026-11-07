@@ -18,6 +18,16 @@ COPY device/viz/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$(cat /VERSION)" -o /out-viz/vizd . \
   && cp /VERSION /out-viz/VERSION
 
+# ARM32 userspace library for the microphone tap (the daemon itself is ARM64).
+FROM alpine:3.23 AS microphone
+RUN apk add --no-cache curl xz
+COPY .github/setup-zig.sh /tmp/setup-zig.sh
+RUN sh /tmp/setup-zig.sh /opt/zig
+ENV PATH="/opt/zig:${PATH}"
+COPY device/mic-tap /src/device/mic-tap
+COPY VERSION /src/VERSION
+RUN sh /src/device/mic-tap/build.sh
+
 FROM python:3.14-slim
 
 RUN apt-get update \
@@ -26,12 +36,13 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY server.py access.py agent.py glagol.py profiles.py midi.py managed_yam.py model_colors.py multi.py pyadb.py speakers.example.json VERSION ./
+COPY server.py access.py agent.py glagol.py profiles.py midi.py managed_yam.py model_colors.py zvuk.py zvuk_queries.py zvuk_player.py multi.py pyadb.py speakers.example.json VERSION ./
 COPY static ./static
 COPY device ./device
 COPY --from=assistant /out/assistantd /out/VERSION ./device/assistant/build/
 COPY --from=assistant /out-agent/yapanel-agent /out-agent/VERSION ./device/agent/build/
 COPY --from=assistant /out-viz/vizd /out-viz/VERSION ./device/viz/build/
+COPY --from=microphone /src/device/mic-tap/build/mic-tap.so /src/device/mic-tap/build/VERSION ./device/mic-tap/build/
 COPY LICENSE ./
 
 # /data — токен Яндекса, пароль панели, сертификаты, история графиков и ключ adb (HOME).
@@ -43,6 +54,6 @@ ENV PANEL_HOST=0.0.0.0 \
     ANDROID_ADB_SERVER_PORT=5038 \
     PYTHONUNBUFFERED=1
 VOLUME /data
-EXPOSE 8765 8766
+EXPOSE 8765 8766 8767
 
 CMD ["python", "server.py"]

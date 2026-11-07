@@ -67,6 +67,67 @@ class AssistantKeys(unittest.TestCase):
                 panel.assistant_ask(text)
         panel.adb.push.assert_not_called()
 
+    def test_provider_settings_are_saved_per_connection(self):
+        panel = self.panel({})
+        panel.assistant_set({"llm": {"base_url": "https://a.example/v1", "model": "model-a", "transport": "chat"}})
+        panel.assistant_set({"llm": {"base_url": "https://b.example/v1", "model": "model-b",
+                                     "transport": "realtime", "voice": "alloy"}})
+        conns = panel.stored["connections"]
+        self.assertEqual(conns["https://a.example/v1"],
+                         {"base_url": "https://a.example/v1", "model": "model-a", "transport": "chat", "voice": "marin"})
+        self.assertEqual(conns["https://b.example/v1"]["model"], "model-b")
+        self.assertEqual(conns["https://b.example/v1"]["transport"], "realtime")
+        self.assertEqual(conns["https://b.example/v1"]["voice"], "alloy")
+
+    def test_deleting_active_provider_switches_to_another(self):
+        panel = self.panel({})
+        panel.assistant_set({"llm": {"base_url": "https://a.example/v1", "model": "model-a", "api_key": "key-a-000000001"}})
+        panel.assistant_set({"llm": {"base_url": "https://b.example/v1", "model": "model-b", "api_key": "key-b-000000002"}})
+        panel.assistant_set({"delete_connection": "https://b.example/v1/"})
+        self.assertNotIn("https://b.example/v1", panel.stored["connections"])
+        self.assertNotIn("https://b.example/v1", panel.stored["keys"])
+        self.assertEqual(panel.stored["llm"]["base_url"], "https://a.example/v1")
+        self.assertEqual(panel.stored["llm"]["model"], "model-a")
+
+    def test_deleted_provider_does_not_come_back_on_status(self):
+        panel = self.panel({"llm": {"base_url": "https://a.example/v1", "model": "model-a"}})
+        panel.assistant_set({"delete_connection": "https://a.example/v1"})
+        st = panel.assistant_status()
+        self.assertNotIn("https://a.example/v1", st["config"]["connections"])
+        self.assertEqual(st["config"]["llm"]["base_url"], "")
+
+    def test_local_skills_and_weather_are_validated(self):
+        panel = self.panel({})
+        panel.assistant_set({"skills": {"time": True, "weather": True},
+                             "weather": {"city": " Казань ", "lat": 55.79, "lon": 49.12}})
+        self.assertEqual(panel.stored["skills"], {"time": True, "weather": True})
+        self.assertEqual(panel.stored["weather"], {"city": "Казань", "lat": 55.79, "lon": 49.12})
+        with self.assertRaises(server.AdbError):
+            panel.assistant_set({"weather": {"lat": 200, "lon": 0}})
+        with self.assertRaises(server.AdbError):
+            panel.assistant_set({"weather": {"lat": "нет", "lon": 0}})
+
+    def test_geo_uses_city_name_or_ip(self):
+        panel = self.panel({})
+        panel._http_json = lambda url, timeout=8: [{"lat": "55.79", "lon": "49.12", "display_name": "Казань"}]
+        self.assertEqual(panel.assistant_geo({"city": "Казань"}),
+                         {"city": "Казань", "lat": 55.79, "lon": 49.12})
+        panel._http_json = lambda url, timeout=8: {"success": True, "city": "Самара", "latitude": 53.2, "longitude": 50.15}
+        self.assertEqual(panel.assistant_geo({}), {"city": "Самара", "lat": 53.2, "lon": 50.15})
+        panel._http_json = lambda url, timeout=8: {}
+        with self.assertRaises(server.AdbError):
+            panel.assistant_geo({})
+
+    def test_local_timezone_is_copied_for_the_daemon(self):
+        _, data = server.Panel._pc_tz()
+        if not data:
+            self.skipTest("на этом компьютере нет /etc/localtime")
+        panel = self.panel({})
+        panel.adb.push.reset_mock()
+        panel._assist_timezone()
+        targets = [c.args[1] for c in panel.adb.push.call_args_list if len(c.args) > 1]
+        self.assertIn(f"{server.ASSIST_DIR}/localtime", targets)
+
 
 class AssistantHook(unittest.TestCase):
     def test_boot_hook_starts_assistant_only_when_configured(self):
@@ -151,3 +212,47 @@ class AssistantConfigWrite(unittest.TestCase):
         p._assist_write({"enabled": False})
         cmds = [c.args[0] for c in p.adb.shell.call_args_list if c.args]
         self.assertTrue(any("chmod 600" in c and "mv " in c for c in cmds), cmds)
+
+
+class AssistantVoiceSettings(AssistantKeys):
+    def test_custom_stt_credentials_are_masked_and_preserved(self):
+        panel = self.panel({})
+        st = panel.assistant_set({'stt': {'provider': 'custom', 'base_url': 'http://stt/v1',
+                                        'model': 'whisper', 'api_key': 'stt-secret-123456', 'language': 'ru'},
+                                  'llm': {'transport': 'realtime', 'voice': 'marin'},
+                                  'microphone': {'source': 'microphone', 'silence_ms': 950, 'gain': 32}})
+        self.assertNotIn('stt-secret-123456', json.dumps(st))
+        self.assertEqual(st['config']['stt']['key'], '…3456')
+        self.assertIsInstance(panel.stored['microphone']['silence_ms'], int)
+        panel.assistant_set({'stt': {'api_key': ''}})
+        self.assertEqual(panel.stored['keys']['http://stt/v1'], 'stt-secret-123456')
+
+    def test_rejects_invalid_audio_configuration(self):
+        for update in ({'llm': {'transport': 'unsupported'}}, {'stt': {'provider': 'shell'}},
+                       {'microphone': {'source': 'file'}}, {'microphone': {'gain': float('nan')}},
+                       {'microphone': {'silence_ms': 0}}):
+            with self.subTest(update=update), self.assertRaises(server.AdbError):
+                self.panel({}).assistant_set(update)
+
+
+class MicrophoneConfirmation(unittest.TestCase):
+    def test_install_returns_status_after_confirmation(self):
+        p = server.Panel(Mock())
+        p._microphone_binary = Mock(return_value=Path('/tmp/test-mic.so'))
+        p._ensure_hook = Mock()
+        p.detach = Mock()
+        p.assistant_status = Mock(side_effect=[{'running': True},
+            {'microphone_installed': False, 'state': {'microphone': {'ready': True}}},
+            {'microphone_installed': True, 'state': {'microphone': {'ready': True}}}])
+        def shell(cmd, *args, **kwargs):
+            if '/proc/device-tree/model' in cmd:
+                return 'PDM-dummy fs2105', '', 0
+            if 'cat /system/vendor/quasar/launch.json' in cmd:
+                return json.dumps({'nodes': [{'tasks': [{'arg': ['--platformd']}]}]}), '', 0
+            return '', '', 0
+        p.adb.shell.side_effect = shell
+        with patch.object(server.time, 'sleep'):
+            state = p.assistant_microphone(True)
+        self.assertTrue(state['microphone_installed'])
+        self.assertEqual(p.assistant_status.call_count, 3)
+        self.assertTrue(any('manage.sh confirm' in call.args[0] for call in p.adb.shell.call_args_list))

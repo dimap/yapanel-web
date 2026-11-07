@@ -14,7 +14,14 @@ trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/$NAME/runtime/python" "$OUT"
 cd "$ROOT"
-cp -r server.py access.py agent.py glagol.py profiles.py midi.py managed_yam.py model_colors.py multi.py speakers.example.json VERSION static device start.bat LICENSE README.md CONTRIBUTION.md "$WORK/$NAME/"
+cp -r server.py access.py agent.py glagol.py profiles.py midi.py managed_yam.py model_colors.py zvuk.py zvuk_queries.py zvuk_player.py multi.py speakers.example.json VERSION static device start.bat LICENSE README.md CONTRIBUTION.md "$WORK/$NAME/"
+# Bundle the capture library when available; otherwise the panel downloads the
+# verified asset for this release when the user enables microphone capture.
+if command -v zig >/dev/null 2>&1; then
+  sh device/mic-tap/build.sh
+  mkdir -p "$WORK/$NAME/device/mic-tap/build"
+  cp device/mic-tap/build/mic-tap.so device/mic-tap/build/VERSION "$WORK/$NAME/device/mic-tap/build/"
+fi
 # помощник для колонки (linux/arm64): на Windows Go обычно нет, поэтому кладём готовую сборку
 rm -rf "$WORK/$NAME/device/assistant/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go -C device/assistant build -trimpath -ldflags "-s -w -X main.version=$VER" \

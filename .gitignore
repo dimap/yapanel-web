@@ -1,5 +1,7 @@
 # секреты и данные панели — никогда не коммитить
 .yandex_auth.json
+.zvuk-cache/
+.zvuk_auth.json
 .panel_auth.json
 .panel_settings.json
 .agent.json
@@ -37,3 +39,7 @@ device/viz/build/
 
 .model_colors.json
 .model-colors-*
+
+# ARM32 ALSA capture library
+device/mic-tap/build/
+.mic-tap-*

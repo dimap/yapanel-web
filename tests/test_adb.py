@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 import server
@@ -57,6 +57,64 @@ class TransferTests(unittest.TestCase):
             run.assert_not_called()
             self.assertFalse(conn._alive())
         self.assertEqual(adb.transfers, 0)
+
+
+class ConnectionProbeTests(unittest.TestCase):
+    def monitor(self, replies, agent_replies=None):
+        class StopMonitor(Exception):
+            pass
+
+        conn = server.Connection(server.Adb("adb", "192.0.2.1:5555"))
+        conn._set("online")
+        conn._probe_error = "таймаут 10 с"
+        conn._agent_alive = Mock(side_effect=agent_replies) if agent_replies else Mock(return_value=False)
+        conn._adb_state = Mock(return_value=("device", ""))
+        conn._alive = Mock(side_effect=[*replies, StopMonitor()])
+        conn._drop = Mock()
+        conn._sleep = Mock()
+        result = SimpleNamespace(stdout=b"connected", stderr=b"", returncode=0)
+        with patch.object(server.JOURNAL, "add"), patch.object(server.time, "sleep"), \
+                patch.object(server.subprocess, "run", return_value=result) as run:
+            with self.assertRaises(StopMonitor):
+                conn.run()
+        return conn, run
+
+    def test_transient_failures_do_not_disconnect_and_success_resets_count(self):
+        conn, run = self.monitor([False, False, True, False, False, True])
+        conn._drop.assert_not_called()
+        run.assert_not_called()
+        self.assertTrue(conn.online)
+        self.assertEqual(conn._probe_failures, 0)
+        self.assertTrue(all(c.args == (15,) for c in conn._sleep.call_args_list))
+        messages = [entry["msg"] for entry in conn.log]
+        self.assertEqual(sum("проверка adb 1/3: таймаут 10 с" in m for m in messages), 2)
+
+    def test_three_consecutive_failures_reconnect(self):
+        conn, run = self.monitor([False, False, False])
+        conn._drop.assert_called_once()
+        self.assertIn(["adb", "connect", "192.0.2.1:5555"], [c.args[0] for c in run.call_args_list])
+        self.assertEqual(conn._probe_failures, 0)
+        self.assertIn("проверка adb 3/3: таймаут 10 с", [e["msg"] for e in conn.log])
+
+    def test_agent_recovery_resets_adb_failure_count(self):
+        conn, run = self.monitor([False, False, False, False, True],
+                                 [False, False, True, False, False, False, False])
+        conn._drop.assert_not_called()
+        run.assert_not_called()
+
+    def test_probe_timeout_and_unexpected_response_have_diagnostics(self):
+        conn = server.Connection(server.Adb("adb", "192.0.2.1:5555"))
+        with patch.object(server.subprocess, "run", side_effect=server.subprocess.TimeoutExpired("adb", 10)) as run:
+            self.assertFalse(conn._alive())
+            self.assertEqual(run.call_args.kwargs["timeout"], 10)
+            self.assertEqual(conn._probe_error, "таймаут 10 с")
+        for rc, out, err in [(1, b"", b"error: closed"), (0, b"unexpected", b""), (1, b"ok", b"failed")]:
+            with self.subTest(rc=rc, out=out), patch.object(server.subprocess, "run",
+                    return_value=SimpleNamespace(returncode=rc, stdout=out, stderr=err)):
+                self.assertFalse(conn._alive())
+                self.assertIn(f"код {rc}", conn._probe_error)
+                self.assertIn(repr(out.decode()), conn._probe_error)
+                self.assertIn(repr(err.decode()), conn._probe_error)
 
 
 class AdbVersionTests(unittest.TestCase):

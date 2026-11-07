@@ -38,6 +38,10 @@ const untested=(tab,what,text)=>{   // what — фраза целиком: «б�
   box.querySelector('p').innerHTML=text+' Заработало или нет — напишите, пожалуйста, в <a href="https://github.com/dimap/yapanel-web/issues" target="_blank" rel="noopener">Issues</a> с моделью и версией прошивки.';
   head.append(box);
 };
+if(profile.tested_note){
+  const p=document.createElement('p');p.className='hint';p.textContent=profile.tested_note;
+  document.querySelector('#hook-warn')?.after(p);
+}
 // На пробу (TRIAL_FEATURES в profiles.py): предупреждение, пока функцию для модели не подтвердили люди (tested)
 const tried=f=>profile.id!=='lite2'&&!(profile.tested||[]).includes(f);   // Лайт 2 — всё проверено, даже если tested не пришёл
 if(!profile.boot)document.getElementById('boot-card')?.setAttribute('data-profile-hidden','');

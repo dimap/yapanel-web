@@ -89,3 +89,45 @@ class Mini3Sounds(unittest.TestCase):
                 self.assertEqual(calls, [] if mode == 'unmounted' else
                                  ['/system/review-target'] if mode == 'normal' else
                                  ['/system/review-target', '-l /system/review-target'])
+
+class Mini3AnimationReset(unittest.TestCase):
+    def test_saved_override_can_be_reset_with_empty_catalog(self):
+        import profiles
+        s = fresh_server()
+        profiles.install(s, 'mini3')
+        p = s.Panel(Mock())
+        p.adb.shell.return_value = ('./oknix/alice_listening.led\n', '', 0)
+        p._remove_override = Mock()
+        self.assertEqual(p.patterns(), {'ring': [], 'clock': []})
+        p.anim_reset('ring', 'alice_listening.led')
+        p._remove_override.assert_called_once_with(
+            s.OVR_DIR + '/ledpatterns/oknix/alice_listening.led',
+            s.PATTERNS['ring'] + '/alice_listening.led')
+        for name in ('../alice_listening.led', 'missing.led', 'my/test.led', "bad'file.led", None):
+            with self.assertRaises(s.AdbError):
+                p.anim_reset('ring', name)
+        p.adb.shell.return_value = ('', '', 0)
+        with self.assertRaises(s.AdbError):
+            p.anim_reset('ring', 'alice_listening.led')
+
+    def test_reset_failure_propagates_without_refresh(self):
+        s = fresh_server()
+        p = s.Panel(Mock())
+        p.anim_custom = Mock(return_value={'ring': ['test.led'], 'clock': []})
+        p._remove_override = Mock(side_effect=s.AdbError('пользовательский файл сохранён'))
+        with self.assertRaisesRegex(s.AdbError, 'файл сохранён'):
+            p.anim_reset('ring', 'test.led')
+        p.anim_custom.assert_called_once()
+
+    def test_mini3_confirmed_scope_keeps_animation_restrictions(self):
+        import profiles
+        s = fresh_server()
+        profiles.install(s, 'mini3')
+        handler = Mock()
+        handler.path = '/api/profile'
+        handler._guard.return_value = False
+        s.Handler.do_GET(handler)
+        profile = handler._send.call_args.args[1]
+        self.assertEqual(set(profile['tested']), {'sounds', 'alarm', 'scenes'})
+        self.assertIn('retail CA', profile['tested_note'])
+        self.assertFalse(profile['ring_preview_supported'])

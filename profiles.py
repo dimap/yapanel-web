@@ -33,7 +33,9 @@ PROFILES = {
     'station2': dict(name='Станция 2', platform='yandexmidi', clock=False, boot=False, alarms=False, light=True, ledpanel=True),
     'mini3pro': dict(name='Станция Мини 3 Про', platform='pickle', clock=True, boot=False, alarms=False, light=True),
     # Common ADB features and a distinct 3D model; LED layout has not been verified on hardware.
-    'mini3': dict(name='Станция Мини 3', platform='bergamot', clock=False, boot=False, alarms=False, light=False, experimental=True),
+    'mini3': dict(name='Станция Мини 3', platform='bergamot', clock=False, boot=False, alarms=False, light=False, experimental=True,
+                  tested=('sounds', 'alarm', 'scenes'),
+                  tested_note='Мини 3, YAPanel 0.2.5: retail CA, уже настроенная колонка. Первоначальная установка хука и другие способы рута не проверены.'),
     # Glagol всё равно берёт тип из common.deviceType; светодиоды называются mini2:*.
     'mini2': dict(name='Станция Мини 2 с часами', platform='yandexmini_2', led_prefix='mini2', clock=True,
                   clock_max=170, bt_volume=False, boot=False, alarms=False, light=True,
@@ -365,7 +367,7 @@ def install(s, model='lite2', auto=False):
     # профилей: вариант «Лайт 2 без часов» уходит из своей ветки ниже, но эти два флага ему тоже нужны.
     original_assistant_status = P.assistant_status
     P.assistant_status = lambda self: {**original_assistant_status(self), 'experimental': 'assistant' not in profile['tested'],
-                                         'model_name': profile['name']}
+                                         'model_name': profile['name'], 'microphone_supported': family == 'lite2'}
     original_boot_status = P.boot_status
 
     def boot_status(self):

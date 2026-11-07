@@ -22,12 +22,11 @@ export async function initModelColor(id, initialStatus) {
   let legacy = normalizeColor(id, saved.color), state = null, online = false;
   let busy = false, refreshing = false, needsRefresh = true, generation = 0, mode = '';
   let settings = null, actions = {}, displayed = null, error = '', observedDevice = null;
-  panel.innerHTML = '<p class="hint" data-color-caption aria-live="polite"></p>' +
-    '<form data-color-form hidden><label for="model-color-answer" data-color-question></label>' +
+  panel.innerHTML = '<form data-color-form hidden><label for="model-color-answer" data-color-question></label>' +
     '<div class="model-color-controls"><select class="field" id="model-color-answer" aria-label="Цвет корпуса станции" required></select>' +
     '<button class="btn sm" type="submit">Сохранить</button></div></form>' +
     '<p class="hint" data-color-error role="status" hidden></p>';
-  const caption = panel.querySelector('[data-color-caption]'), form = panel.querySelector('form');
+  const form = panel.querySelector('form');
   const question = panel.querySelector('[data-color-question]'), answer = form.querySelector('select');
   const button = form.querySelector('button'), errorBox = panel.querySelector('[data-color-error]');
   answer.add(new Option('Выберите цвет', ''));
@@ -59,20 +58,8 @@ export async function initModelColor(id, initialStatus) {
       : 'Не удалось определить цвет корпуса. Какого цвета ваша станция?');
     button.disabled = !canChoose || !answer.value;
     answer.disabled = !canChoose;
-    let text = '';
-    if (state && effective()) {
-      const label = palette[effective()][0];
-      text = migration ? 'Цвет выбран только в этом браузере: ' + label + '.'
-        : 'Цвет корпуса: ' + label + (state.source === 'user' ? ' — выбран пользователем.' : ' — определён автоматически.');
-    } else if (online && state && !['command_failed'].includes(state.reason)) {
-      text = 'Показан условный цвет корпуса.';
-    }
-    if (!online && state) text += ' Нет связи с колонкой; цвет сохранён на экране.';
-    if (online && state?.reason === 'command_failed' && state.source !== 'user') text = 'Не удалось прочитать цвет. Повторим после восстановления связи.';
-    if (online && state && !state.device_id) text += ' Не удалось определить колонку для сохранения цвета.';
-    setText(caption, text);
     setText(errorBox, error); errorBox.hidden = !error;
-    panel.hidden = !text && !ask && !error;
+    panel.hidden = !ask && !error;
     if (settings) {
       settings.disabled = !canChoose;
       settings.options[0].textContent = state?.detected

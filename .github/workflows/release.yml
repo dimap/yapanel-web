@@ -22,6 +22,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: device/assistant/go.mod
+      - name: ARM32 compiler for microphone capture
+        run: |
+          .github/setup-zig.sh "$RUNNER_TEMP/zig"
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      - name: Microphone capture library
+        run: sh device/mic-tap/build.sh
       - name: Сборка
         run: |
           VER="${GITHUB_REF_NAME#v}"
@@ -35,7 +41,8 @@ jobs:
             -ldflags "-s -w -X main.version=$VER" -o "$PWD/dist/yapanel-agent-linux-arm64" .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go -C device/viz build -trimpath \
             -ldflags "-s -w -X main.version=$VER" -o "$PWD/dist/vizd-linux-arm64" .
-          (cd dist && sha256sum assistantd-linux-arm64 yapanel-agent-linux-arm64 vizd-linux-arm64 > SHA256SUMS)
+          cp device/mic-tap/build/mic-tap.so dist/mic-tap-linux-armhf.so
+          (cd dist && sha256sum assistantd-linux-arm64 yapanel-agent-linux-arm64 vizd-linux-arm64 mic-tap-linux-armhf.so > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -45,7 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/assistantd-linux-arm64 dist/yapanel-agent-linux-arm64 dist/vizd-linux-arm64 dist/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes --notes "$(cat <<'NOTES'
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/assistantd-linux-arm64 dist/yapanel-agent-linux-arm64 dist/vizd-linux-arm64 dist/mic-tap-linux-armhf.so dist/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes --notes "$(cat <<'NOTES'
           **Windows:** скачайте `…-windows-x64.zip` (или `arm64` для ARM-ноутбуков), распакуйте и запустите `start.bat`.
           Python уже внутри; adb (и по желанию ffmpeg) `start.bat` скачает сам при первом запуске.
 

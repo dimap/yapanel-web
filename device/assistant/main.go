@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -35,13 +36,21 @@ const (
 var httpStatus = regexp.MustCompile(`API ответил (\d{3})`)
 
 type entry struct {
-	At       int64  `json:"at"`
-	Source   string `json:"source"` // voice — голосом, panel — проверка из панели
-	Question string `json:"question"`
-	Answer   string `json:"answer,omitempty"`
-	Error    string `json:"error,omitempty"`
-	Ms       int64  `json:"ms,omitempty"`
+	At         int64  `json:"at"`
+	Source     string `json:"source"` // voice — голосом, panel — проверка из панели
+	Question   string `json:"question"`
+	Answer     string `json:"answer,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Ms         int64  `json:"ms,omitempty"`
+	STTMs      int64  `json:"stt_ms,omitempty"`
+	ModelMs    int64  `json:"model_ms,omitempty"`
+	TTSMs      int64  `json:"tts_ms,omitempty"`
+	PlaybackMs int64  `json:"playback_ms,omitempty"`
+	Local      bool   `json:"local,omitempty"` // ответил локальный навык, без модели
 }
+
+type voiceTimingKey struct{}
+type voiceTurnKey struct{}
 
 type Daemon struct {
 	cfgPath, statusPath, cmdPath string
@@ -49,7 +58,7 @@ type Daemon struct {
 	mu       sync.Mutex
 	cfg      Config
 	cfgErr   string
-	cfgMod   time.Time
+	cfgSum   [sha256.Size]byte
 	state    string // idle, thinking, speaking
 	err      string
 	history  []entry
@@ -57,6 +66,18 @@ type Daemon struct {
 	lastTurn time.Time
 	cancel   context.CancelFunc
 	dirty    bool
+
+	turn          uint64
+	turnMu        sync.Mutex
+	outputMu      sync.Mutex
+	micReady      bool
+	micError      string
+	playbackEnd   time.Time
+	outputActive  bool
+	playWave      func(context.Context, []byte) error
+	micArmed      bool
+	noSpeechAt    time.Time
+	noSpeechLevel float64
 
 	alice aliceCLI
 	// своя речь Алисы: после неё она по привычке слушает ещё 5 секунд — это гасим
@@ -77,18 +98,42 @@ type Daemon struct {
 	lastRadio  string
 	// последняя станция, которую не нашли по голосу, — панель предложит привязать это название
 	radioMiss map[string]any
+	// просьба переключить провайдера музыки — панель забирает и подтверждает music_seen
+	musicWish *musicWish
 	// когда включили своё радио: в первые секунды отклики плеера Алисы на паузу не считаем её новой музыкой
 	radioAt time.Time
 }
 
 func (d *Daemon) reload() {
-	st, err := os.Stat(d.cfgPath)
-	if err != nil || st.ModTime().Equal(d.cfgMod) {
+	b, err := os.ReadFile(d.cfgPath)
+	if err != nil {
 		return
 	}
-	c, err := loadConfig(d.cfgPath)
+	sum := sha256.Sum256(b)
 	d.mu.Lock()
-	d.cfg, d.cfgMod, d.cfgErr, d.dirty = c, st.ModTime(), "", true
+	unchanged := sum == d.cfgSum
+	d.mu.Unlock()
+	if unchanged {
+		return
+	}
+	c, err := parseConfig(b)
+	d.mu.Lock()
+	prev := d.cfg.LLM
+	if d.cancel != nil {
+		d.cancel()
+		d.turn++
+	}
+	d.state = "idle"
+	if !c.Enabled {
+		d.mode = false
+		os.Remove(microphoneLease)
+	}
+	// Смена модели или адреса API — новый разговор: старые реплики не уходят чужому провайдеру
+	if prev.BaseURL != c.LLM.BaseURL || prev.Model != c.LLM.Model || prev.Transport != c.LLM.Transport {
+		d.convo = nil
+		d.lastTurn = time.Time{}
+	}
+	d.cfg, d.cfgSum, d.cfgErr, d.dirty = c, sum, "", true
 	if err != nil {
 		d.cfgErr = "настройки не прочитаны: " + err.Error()
 	}
@@ -102,6 +147,34 @@ func (d *Daemon) set(state, errText string) {
 		d.err = errText
 	}
 	d.mu.Unlock()
+}
+
+// A late response from a cancelled request cannot overwrite the next turn.
+func (d *Daemon) setContext(ctx context.Context, state, errText string) {
+	turn, ok := ctx.Value(voiceTurnKey{}).(uint64)
+	if !ok {
+		d.set(state, errText)
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.turn != turn || ctx.Err() != nil {
+		return
+	}
+	d.state, d.dirty = state, true
+	if errText != "" || state == "thinking" {
+		d.err = errText
+	}
+}
+
+func (d *Daemon) returnToAlice(turn uint64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.turn != turn {
+		return
+	}
+	d.mode, d.micArmed, d.state, d.dirty = false, false, "idle", true
+	os.Remove(microphoneLease)
 }
 
 func (d *Daemon) writeStatus() {
@@ -118,7 +191,10 @@ func (d *Daemon) writeStatus() {
 	d.dirty = false
 	s := map[string]any{"pid": os.Getpid(), "version": version, "state": d.state, "error": d.err,
 		"config_error": d.cfgErr, "enabled": d.cfg.Enabled, "history": d.history, "at": time.Now().Unix(),
-		"mode": d.mode, "route": d.route, "radio": d.radio.Status(), "radio_miss": d.radioMiss}
+		"microphone": map[string]any{"ready": d.micReady, "error": d.micError},
+		"skills":     map[string]any{"time": d.cfg.Skills.Time, "weather": d.cfg.Skills.Weather},
+		"mode":       d.mode, "route": d.route, "radio": d.radio.Status(), "radio_miss": d.radioMiss,
+		"music": d.musicWish}
 	if d.mode {
 		s["mode_until"] = d.modeAt.Add(time.Duration(d.cfg.Mode.TimeoutMin) * time.Minute).Unix()
 	}
@@ -131,88 +207,241 @@ func (d *Daemon) writeStatus() {
 }
 
 // ask — один вопрос: модель → озвучка. Новый вопрос прерывает предыдущий.
-func (d *Daemon) ask(question, source string) {
+func (d *Daemon) ask(question, source string) { d.startTurn(question, source, nil) }
+func (d *Daemon) askAudio(pcm []byte)         { d.startTurn("", "microphone", pcm) }
+
+func (d *Daemon) startTurn(question, source string, pcm []byte) {
 	d.mu.Lock()
 	if d.cancel != nil {
 		d.cancel()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), realtimeTimeout)
 	d.cancel = cancel
+	d.turn++
+	turn := d.turn
+	ctx = context.WithValue(ctx, voiceTurnKey{}, turn)
 	c := d.cfg
 	if time.Since(d.lastTurn) > 10*time.Minute {
 		d.convo = nil
 	}
-	msgs := append([]message{{"system", c.LLM.SystemPrompt}}, d.convo...)
-	msgs = append(msgs, message{"user", question})
+	previous := append([]message(nil), d.convo...)
+	d.state, d.err, d.dirty = "thinking", "", true
+	if len(pcm) == 0 {
+		d.modeAt = time.Now()
+	}
 	d.mu.Unlock()
-
 	go func() {
 		defer cancel()
+		// A cancelled player/CLI finishes before the replacement turn can speak.
+		d.turnMu.Lock()
+		defer d.turnMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
 		started := time.Now()
 		e := entry{At: started.Unix(), Source: source, Question: question}
-		finish := func(err error) {
-			if err != nil && ctx.Err() == context.Canceled {
-				return // прервал следующий вопрос — он и запишет историю
-			}
-			if err != nil {
-				e.Error = err.Error()
-				log.Printf("ошибка: %v", err)
-			}
-			e.Ms = time.Since(started).Milliseconds()
-			d.mu.Lock()
-			d.history = append(d.history, e)
-			if len(d.history) > historyMax {
-				d.history = d.history[len(d.history)-historyMax:]
-			}
-			d.mu.Unlock()
-			d.set("idle", e.Error)
-		}
-		d.set("thinking", "")
+		ctx = context.WithValue(ctx, voiceTimingKey{}, &e)
 		glowCtx, stopGlow := context.WithCancel(ctx)
 		glowDone := make(chan struct{})
 		go glow(glowCtx, c.LED, glowDone)
 		unglow := func() { stopGlow(); <-glowDone }
 		defer unglow()
-		answer, err := chat(ctx, c.LLM, msgs)
-		if err != nil {
-			unglow()
-			d.notifyError(ctx, c, err)
-			finish(err)
+		var answer string
+		var err error
+		if len(pcm) > 0 && c.LLM.Transport != "realtime" {
+			var stt STT
+			stt, err = c.speechRecognition()
+			if err == nil {
+				sttStart := time.Now()
+				question, err = transcribe(ctx, stt, pcm)
+				e.STTMs = time.Since(sttStart).Milliseconds()
+				question = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(question), "Алиса,"))
+				if q, ok := matchTrigger(question, c.Triggers); ok {
+					question = q
+				}
+				e.Question = question
+			}
+			if err == nil && d.audioControl(question, turn) {
+				return
+			}
+		}
+		msgs := append([]message{{"system", c.LLM.SystemPrompt}}, previous...)
+		if question != "" {
+			msgs = append(msgs, message{"user", question})
+		}
+		byAlice := false
+		// Стандартные вопросы (время, дата, погода) отвечаем на месте: без модели и без задержки API.
+		local := false
+		if err == nil {
+			if text, ok := d.localAnswer(ctx, c, question); ok {
+				local, answer, e.Local = true, text, true
+				log.Printf("локальный ответ (%d симв.)", len([]rune(text)))
+				d.setContext(ctx, "speaking", "")
+				if c.TTS.Provider != "openai" {
+					unglow()
+				}
+				byAlice, err = d.speak(ctx, c, answer)
+			}
+		}
+		if err == nil && !local && c.LLM.Transport == "realtime" {
+			player := &pcmPlayback{ctx: ctx}
+			d.outputMu.Lock()
+			answer, question, err = realtimeTurn(ctx, c.LLM, msgs, pcm, func(audio []byte) error {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				d.setContext(ctx, "speaking", "")
+				return player.Write(audio)
+			})
+			if err != nil {
+				player.Abort()
+			}
+			playErr := player.Close()
+			d.outputMu.Unlock()
+			if err == nil {
+				err = playErr
+			}
+			if errors.Is(err, errReturnToAlice) {
+				d.returnToAlice(turn)
+				return
+			}
+			if e.Question == "" {
+				e.Question = question
+			}
+			d.mu.Lock()
+			d.playbackEnd = time.Now()
+			d.mu.Unlock()
+		} else if err == nil && !local {
+			modelStart := time.Now()
+			answer, err = chat(ctx, c.LLM, msgs)
+			e.ModelMs = time.Since(modelStart).Milliseconds()
+			if err == nil {
+				d.setContext(ctx, "speaking", "")
+				if c.TTS.Provider != "openai" {
+					unglow()
+				}
+				byAlice, err = d.speak(ctx, c, answer)
+			}
+		}
+		if errors.Is(err, errNoSpeech) {
+			d.mu.Lock()
+			if d.turn == turn {
+				d.state, d.err, d.dirty = "idle", "", true
+				d.noSpeechAt = time.Now()
+				d.noSpeechLevel = pcmRMS(pcm)
+			}
+			d.mu.Unlock()
+			return // Silence is not an API failure and must never be spoken aloud.
+		}
+		if ctx.Err() == context.Canceled {
 			return
 		}
-		e.Answer = answer
-		d.mu.Lock()
-		d.convo = append(d.convo, message{"user", question}, message{"assistant", answer})
-		if n := 2 * c.LLM.History; len(d.convo) > n {
-			d.convo = d.convo[len(d.convo)-n:]
-		}
-		d.lastTurn = time.Now()
-		d.mu.Unlock()
-		d.set("speaking", "")
-		if c.TTS.Provider != "openai" {
-			unglow() // дальше кольцом управляет сама Алиса: она читает ответ со своей анимацией
-		}
-		byAlice, err := d.speak(ctx, c, answer)
 		unglow()
-		finish(err)
-		// беседа без «Алисы»: синтезатор не открывает микрофон сам, как это делает Алиса после своей речи
-		if err == nil && !byAlice && c.Mode.FollowUp && d.inMode() {
+		if err != nil {
+			if len(pcm) > 0 {
+				// Real service failures are announced once, then Alice gets the input
+				// back. A missing local sidecar cannot start a spoken error loop.
+				d.mu.Lock()
+				if d.turn == turn {
+					d.mode, d.micArmed, d.dirty = false, false, true
+					os.Remove(microphoneLease)
+				}
+				d.mu.Unlock()
+			}
+			d.notifyError(ctx, c, err)
+			e.Error = err.Error()
+			log.Printf("ассистент: %v", err)
+		}
+		e.Answer = answer
+		e.Ms = time.Since(started).Milliseconds()
+		d.mu.Lock()
+		if d.turn != turn {
+			d.mu.Unlock()
+			return
+		}
+		if err == nil {
+			if e.Question == "" {
+				e.Question = "Голосовой вопрос"
+			}
+			d.convo = append(d.convo, message{"user", e.Question}, message{"assistant", answer})
+			if n := 2 * c.LLM.History; len(d.convo) > n {
+				d.convo = d.convo[len(d.convo)-n:]
+			}
+			d.lastTurn = time.Now()
+			d.modeAt = d.lastTurn
+		}
+		d.history = append(d.history, e)
+		if len(d.history) > historyMax {
+			d.history = d.history[len(d.history)-historyMax:]
+		}
+		d.state, d.err, d.dirty = "idle", e.Error, true
+		if !c.Mode.FollowUp {
+			d.micArmed = false
+		}
+		d.mu.Unlock()
+		if err == nil && !byAlice && c.Mode.FollowUp && d.inMode() && c.Microphone.Source != "microphone" {
 			d.alice.Listen()
 		}
 	}()
+}
+
+// Local control remains available while Alice's input is exclusively routed.
+func (d *Daemon) audioControl(text string, turn uint64) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.turn != turn {
+		return true
+	}
+	if _, ok := matchTrigger(text, d.cfg.Mode.Exit); ok {
+		d.mode, d.micArmed, d.state, d.dirty = false, false, "idle", true
+		os.Remove(microphoneLease)
+		return true
+	}
+	switch normalize(text) {
+	case "стоп", "хватит", "замолчи", "отмена":
+		d.state, d.dirty = "idle", true
+		return true
+	case "новый разговор", "забудь", "забудь все":
+		d.convo = nil
+		d.state, d.dirty = "idle", true
+		return true
+	}
+	return false
 }
 
 // speak озвучивает текст выбранным голосом; byAlice — прочитала Алиса (в том числе запасным путём,
 // тогда её микрофон после ответа уже открыт сам). Если голос ассистента недоступен (адрес, ключ, сеть,
 // aplay) — текст читает Алиса, чтобы ответ и голосовые ошибки всё равно прозвучали.
 func (d *Daemon) speak(ctx context.Context, c Config, text string) (byAlice bool, err error) {
+	d.outputMu.Lock()
+	defer d.outputMu.Unlock()
+	d.mu.Lock()
+	d.outputActive = true
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); d.playbackEnd = time.Now(); d.outputActive = false; d.mu.Unlock() }()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if c.TTS.Provider != "openai" {
 		return true, d.aliceSay(ctx, text)
 	}
 	voiceErr := func() error {
+		start := time.Now()
 		wav, err := speech(ctx, c.TTS, c.LLM.Proxy, text)
+		if timing, ok := ctx.Value(voiceTimingKey{}).(*entry); ok {
+			timing.TTSMs += time.Since(start).Milliseconds()
+		}
 		if err != nil {
 			return err
+		}
+		playStart := time.Now()
+		defer func() {
+			if timing, ok := ctx.Value(voiceTimingKey{}).(*entry); ok {
+				timing.PlaybackMs += time.Since(playStart).Milliseconds()
+			}
+		}()
+		if d.playWave != nil {
+			return d.playWave(ctx, wav)
 		}
 		cmd := exec.CommandContext(ctx, "/usr/bin/aplay", "-q", "-")
 		// при отмене — мягко: aplay тоже пишет в общий микшер dmix, и SIGKILL может оставить его захваченным
@@ -248,7 +477,7 @@ func (d *Daemon) notifyError(ctx context.Context, c Config, err error) {
 	if ctx.Err() != nil {
 		return // вопрос прерван новым — о старой ошибке молчим
 	}
-	d.set("speaking", "")
+	d.setContext(ctx, "speaking", "")
 	if _, e := d.speak(ctx, c, voiceError(err)); e != nil {
 		log.Printf("не удалось сообщить об ошибке голосом: %v", e)
 	}
@@ -325,24 +554,64 @@ func (d *Daemon) routeTimeout() {
 // setMode включает и выключает режим ассистента; сообщает голосом и вспышкой кольца.
 func (d *Daemon) setMode(on bool, announce bool) {
 	d.mu.Lock()
+	if on && !d.cfg.Enabled {
+		d.err, d.dirty = "сначала включите помощник", true
+		d.mu.Unlock()
+		return
+	}
+	if on && d.cfg.Microphone.Source == "microphone" {
+		var err error
+		if !d.micReady {
+			err = errors.New("сначала подключите микрофонный захват")
+		}
+		if d.cfg.LLM.Transport != "realtime" {
+			if _, e := d.cfg.speechRecognition(); e != nil {
+				err = e
+			}
+		}
+		if err != nil {
+			d.err, d.dirty = err.Error(), true
+			d.mu.Unlock()
+			return
+		}
+	}
 	changed := d.mode != on
-	d.mode, d.modeAt, d.dirty = on, time.Now(), true
+	d.mode, d.modeAt, d.micArmed, d.dirty = on, time.Now(), on, true
+	if !on {
+		os.Remove(microphoneLease)
+	}
 	c := d.cfg
+	if !changed {
+		d.mu.Unlock()
+		return
+	}
+	if d.cancel != nil {
+		d.cancel()
+	}
+	d.turn++
+	d.state = "idle"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	d.cancel = cancel
 	d.mu.Unlock()
-	if !changed || !announce {
+	if !announce {
+		cancel()
 		return
 	}
 	log.Printf("режим ассистента: %v", on)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 900*time.Millisecond)
+		defer cancel()
+		glowCtx, stopGlow := context.WithTimeout(ctx, 900*time.Millisecond)
 		done := make(chan struct{})
-		glow(ctx, c.LED, done)
-		cancel()
+		glow(glowCtx, c.LED, done)
+		stopGlow()
+		if ctx.Err() != nil {
+			return
+		}
 		text := "Возвращаю Алису."
 		if on {
 			text = "Переключаюсь на ассистента. Спрашивайте."
 		}
-		if _, err := d.speak(context.Background(), c, text); err != nil {
+		if _, err := d.speak(ctx, c, text); err != nil && ctx.Err() == nil {
 			log.Printf("не удалось сообщить о режиме: %v", err)
 		}
 	}()
@@ -354,6 +623,7 @@ func (d *Daemon) stopAnswer() {
 	if d.cancel != nil {
 		d.cancel()
 	}
+	d.turn++
 	d.mu.Unlock()
 	d.alice.Cancel()
 	d.set("idle", "")
@@ -512,6 +782,28 @@ func (d *Daemon) onEvent(ev logEvent) {
 		d.ours = false
 	}
 	d.mu.Unlock()
+	d.mu.Lock()
+	exclusive := c.Enabled && c.Microphone.Source == "microphone" && d.mode
+	d.mu.Unlock()
+	if c.Enabled && ev.kind == "phrase" && !oursBefore && d.musicCommand(c, ev.phrase) {
+		return
+	}
+	if exclusive {
+		if ev.kind == "spotted" {
+			d.mu.Lock()
+			d.micArmed = true
+			d.mu.Unlock()
+			d.stopAnswer()
+			d.alice.Cancel()
+		}
+		if ev.kind == "speaking" && !oursBefore {
+			d.alice.Cancel()
+		}
+		if ev.kind == "phrase" {
+			d.alice.Cancel()
+			return
+		}
+	}
 	if ev.kind != "phrase" || !c.Enabled {
 		return
 	}
@@ -606,6 +898,7 @@ func (d *Daemon) command() {
 		Radio     *Station `json:"radio"`
 		RadioStop bool     `json:"radio_stop"`
 		MissSeen  bool     `json:"radio_miss_seen"`
+		MusicSeen bool     `json:"music_seen"`
 	}
 	if json.Unmarshal(b, &cmd) != nil {
 		return
@@ -653,7 +946,12 @@ func (d *Daemon) command() {
 		d.radioMiss = nil
 		d.mu.Unlock()
 	}
-	if cmd.RadioStop || cmd.Radio != nil || cmd.MissSeen {
+	if cmd.MusicSeen {
+		d.mu.Lock()
+		d.musicWish = nil
+		d.mu.Unlock()
+	}
+	if cmd.RadioStop || cmd.Radio != nil || cmd.MissSeen || cmd.MusicSeen {
 		d.mu.Lock()
 		d.dirty = true
 		d.mu.Unlock()
@@ -738,6 +1036,7 @@ func main() {
 	dir := flag.String("dir", "/data/quasar/webpanel/assistant", "папка с config.json")
 	showVersion := flag.Bool("version", false, "показать версию")
 	models := flag.String("models", "", "вывести модели API в JSON; значение — файл с base_url/api_key/proxy поверх настроек или -")
+	weather := flag.String("weather", "", "проверить запрос погоды: \"lat,lon\" или пусто — из настроек; и выйти")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -745,6 +1044,10 @@ func main() {
 	}
 	if *models != "" {
 		printModels(*dir+"/config.json", *models)
+		return
+	}
+	if *weather != "" {
+		checkWeather(*dir+"/config.json", *weather)
 		return
 	}
 	log.SetFlags(log.Ldate | log.Ltime)
@@ -762,12 +1065,14 @@ func main() {
 	log.Printf("assistantd %s запущен", version)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	go d.microphone(ctx)
 	go func() {
 		if err := d.alice.Warm(); err != nil {
 			log.Printf("CLI Алисы не запустился: %v", err)
 		}
 	}()
 	d.follow(ctx, maindLog)
+	d.stopAnswer()
 	d.radio.Shutdown()
 	d.alice.Close()
 	os.Remove(d.statusPath)

@@ -8,7 +8,7 @@ plugins {
 // Панель лежит уровнем выше: её файлы кладём в assets/panel, при первом запуске приложение распаковывает их
 val panelRoot = rootDir.parentFile
 val panelVersion = panelRoot.resolve("VERSION").readText().trim()
-val panelFiles = listOf("server.py", "access.py", "agent.py", "glagol.py", "profiles.py", "midi.py", "managed_yam.py", "model_colors.py", "multi.py", "pyadb.py",
+val panelFiles = listOf("server.py", "access.py", "agent.py", "glagol.py", "profiles.py", "midi.py", "managed_yam.py", "model_colors.py", "zvuk.py", "zvuk_queries.py", "zvuk_player.py", "multi.py", "pyadb.py",
     "VERSION", "LICENSE", "README.md")
 
 // 0.1.9 → 109, 1.2.3 → 10203; «-rc1» и подобное не учитываем

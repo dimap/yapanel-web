@@ -1,0 +1,16 @@
+# Optional. Normal `docker compose up` does not build, download or start STT.
+# Explicit opt-in:
+# docker compose -f docker-compose.yml -f docker-compose.stt.yml --profile stt up -d
+services:
+  stt:
+    profiles: [stt]
+    build: ./tools/local-stt
+    ports:
+      - "18445:18445"
+    volumes:
+      - stt-data:/data
+    depends_on:
+      - panel
+    restart: unless-stopped
+volumes:
+  stt-data:

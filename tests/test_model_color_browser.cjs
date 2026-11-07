@@ -19,7 +19,6 @@ const urlReady = new Promise((resolve,reject)=>{
  const newPage = async(options={})=>{const c=await browser.newContext(options);contexts.push(c);return c.newPage();};
  const load = async(page)=>{await page.goto(url);await page.waitForFunction(()=>window.__fixtureReady);};
  const prompt = p=>p.locator('[data-color-form]');
- const caption = p=>p.locator('[data-color-caption]');
  const waitColor = async(p,color)=>p.waitForFunction(color=>window.__deviceColor===color,color);
  const saveAnswer = async(p,color)=>{await p.locator('#model-color-answer').selectOption(color);await p.locator('[data-color-form] button').click();await waitColor(p,color);};
  const snapshot = async(p,name)=>{if(process.env.CHECK_ARTIFACT_DIR){fs.mkdirSync(process.env.CHECK_ARTIFACT_DIR,{recursive:true});await p.screenshot({path:path.join(process.env.CHECK_ARTIFACT_DIR,name+'.png'),fullPage:true});}};
@@ -27,17 +26,17 @@ const urlReady = new Promise((resolve,reject)=>{
   const page=await newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await load(page);
   assert(await prompt(page).isVisible());assert.equal(await page.locator('#model-color-answer').inputValue(),'');
-  assert(await page.locator('[data-color-form] button').isDisabled());assert.match(await caption(page).textContent(),/условный/);
+  assert(await page.locator('[data-color-form] button').isDisabled());
   // Keep an unfinished choice across ordinary status refreshes; no implicit POST on mount.
   await page.locator('#model-color-answer').selectOption('green');await page.evaluate(()=>refreshFixture());
   assert.equal(await page.locator('#model-color-answer').inputValue(),'green');
   await page.locator('[data-color-form] button').focus();await page.keyboard.press('Enter');await waitColor(page,'green');
-  assert(!await prompt(page).isVisible());assert.match(await caption(page).textContent(),/пользователем/);
+  assert(!await prompt(page).isVisible());
   cases.push('unknown: explicit choice, keyboard save, no poll reset');
   const second=await newPage();await load(second);await waitColor(second,'green');
   await configure({color:'blue',read:'available'});await second.evaluate(()=>refreshFixture());await waitColor(second,'green');
   await second.locator('#model-color').selectOption('auto');await waitColor(second,'blue');
-  assert.match(await caption(second).textContent(),/автоматически/);cases.push('second browser, manual priority and reset to auto');
+  cases.push('second browser, manual priority and reset to auto');
   await configure({device:'TEST0000000002',color:'',read:'unavailable'});await second.evaluate(()=>refreshFixture());
   assert(await prompt(second).isVisible());assert.equal(await second.evaluate(()=>window.__deviceColor),null);
   cases.push('replacement at same address receives no previous colour');

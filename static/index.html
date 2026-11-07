@@ -16,12 +16,25 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Моя станция">
 <script>
+  // Чёрный или белый текст поверх заливки акцентом — по яркости цвета.
+  function accentOn(hex) {
+    const n = String(hex || '').replace('#', '');
+    if (!/^[0-9a-f]{6}$/i.test(n)) return '#FFFFFF';
+    const c = [0, 2, 4].map(i => {
+      const v = parseInt(n.slice(i, i + 2), 16) / 255;
+      return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
+    });
+    const l = .2126 * c[0] + .7152 * c[1] + .0722 * c[2];
+    return l > .4 ? '#16161D' : '#FFFFFF';
+  }
   // тема и акцент из настроек «Обзора» — до отрисовки, чтобы не мигало
   try {
     const th = localStorage.getItem('ui.theme'), ac = localStorage.getItem('ui.accent');
     const gl = localStorage.getItem('ui.glow') || 'cursor';
     if (gl !== 'off') document.documentElement.dataset.glow = gl;
     if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th;
+    if (localStorage.getItem('ui.nav') === 'rail') document.documentElement.dataset.nav = 'rail';
+    if (localStorage.getItem('ui.navCollapsed') === '1') document.documentElement.dataset.navCollapsed = '1';
     if (window.AndroidPanel) {   // приложение для Android: окно под статус-баром, отступы — от приложения
       const [top, bottom] = String(AndroidPanel.insets()).split(','), s = document.documentElement.style;
       document.documentElement.classList.add('in-app');
@@ -32,6 +45,7 @@
       s.setProperty('--accent', ac);
       s.setProperty('--accent-ink', `color-mix(in srgb, ${ac} 72%, var(--text))`);
       s.setProperty('--accent-soft', `color-mix(in srgb, ${ac} 15%, var(--card))`);
+      s.setProperty('--on-accent', accentOn(ac));
     }
     window.__vizOff = localStorage.getItem('ui.viz') === '0';
   } catch {}
@@ -184,6 +198,68 @@
 
   /* контент */
   main { flex: 999 1 560px; min-width: 0; padding: 28px 28px 40px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* макет с боковым меню: только компьютер и планшет, телефонные правила ниже не меняются */
+  .nav-collapse { display: none; }
+  #wz-third { display: none; }
+  @media (min-width: 761px) {
+    :root[data-nav="rail"] { --rail-w: 248px; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] { --rail-w: 64px; }
+    :root[data-nav="rail"] .shell { max-width: none; margin: 0; padding-left: var(--rail-w); transition: padding-left .18s ease; }
+    :root[data-nav="rail"] aside {
+      position: fixed; left: 0; top: var(--sa-top, 0px); bottom: 0; width: var(--rail-w); z-index: 20; max-width: none;
+      padding: 18px 12px; gap: 12px; border-right: 1px solid var(--line); background: var(--bg);
+      overflow-y: auto; overscroll-behavior: contain; transition: width .18s ease;
+    }
+    /* нижний плеер перекрывает низ меню — приподнимаем его над плеером */
+    :root[data-nav="rail"] body.has-minibar aside { bottom: 86px; }
+    /* в широком меню — тонкий скроллбар, в свёрнутом (только иконки) он съедает ширину, поэтому скрыт */
+    :root[data-nav="rail"] aside { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+    :root[data-nav="rail"] aside::-webkit-scrollbar { width: 8px; }
+    :root[data-nav="rail"] aside::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+    :root[data-nav="rail"] aside::-webkit-scrollbar-track { background: transparent; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] aside { scrollbar-width: none; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] aside::-webkit-scrollbar { display: none; }
+    :root[data-nav="rail"] main { flex: 1 1 auto; width: 100%; max-width: 1760px; margin: 0 auto; padding: 24px 28px 40px; }
+    :root[data-nav="rail"] .settings { max-width: none; }
+    :root[data-nav="rail"] .nav-collapse {
+      display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 34px;
+      border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--muted);
+      font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+    :root[data-nav="rail"] .nav-collapse:hover { border-color: var(--accent); color: var(--text); }
+    :root[data-nav="rail"] .brand { min-width: 0; }
+    :root[data-nav="rail"] .brand > div { min-width: 0; }
+    :root[data-nav="rail"] .brand b, :root[data-nav="rail"] .brand small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    :root[data-nav="rail"] #wz-third { display: flex; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] .brand { justify-content: center; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] .brand > div,
+    :root[data-nav="rail"][data-nav-collapsed="1"] .nav-label,
+    :root[data-nav="rail"][data-nav-collapsed="1"] .nav-group,
+    :root[data-nav="rail"][data-nav-collapsed="1"] .nav-collapse-label,
+    :root[data-nav="rail"][data-nav-collapsed="1"] .conn b > span:not(.dot),
+    :root[data-nav="rail"][data-nav-collapsed="1"] .conn small { display: none; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] nav.side a { justify-content: center; padding: 0; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] .nav-sep { margin: 10px 12px; }
+    :root[data-nav="rail"][data-nav-collapsed="1"] .conn { align-items: center; padding: 10px 4px; }
+  }
+  /* «Плеер» с боковым меню на широком экране: текст песни — третьей колонкой справа, высотой с карточку плеера */
+  @media (min-width: 1400px) {
+    :root[data-nav="rail"] #pl-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+    :root[data-nav="rail"] #pl-body .pl-body-cols { display: contents; }
+    :root[data-nav="rail"] #pl-body .pl-hero { grid-column: 1; grid-row: 1; }
+    :root[data-nav="rail"] #pl-body [data-pl-sec="lyrics"] { grid-column: 2; grid-row: 1; height: 0; min-height: 100%; overflow: hidden; }
+    :root[data-nav="rail"] #pl-body [data-pl-sec="lyrics"] .lyrics { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; overflow-x: hidden; }
+    :root[data-nav="rail"] #pl-body .pl-body-cols > .col { grid-column: 1 / -1; grid-row: 2; }
+    :root[data-nav="rail"] #pl-body #pl-artist-card,
+    :root[data-nav="rail"] #pl-body .pl-raw-card { grid-column: 1 / -1; }
+  }
+  /* «Обзор» с боковым меню: две колонки виджетов, третья — справа от плиток «Состояние» */
+  .ov-body, .ov-main { min-width: 0; }
+  .ov-main { display: flex; flex-direction: column; gap: 20px; }
+  @media (min-width: 1200px) {
+    :root[data-nav="rail"] .ov-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+    :root[data-nav="rail"] #stat-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
   @media (max-width: 760px) { main { padding: 4px 16px 32px; } }
   .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
   .page-head h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
@@ -340,6 +416,14 @@
   .sw { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--c); padding: 0; }
   .sw.sel { border: 3px solid var(--card); box-shadow: 0 0 0 2px var(--c); }
   .sw.white { border: 1px solid var(--btn-line); }
+  .sw-rainbow { background: conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+  .accent-pop { position: fixed; z-index: 80; width: 228px; padding: 12px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; }
+  .accent-preview { height: 28px; border-radius: 8px; border: 1px solid var(--line); }
+  .accent-pop label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .accent-pop input[type=range] { width: 100%; accent-color: var(--accent); }
+  .accent-pop input.hue { background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); border-radius: 6px; }
+  .accent-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .accent-pop-foot .mono { font-size: 12px; color: var(--muted); }
   .sw-custom { position: relative; width: 32px; height: 32px; border-radius: 50%; border: 2px dashed var(--btn-line); display: grid; place-items: center; color: var(--muted); overflow: hidden; }
   .sw-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
 
@@ -419,6 +503,7 @@
   .bt-eq-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .bt-eq-head select { width: auto; min-width: 170px; }
   .bt-eq canvas { display: block; width: 100%; height: 96px; margin-top: 8px; }
+  #bt-eq-curve.editable { cursor: ns-resize; touch-action: none; }
   .eq-custom { display: grid; gap: 7px; margin-top: 10px; }
   .eq-band { display: grid; grid-template-columns: 76px 18px 1fr 52px; align-items: center; gap: 8px; }
   .eq-band input[type=number] { width: 76px; }
@@ -630,7 +715,7 @@
   .sc-flow span { font-size: 12px; color: var(--text-2); background: var(--field); border-radius: 999px; padding: 2px 9px; }
   .al-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
   .al-form .full { grid-column: 1 / -1; }
-  .al-form label.f { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 13.5px; color: var(--text-2); min-width: 0; }
+  .al-form label.f, .al-form .repeat-row { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 13.5px; color: var(--text-2); min-width: 0; }
   .al-form .field { width: 100%; }
   .al-form input[type=time] { font-size: 28px; font-weight: 800; min-height: 56px; font-variant-numeric: tabular-nums; }
   @media (max-width: 640px) { .al-form { grid-template-columns: minmax(0, 1fr); } }
@@ -696,12 +781,143 @@
   .set-note a { color: var(--accent-ink); }
   .set-danger b { color: var(--danger); }
   /* «Ассистент» */
-  .as-form { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 10px 14px; align-items: center; }
-  .as-form > label { font-weight: 600; font-size: 14px; }
-  .as-form .hint { grid-column: 2; margin: -4px 0 0; }
-  .as-form textarea.field, #as-question { width: 100%; min-height: 96px; padding: 10px 12px; font: inherit; resize: vertical; }
+  .as-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,3fr); gap:14px; align-items:start; }
+  @media (max-width:1050px) { .as-grid { grid-template-columns:1fr; } }
+  .as-col { display:flex; flex-direction:column; gap:14px; min-width:0; }
+  .as-state { display:inline-flex; align-items:center; gap:8px; padding:5px 11px 5px 10px; border-radius:999px;
+    background:var(--ok-soft); color:var(--ok-ink); font-size:12.5px; font-weight:700; white-space:nowrap; }
+  .as-state.is-off { background:var(--field); color:var(--muted); }
+  .as-state.is-bad { background:var(--danger-soft); color:var(--danger); }
+  .as-state-dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex:none; }
+  .as-head-switch { display:inline-flex; align-items:center; gap:8px; font-size:13px; font-weight:600; white-space:nowrap; }
+
+  .as-route { overflow:hidden; }
+  .as-route-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .as-route-top h2 { margin:0; }
+  .as-draft { padding:2px 9px; border-radius:999px; background:var(--accent-soft); color:var(--accent-ink);
+    font-size:11px; font-weight:700; white-space:nowrap; }
+  .as-route-tabs { display:flex; gap:4px; padding:4px; border-radius:12px; background:var(--field); }
+  .as-route-tabs button { flex:1; border:0; border-radius:9px; padding:7px 6px; font:inherit; font-size:12px;
+    font-weight:600; color:var(--muted); background:none; cursor:pointer; white-space:nowrap; }
+  .as-route-tabs button[aria-selected="true"] { color:var(--text); background:var(--card); box-shadow:0 1px 4px #0001; }
+  .as-route-state { margin:0; color:var(--muted); font-size:12px; }
+  .as-steps { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+  .as-step { --tone:var(--muted); position:relative; }
+  .as-step:not(:last-child)::before { content:""; position:absolute; left:24px; top:47px; bottom:-7px; width:2px;
+    border-radius:1px; background:var(--line); }
+  .as-step[data-kind="stt"], .as-step[data-kind="input"] { --tone:#8b5cf6; }
+  .as-step[data-kind="model"] { --tone:var(--accent-ink); }
+  .as-step[data-kind="tts"] { --tone:#168878; }
+  .as-step-btn, .as-step-static { display:flex; align-items:flex-start; gap:12px; width:100%; padding:11px 10px 11px 8px;
+    border:0; border-radius:12px; background:none; color:inherit; font:inherit; text-align:left; }
+  .as-step-btn { cursor:pointer; }
+  .as-step-btn:hover { background:color-mix(in srgb,var(--accent) 7%,transparent); }
+  .as-step-btn[aria-pressed="true"] { background:color-mix(in srgb,var(--accent) 10%,transparent); }
+  .as-step-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .as-step-icon { position:relative; z-index:1; width:32px; height:32px; flex:none; border-radius:50%;
+    display:grid; place-items:center; color:var(--tone); background:var(--card); border:1px solid var(--line); }
+  .as-step-icon svg { width:16px; height:16px; }
+  .as-step.is-bad .as-step-icon { color:var(--danger); border-color:var(--danger); }
+  .as-step.is-stage-open .as-step-icon { color:var(--accent-ink); border-color:var(--accent); background:var(--accent-soft); }
+  .as-step-body { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
+  .as-step-body small { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+  .as-step-body strong { font-size:14px; line-height:1.35; overflow-wrap:anywhere; }
+  .as-step-body .as-route-detail { font-size:11.5px; color:var(--muted); line-height:1.4; overflow-wrap:anywhere; }
+  .as-step-go { align-self:center; color:var(--muted); font-size:13px; opacity:0; transition:opacity .15s; }
+  .as-step-btn:hover .as-step-go, .as-step-btn[aria-pressed="true"] .as-step-go { opacity:1; }
+  .as-route-notes { display:flex; gap:8px 18px; flex-wrap:wrap; margin-top:16px; font-size:12px; color:var(--muted); line-height:1.5; }
+  .as-route-notes p { margin:0; }
+  .as-route-notes .is-bad { color:var(--danger); }
+  .as-mode-row { display:flex; flex-direction:column; gap:8px; margin-top:14px; padding-top:12px; border-top:1px dashed var(--line); }
+  .as-mode-top { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .as-mode-state { font-size:12.5px; font-weight:700; color:var(--muted); white-space:nowrap; }
+  .as-mode-state.is-on { color:var(--ok-ink); }
+
+  .as-askbar { display:flex; gap:8px; }
+  .as-askbar .field { flex:1; min-width:0; }
+  @media (max-width:520px) { .as-askbar { flex-wrap:wrap; } .as-askbar .field { flex:1 1 100%; } }
+  .as-suggests { display:flex; gap:6px; flex-wrap:wrap; }
+  .as-suggests .chip { border:1px solid var(--line); background:var(--card); border-radius:999px; padding:5px 11px;
+    font:inherit; font-size:12.5px; color:var(--text-2); cursor:pointer; }
+  .as-suggests .chip:hover { border-color:var(--accent); color:var(--text); }
+  .as-picker { display:flex; flex-direction:column; gap:2px; padding:4px; border:1px solid var(--line); border-radius:12px;
+    background:var(--card); box-shadow:var(--shadow); max-height:240px; overflow:auto; }
+  .as-picker-row { text-align:left; border:0; background:none; padding:8px 10px; border-radius:8px; font:inherit;
+    font-size:13px; color:var(--text); cursor:pointer; overflow-wrap:anywhere; }
+  .as-picker-row:hover { background:var(--field); }
+  .as-add-input { max-width:240px; }
+  #as-prompt { min-height:110px; line-height:1.45; resize:vertical; overflow-y:auto; }
+
+  .as-led-swatch { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--btn-line); padding: 0; cursor: pointer; background: #ff8a00; }
+  .as-led-swatch[hidden] { display: none; }
+  .as-tabs { display:flex; gap:2px; padding:4px; border-radius:12px; background:var(--field); }
+  .as-tabs button { flex:1; border:0; background:none; border-radius:9px; padding:8px 6px; font:inherit;
+    font-size:12.5px; font-weight:700; color:var(--muted); cursor:pointer; white-space:nowrap; }
+  .as-tabs button[aria-selected="true"] { background:var(--card); color:var(--text); box-shadow:0 1px 4px #0001; }
+  .as-tabs button:disabled { opacity:.4; cursor:default; }
+  .as-pane { display:none; flex-direction:column; gap:14px; }
+  .as-pane.is-open { display:flex; }
+  .as-field { display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .as-label { font-size:13px; font-weight:700; }
+  .as-inline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .as-inline .field { flex:1; min-width:0; }
+  .as-block { display:flex; flex-direction:column; gap:14px; }
+  .as-choice-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  @media (max-width:520px) { .as-choice-grid { grid-template-columns:1fr; } }
+  .as-choice { position:relative; display:flex; flex-direction:column; gap:3px; padding:11px 12px;
+    border:1px solid var(--line); border-radius:12px; background:var(--card); cursor:pointer; }
+  .as-choice:hover { border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); }
+  .as-choice:has(input:checked) { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset;
+    background:color-mix(in srgb,var(--accent) 7%,var(--card)); }
+  .as-choice input { position:absolute; opacity:0; pointer-events:none; }
+  .as-choice b { font-size:13.5px; }
+  .as-choice small { color:var(--muted); font-size:11.5px; line-height:1.35; }
+
+  .as-providers { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .as-provider { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:10px; background:var(--card); overflow:hidden; }
+  .as-provider.is-active { border-color:var(--accent); background:var(--accent-soft); }
+  .as-provider-tab { border:0; background:none; padding:7px 4px 7px 10px; font:inherit; font-size:12.5px; font-weight:700;
+    color:var(--text-2); cursor:pointer; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .as-provider.is-active .as-provider-tab { color:var(--accent-ink); }
+  .as-provider-del { border:0; background:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1; padding:4px 7px; }
+  .as-provider-del:hover { color:var(--danger); }
+  .as-provider-add { width:31px; height:31px; border:1px dashed var(--btn-line); border-radius:10px; background:none;
+    color:var(--muted); cursor:pointer; font-size:15px; line-height:1; }
+  .as-provider-add:hover { border-color:var(--accent); color:var(--text); }
+  .as-presets { display:none; gap:6px; flex-wrap:wrap; padding:10px; border:1px dashed var(--line); border-radius:12px; }
+  .as-presets.is-open { display:flex; }
+  .as-presets button { border:1px solid var(--line); background:var(--card); border-radius:9px; padding:6px 10px;
+    font:inherit; font-size:12.5px; font-weight:600; color:var(--text-2); cursor:pointer; }
+  .as-presets button:hover { border-color:var(--accent); color:var(--text); }
+
+  .as-seg { display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:4px; border-radius:12px; background:var(--field); }
+  .as-seg button { border:0; background:none; border-radius:9px; padding:8px 6px; font:inherit; font-size:12px;
+    font-weight:700; color:var(--muted); cursor:pointer; }
+  .as-seg button[aria-pressed="true"] { background:var(--card); color:var(--text); box-shadow:0 1px 4px #0001; }
+
+  .as-tokens { display:flex; gap:6px; flex-wrap:wrap; }
+  .as-tokens:empty { display:none; }
+  .as-token { display:inline-flex; align-items:center; gap:6px; border-radius:999px; background:var(--field);
+    padding:4px 4px 4px 10px; font-size:12.5px; }
+  .as-token button { border:0; background:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1;
+    padding:2px 5px; border-radius:999px; }
+  .as-token button:hover { color:var(--danger); }
+  .as-token.is-locked { padding:4px 10px; background:none; border:1px dashed var(--btn-line); color:var(--muted); }
+  .as-token.add { background:none; border:1px dashed var(--btn-line); padding:4px 10px; color:var(--muted);
+    font:inherit; font-size:12.5px; cursor:pointer; }
+  .as-token.add:hover { border-color:var(--accent); color:var(--text); }
+
+  .as-savebar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; border-top:1px solid var(--line); padding-top:14px; }
+  .as-savebar .meta { margin-left:auto; text-align:right; }
+  .as-savebar .as-danger { color:var(--danger); }
+  .as-savebar .as-danger:hover { background:var(--danger-soft); }
+
+  .as-more { margin-top:2px; }
+  .as-more > summary { cursor:pointer; font-weight:600; }
+  .as-more[open] > summary { margin-bottom:10px; }
+  .as-more .as-field + .as-field { margin-top:12px; }
   .as-http { color: var(--danger); }
-  .as-warn { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--danger-soft); border: 1px solid var(--danger-line); color: var(--text-2); font-size: 13px; line-height: 1.5; }
+  .as-warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--danger-soft); border: 1px solid var(--danger-line); color: var(--text-2); font-size: 13px; line-height: 1.5; }
   .as-warn b { color: var(--danger); }
   .untested { flex: 1 1 100%; display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; border-radius: 14px;
     background: var(--danger-soft); border: 2px solid var(--danger); color: var(--text-2); }
@@ -727,17 +943,15 @@
   .rd-now { display: flex; align-items: center; gap: 14px; }
   .rd-now .rd-name { flex: 1; min-width: 0; }
   .rd-now b { font-size: 17px; }
-  .as-keys { display: flex; flex-wrap: wrap; gap: 6px; }
-  .as-keys:empty { display: none; }
-  .as-keys span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px; background: var(--field); font-size: 12.5px; }
-  .as-keys button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 999px; }
-  .as-keys button:hover { color: var(--danger); }
-  .as-hist { display: grid; gap: 10px; margin-top: 12px; }
-  .as-hist div { padding: 10px 12px; border-radius: 10px; background: var(--field); font-size: 14px; line-height: 1.45; }
-  .as-hist b { display: block; }
-  .as-hist small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
-  .as-hist .err { color: var(--danger); }
-  @media (max-width: 640px) { .as-form { grid-template-columns: 1fr; } .as-form .hint { grid-column: 1; } }
+  .as-hist { display:flex; flex-direction:column; gap:14px; margin-top:2px; }
+  .as-hist .pair { display:flex; flex-direction:column; gap:6px; }
+  .as-hist .q { align-self:flex-end; max-width:88%; background:var(--accent-soft); color:var(--text);
+    border-radius:12px 12px 4px 12px; padding:9px 12px; font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
+  .as-hist .a { align-self:flex-start; max-width:88%; background:var(--field);
+    border-radius:12px 12px 12px 4px; padding:9px 12px; font-size:14px; line-height:1.45; overflow-wrap:anywhere; }
+  .as-hist .a small { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px; color:var(--muted); font-size:11.5px; }
+  .as-hist .a small span { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:1px 7px; }
+  .as-hist .err { color:var(--danger); }
   .set-cmd { margin: -4px 0 14px; padding: 10px 12px; border-radius: 10px; background: var(--field); font-family: var(--mono); font-size: 13px; white-space: pre-wrap; user-select: all; }
   /* «Обзор»: ненавязчивая пометка о новой версии */
   .upd-pill { display: inline-flex; align-items: center; gap: 2px; margin-top: 8px; border-radius: 999px; background: var(--accent-soft); font-size: 13px; }
@@ -799,8 +1013,11 @@
   .qr { flex: none; width: 168px; height: 168px; border-radius: 14px; background: #fff; padding: 8px; display: grid; place-items: center; border: 1px solid var(--line); }
   .qr svg { width: 100%; height: 100%; }
   .qr .empty { padding: 0; font-size: 12.5px; }
-  .mu-top { display: flex; gap: 18px; align-items: stretch; min-width: 0; }
-  .mu-side { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+  .mu-top { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "cover info" "cover controls";
+            gap: 10px 14px; align-items: start; min-width: 0; }
+  .mu-top .cover { grid-area: cover; align-self: start; }
+  .mu-top .np-info { grid-area: info; }
+  .mu-top .controls { grid-area: controls; align-self: end; }
   .cover { flex: none; width: 180px; aspect-ratio: 1; border-radius: 16px; background: var(--field) center / cover no-repeat;
            display: grid; place-items: center; color: var(--muted); }
   .np-info { min-width: 0; }
@@ -1008,9 +1225,82 @@
     #tab-player.pl-ask #pl-command { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; margin: 0; padding: 16px 16px calc(16px + var(--sa-bottom));
       background: var(--card); border-radius: 22px 22px 0 0; box-shadow: 0 -12px 40px rgba(0,0,0,.25); }
   }
-  .lyrics { position: relative; white-space: pre-line; font-size: 17px; line-height: 1.65; max-height: 560px; overflow: auto; }
-  .lyrics .ln { display: block; opacity: .45; transition: opacity .2s; }
-  .lyrics .ln.cur { opacity: 1; font-weight: 700; }
+  .lyrics { position: relative; white-space: pre-line; font-size: 17px; line-height: 1.65; max-height: 560px; overflow: auto; overflow-x: hidden; }
+  .lyrics .ln { display: block; opacity: .45; transition: opacity .28s ease, font-size .32s ease; }
+  .lyrics .ln.cur { opacity: 1; font-weight: 700; font-size: 1.2em; }
+  /* провайдеры музыки: Яндекс или Сбер Звук */
+  #pl-zvuk { display: none; }
+  body[data-provider="zvuk"] #pl-zvuk { display: flex; }
+  /* у «Звука» текст песни остаётся справа от плеера, а под ним — свои блоки */
+  body[data-provider="zvuk"] .pl-body-cols > .col { display: none !important; }   /* чужие очередь/похожие */
+  body[data-provider="zvuk"] #pl-zvuk { width: 100%; }
+  body[data-provider="zvuk"] #pl-login,
+  body[data-provider="zvuk"] #pl-artist-card,
+  body[data-provider="zvuk"] #mu-login,
+  body[data-provider="zvuk"] #mu-logout,
+  body[data-provider="zvuk"] [data-mu="shuffle"],
+  body[data-provider="zvuk"] [data-mu="repeat"] { display: none !important; }
+  body[data-provider="zvuk"] .pl-mtabs .chip:not([data-pl-open="ask"]) { display: none !important; }
+  body:not([data-provider="zvuk"]) #zvuk-artist-card { display: none !important; }
+  @media (min-width: 1400px) {
+    body[data-provider="zvuk"] #tab-player #pl-body #pl-zvuk { grid-column: 1 / -1; grid-row: 2; }
+    body[data-provider="zvuk"] #tab-player #pl-body #zvuk-artist-card { grid-column: 1 / -1; }
+  }
+  /* с боковым меню: слева плейлист, справа настроение; исполнитель ниже на всю ширину */
+  :root[data-nav="rail"] body[data-provider="zvuk"] #tab-player #pl-body #pl-zvuk .zvuk-grid {
+    display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  :root[data-nav="rail"] body[data-provider="zvuk"] #tab-player #pl-body #pl-zvuk #zvuk-tracks-card { order: 1; }
+  :root[data-nav="rail"] body[data-provider="zvuk"] #tab-player #pl-body #pl-zvuk #zvuk-mood-card { order: 2; }
+  /* обычный макет (без бокового меню): как у Яндекса — текст слева, блоки Звука справа */
+  @media (min-width: 1101px) {
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body .pl-body-cols { display: contents; }
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body .pl-hero { grid-column: 1 / -1; grid-row: 1; }
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body [data-pl-sec="lyrics"] { grid-column: 1; grid-row: 2; }
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body #pl-zvuk { grid-column: 2; grid-row: 2; }
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body #zvuk-artist-card { grid-column: 1 / -1; grid-row: 3; }
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body .pl-raw-card,
+    :root:not([data-nav="rail"]) body[data-provider="zvuk"] #tab-player #pl-body .pl-msheet-only { grid-column: 1 / -1; }
+  }
+  .zvuk-grid { display: flex; flex-direction: column; gap: 14px; }
+  .zv-popular-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13.5px; color: var(--muted); }
+  .zv-popular-row .field { min-height: 34px; padding: 0 8px; width: auto; min-width: 120px; }
+  .zv-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  .zv-filter { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .zv-filter .field { min-height: 34px; padding: 0 8px; }
+  .zv-genre-filter { position: relative; }
+  .zv-genre-btn { text-align: left; cursor: pointer; }
+  .zv-genre-menu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 8px; max-height: 260px; overflow: auto; }
+  .zv-genre-menu label { display: flex; align-items: center; gap: 8px; padding: 6px 4px; font-size: 13.5px; color: var(--text); cursor: pointer; border-radius: 8px; }
+  .zv-genre-menu label:hover { background: var(--field); }
+  .zv-genre-menu input { accent-color: var(--accent); }
+  .zv-genre-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+  @media (max-width: 520px) { .zv-filters { grid-template-columns: minmax(0, 1fr); } }
+  .zv-mood-pad { position: relative; height: 220px; border-radius: 16px; margin-top: 4px; cursor: crosshair; touch-action: none;
+    background: radial-gradient(120% 100% at 18% 40%, color-mix(in srgb, var(--accent) 45%, transparent), transparent 60%),
+      radial-gradient(90% 90% at 80% 20%, color-mix(in srgb, #a855f7 35%, transparent), transparent 65%), var(--field);
+    border: 1px solid var(--line); overflow: hidden; }
+  .zv-mood-l { position: absolute; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); pointer-events: none; }
+  .zv-mood-l.tl { left: 12px; top: 10px; } .zv-mood-l.tr { right: 12px; top: 10px; text-align: right; }
+  .zv-mood-l.bl { left: 12px; bottom: 10px; } .zv-mood-l.br { right: 12px; bottom: 10px; text-align: right; }
+  .zv-mood-dot { position: absolute; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: #fff;
+    box-shadow: 0 0 24px 6px rgba(255,255,255,.45); pointer-events: none; }
+  .zv-artist-head { display: flex; gap: 12px; align-items: center; }
+  .zv-artist-img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; flex: none; background: var(--field); }
+  .zv-playall { margin-bottom: 4px; }
+  .zv-more { margin-top: 4px; align-self: flex-start; }
+  .zv-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px; border-radius: 10px; cursor: pointer; user-select: none; }
+  .zv-row:hover { background: var(--field); }
+  .zv-row.cur { background: var(--accent-soft); }
+  .zv-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .zv-cover { width: 40px; height: 40px; border-radius: 8px; background: var(--field) center / cover no-repeat; object-fit: cover; }
+  .zv-t { min-width: 0; }
+  .zv-t b { display: block; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .zv-t span { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .zv-actions { display: flex; gap: 4px; flex: none; }
+  .zv-empty { padding: 10px 4px; color: var(--muted); font-size: 13px; }
+  @media (max-width: 760px) { #pl-zvuk, #zvuk-artist-card { display: none !important; } }
   .tlist { display: flex; flex-direction: column; max-height: 420px; overflow: auto; }
   .trow { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; text-align: left; width: 100%; }
   .trow:hover { background: var(--field); }
@@ -1141,6 +1431,63 @@
   #fs-preview textarea { width: 100%; min-height: 380px; max-height: calc(100vh - 300px); resize: vertical; font-family: var(--mono); font-size: 12px; line-height: 1.6;
                          background: var(--field); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; tab-size: 4; }
 
+  /* «Обзор»: узкие колонки и увеличенный масштаб — текст и графика не должны переполнять карточки */
+  #music-card { container-type: inline-size; }
+  .np-title { overflow-wrap: anywhere; }
+  .controls { flex-wrap: wrap; }
+  .cbtn { flex: none; }
+  .progress, .progress input { min-width: 0; }
+  input[type=range] { min-width: 0; }
+  .vol-main { flex-wrap: wrap; gap: 12px; }
+  .vol-big { font-size: clamp(38px, 4vw, 56px); }
+  .vol-main > div:nth-of-type(2) { min-width: 0; }
+  .vol-bt { flex-wrap: wrap; }
+  .vol-bt input { flex: 1 1 120px; min-width: 0; }
+  .seg { flex-wrap: wrap; max-width: 100%; }
+  .kv { grid-template-columns: minmax(0, auto) minmax(0, 1fr); }
+  .kv dt, .kv dd { min-width: 0; overflow-wrap: anywhere; }
+  .bt-pair { flex-wrap: wrap; }
+  .bt-pair .info b, .bt-pair .info .meta { overflow-wrap: anywhere; }
+  .bt-eq-head { flex-wrap: wrap; }
+  .bt-eq-head select { min-width: 0; flex: 1 1 140px; }
+  .stat { min-width: 0; }
+  .stat .label, .stat .meta { overflow-wrap: anywhere; }
+  .mu-ask-form > .btn { flex: none; }
+  .ov-opts .set-item { flex-wrap: wrap; }
+  /* кнопки всегда круглые: не сжимаем их — в тесной карточке просто берём размер меньше */
+  .mu-top .controls .cbtn { flex: none; }
+  @media (min-width: 481px) {
+    .np-title { font-size: clamp(22px, 2.2vw, 34px); }
+    @container (max-width: 489px) {
+      .mu-top .cbtn { width: 36px; height: 36px; }
+      .mu-top .cbtn.big { width: 46px; height: 46px; }
+    }
+    @container (max-width: 459px) {
+      .mu-top .cbtn { width: 32px; height: 32px; }
+      .mu-top .cbtn.big { width: 38px; height: 38px; }
+    }
+    /* рядом совсем не помещаются — только тогда под обложку, на всю ширину */
+    @container (max-width: 427px) {
+      .mu-top { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "cover info" "controls controls"; }
+      .mu-top .cover { width: 96px; }
+      .mu-top .controls { margin-left: 0; }
+      .mu-top .cbtn { width: 36px; height: 36px; }
+      .mu-top .cbtn.big { width: 46px; height: 46px; }
+    }
+    @container (max-width: 339px) {
+      .mu-top .cbtn { width: 32px; height: 32px; }
+      .mu-top .cbtn.big { width: 38px; height: 38px; }
+    }
+  }
+  @media (max-width: 480px) {
+    .mu-top { grid-template-columns: minmax(0, 1fr); grid-template-areas: "cover" "info" "controls"; }
+    .mu-top .cover { width: 100%; }
+  }
+  @media (min-width: 1200px) and (max-width: 1400px) {
+    :root[data-nav="rail"] .stat { padding: 13px 14px; }
+    :root[data-nav="rail"] .stat .value b { font-size: 24px; }
+  }
+
   #toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 8px); background: var(--text); color: var(--bg); padding: 10px 16px;
            border-radius: 12px; font-size: 14px; font-weight: 600; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; max-width: calc(100% - 32px); z-index: 10; }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
@@ -1202,27 +1549,30 @@
       <svg class="brand-logo" viewBox="-50 -50 100 100" aria-hidden="true"><rect x="-34" y="12" width="10" height="20" rx="5"/><rect x="-19" y="-6" width="10" height="38" rx="5"/><rect x="-5" y="-26" width="10" height="58" rx="5"/><rect x="9" y="-6" width="10" height="38" rx="5"/><rect x="24" y="12" width="10" height="20" rx="5"/></svg>
       <div><b id="model-name">Станция Лайт 2</b><small>yapanel</small></div>
     </a>
+    <button type="button" class="nav-collapse" id="nav-collapse" aria-label="Свернуть меню" title="Свернуть меню">
+      <span class="nav-collapse-glyph" aria-hidden="true">‹</span><span class="nav-collapse-label">Свернуть</span>
+    </button>
     <nav class="side" id="nav-sheet" aria-label="Разделы">
       <div class="sheet-head" role="presentation"><span></span></div>
-      <a href="#overview" data-tab="overview"><svg width="20" height="20" aria-hidden="true"><use href="#i-grid"/></svg>Обзор</a>
-      <a href="#player" data-tab="player"><svg width="20" height="20" aria-hidden="true"><use href="#i-music"/></svg>Плеер</a>
+      <a href="#overview" data-tab="overview" title="Обзор"><svg width="20" height="20" aria-hidden="true"><use href="#i-grid"/></svg><span class="nav-label">Обзор</span></a>
+      <a href="#player" data-tab="player" title="Плеер"><svg width="20" height="20" aria-hidden="true"><use href="#i-music"/></svg><span class="nav-label">Плеер</span></a>
       <!-- «Радио» временно скрыто: проигрыватель своих станций ломал общий микшер звука колонки (см. radio.go) -->
-      <a href="#radio" data-tab="radio" hidden><svg width="20" height="20" aria-hidden="true"><use href="#i-radio"/></svg>Радио</a>
+      <a href="#radio" data-tab="radio" hidden title="Радио"><svg width="20" height="20" aria-hidden="true"><use href="#i-radio"/></svg><span class="nav-label">Радио</span></a>
       <div class="nav-group" role="presentation">Колонка</div>
-      <a href="#led" data-tab="led" hidden><svg width="20" height="20" aria-hidden="true"><use href="#i-palette"/></svg>LED-панель</a>
-      <a href="#alarm" data-tab="alarm"><svg width="20" height="20" aria-hidden="true"><use href="#i-alarm"/></svg>Будильник</a>
-      <a href="#scenes" data-tab="scenes"><svg width="20" height="20" aria-hidden="true"><use href="#i-flow"/></svg>Сценарии</a>
-      <a href="#wakeword" data-tab="wakeword" id="nav-wakeword" hidden><svg width="20" height="20" aria-hidden="true"><use href="#i-wave"/></svg>Активация</a>
-      <a href="#assistant" data-tab="assistant"><svg width="20" height="20" aria-hidden="true"><use href="#i-mic"/></svg>Ассистент</a>
-      <a href="#boot" data-tab="boot"><svg width="20" height="20" aria-hidden="true"><use href="#i-power"/></svg>Анимации</a>
-      <a href="#apps" data-tab="apps"><svg width="20" height="20" aria-hidden="true"><use href="#i-box"/></svg>Приложения</a>
-      <a href="#files" data-tab="files"><svg width="20" height="20" aria-hidden="true"><use href="#i-folder"/></svg>Файлы</a>
-      <a href="#console" data-tab="console"><svg width="20" height="20" aria-hidden="true"><use href="#i-term"/></svg>Консоль</a>
+      <a href="#led" data-tab="led" hidden title="LED-панель"><svg width="20" height="20" aria-hidden="true"><use href="#i-palette"/></svg><span class="nav-label">LED-панель</span></a>
+      <a href="#alarm" data-tab="alarm" title="Будильник"><svg width="20" height="20" aria-hidden="true"><use href="#i-alarm"/></svg><span class="nav-label">Будильник</span></a>
+      <a href="#scenes" data-tab="scenes" title="Сценарии"><svg width="20" height="20" aria-hidden="true"><use href="#i-flow"/></svg><span class="nav-label">Сценарии</span></a>
+      <a href="#wakeword" data-tab="wakeword" id="nav-wakeword" title="Активация" hidden><svg width="20" height="20" aria-hidden="true"><use href="#i-wave"/></svg><span class="nav-label">Активация</span></a>
+      <a href="#assistant" data-tab="assistant" title="Ассистент"><svg width="20" height="20" aria-hidden="true"><use href="#i-mic"/></svg><span class="nav-label">Ассистент</span></a>
+      <a href="#boot" data-tab="boot" title="Анимации"><svg width="20" height="20" aria-hidden="true"><use href="#i-power"/></svg><span class="nav-label">Анимации</span></a>
+      <a href="#apps" data-tab="apps" title="Приложения"><svg width="20" height="20" aria-hidden="true"><use href="#i-box"/></svg><span class="nav-label">Приложения</span></a>
+      <a href="#files" data-tab="files" title="Файлы"><svg width="20" height="20" aria-hidden="true"><use href="#i-folder"/></svg><span class="nav-label">Файлы</span></a>
+      <a href="#console" data-tab="console" title="Консоль"><svg width="20" height="20" aria-hidden="true"><use href="#i-term"/></svg><span class="nav-label">Консоль</span></a>
       <div class="nav-group" role="presentation">Состояние</div>
-      <a href="#charts" data-tab="charts"><svg width="20" height="20" aria-hidden="true"><use href="#i-chart"/></svg>Графики</a>
-      <a href="#logs" data-tab="logs"><svg width="20" height="20" aria-hidden="true"><use href="#i-log"/></svg>Логи</a>
+      <a href="#charts" data-tab="charts" title="Графики"><svg width="20" height="20" aria-hidden="true"><use href="#i-chart"/></svg><span class="nav-label">Графики</span></a>
+      <a href="#logs" data-tab="logs" title="Логи"><svg width="20" height="20" aria-hidden="true"><use href="#i-log"/></svg><span class="nav-label">Логи</span></a>
       <div class="nav-sep" role="presentation"></div>
-      <a href="#settings" data-tab="settings"><svg width="20" height="20" aria-hidden="true"><use href="#i-gear"/></svg>Настройки</a>
+      <a href="#settings" data-tab="settings" title="Настройки"><svg width="20" height="20" aria-hidden="true"><use href="#i-gear"/></svg><span class="nav-label">Настройки</span></a>
     </nav>
     <div class="conn" id="conn-box" hidden>
       <b><span class="dot" id="conn"></span><span id="conn-text">Подключение…</span></b>
@@ -1323,6 +1673,7 @@
       </div>
     </section>
 
+    <div class="ov-body"><div class="ov-main">
     <div class="wzone wz-top" id="wz-top">
     <section class="grid stats" id="stat-row" aria-label="Состояние" data-widget="stats" data-title="Состояние">
       <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1">
@@ -1446,7 +1797,7 @@
         <!-- музыка -->
         <section class="card" id="music-card" data-widget="music" data-title="Сейчас играет">
           <div class="card-head"><h2>Сейчас играет</h2>
-            <div class="row" style="gap:6px"><span class="meta" id="mu-account"></span><button class="btn sm ghost" id="mu-logout" hidden>Выйти</button></div></div>
+            <div class="row" style="gap:6px"><select class="field" id="mu-provider" aria-label="Провайдер музыки" style="width:auto;min-height:32px;padding:0 8px"><option value="yandex">Яндекс</option><option value="zvuk">Звук</option></select><span class="meta" id="mu-account"></span><button class="btn sm ghost" id="mu-logout" hidden>Выйти</button></div></div>
           <div id="mu-login" hidden>
             <div class="login-grid">
               <div class="qr" id="mu-qr"><div class="empty">QR-код…</div></div>
@@ -1471,10 +1822,8 @@
           <div id="mu-player" hidden class="col" style="gap:14px">
             <div class="mu-top">
               <a class="cover mu-cover" href="#player" title="Открыть плеер"><svg width="40" height="40" aria-hidden="true"><use href="#i-music"/></svg></a>
-              <div class="mu-side">
-                <div class="np-info"><div class="np-title mu-title mq-line">Ничего не играет</div><div class="np-artist mu-artist"></div></div>
-                <div class="controls" data-mu-controls="full"></div>
-              </div>
+              <div class="np-info"><div class="np-title mu-title mq-line">Ничего не играет</div><div class="np-artist mu-artist"></div></div>
+              <div class="controls" data-mu-controls="full"></div>
             </div>
             <div class="progress"><span class="mu-pos">0:00</span><input type="range" class="mu-seek" min="0" max="100" value="0" step="1" aria-label="Позиция в треке"><span class="mu-dur">0:00</span></div>
             <div class="mu-bt-note"><svg width="16" height="16" aria-hidden="true"><use href="#i-bt"/></svg>
@@ -1511,7 +1860,7 @@
             <button class="btn sm" id="bt-pair-btn">Сделать видимой</button>
           </div>
           <div class="bt-list" id="bt-list"><div class="empty">Загрузка…</div></div>
-          <div class="vol-bt"><label for="vol-bt" title="Громкость звука с телефона по Bluetooth">Громкость</label><input type="range" id="vol-bt" min="0" max="255"><span id="vol-bt-v">—</span></div>
+          <div class="vol-bt" hidden><label for="vol-bt" title="Громкость звука с телефона по Bluetooth">Громкость</label><input type="range" id="vol-bt" min="0" max="255"><span id="vol-bt-v">—</span></div>
           <div class="bt-pair bt-out" id="bt-out-row">
             <div class="info"><b id="bt-out-text">Звук — встроенный динамик</b><span class="meta" id="bt-out-hint">Можно играть через Bluetooth-колонку: Алиса слушает и отвечает, а звук — из неё</span></div>
             <div class="actions"><button class="btn sm" id="bt-out-other" hidden>Другая колонка</button>
@@ -1523,7 +1872,7 @@
           </div>
           <div class="bt-eq" id="bt-eq-row" hidden>
             <div class="bt-eq-head"><b>Эквалайзер</b><select class="field" id="bt-eq" aria-label="Пресет эквалайзера"></select></div>
-            <canvas id="bt-eq-curve" width="360" height="96" aria-label="АЧХ эквалайзера"></canvas>
+            <canvas id="bt-eq-curve" width="360" height="96" aria-label="АЧХ эквалайзера" title="Тяните точки, чтобы менять усиление полос"></canvas>
             <div class="eq-custom" id="bt-eq-custom" hidden></div>
             <p class="hint">При усилении частот громкость может снижаться для запаса от перегрузки. Сравнивайте пресеты на одинаковой слышимой громкости.</p>
           </div>
@@ -1535,6 +1884,9 @@
         </section>
       </div>
     </div>
+  </div>
+  <div class="col wzone" id="wz-third"></div>
+</div>
     <div id="wz-hidden" hidden></div>
 
   </main>
@@ -1549,6 +1901,8 @@
         <div class="set-head"><span class="set-ic"><svg width="18" height="18" aria-hidden="true"><use href="#i-palette"/></svg></span><div><h2>Оформление</h2><p>Хранится в этом браузере и попадает в резервную копию</p></div></div>
         <div class="set-item"><div class="set-label"><b>Тема</b><small>«Как в системе» следует за светлой и тёмной темой устройства</small></div>
           <div class="set-ctl"><div class="seg" id="set-theme" role="group" aria-label="Тема"><button data-v="auto">Как в системе</button><button data-v="light">Светлая</button><button data-v="dark">Тёмная</button></div></div></div>
+        <div class="set-item"><div class="set-label"><b>Макет</b><small>С боковым меню основная часть шире, а меню сворачивается до иконок. На телефоне вид не меняется</small></div>
+          <div class="set-ctl"><div class="seg" id="set-nav" role="group" aria-label="Макет"><button data-v="classic">Обычный</button><button data-v="rail">С боковым меню</button></div></div></div>
         <div class="set-item"><div class="set-label"><b>Подсветка блоков</b><small>Край блока под мышью — цветом акцента: целиком при наведении или светом там, где указатель</small></div>
           <div class="set-ctl"><div class="seg" id="set-glow" role="group" aria-label="Подсветка блоков"><button data-v="off">Нет</button><button data-v="hover">При наведении</button><button data-v="cursor">За указателем</button></div></div></div>
         <div class="set-item"><div class="set-label"><b>Цвет акцента</b><small>Кнопки, ссылки, графики и подсветка выбранного</small></div>
@@ -1559,6 +1913,7 @@
             <button class="sw" style="--c:#2E9E4F" data-v="#2E9E4F" aria-label="Зелёный"></button>
             <button class="sw" style="--c:#E0457B" data-v="#E0457B" aria-label="Розовый"></button>
             <button class="sw" style="--c:#52525B" data-v="#52525B" aria-label="Графит"></button>
+            <button class="sw sw-rainbow" id="set-accent-custom" aria-label="Свой цвет" title="Свой цвет"></button>
           </div></div></div>
         <label class="set-item"><div class="set-label"><b>Плеер внизу страницы</b><small>Мини-плеер на всех вкладках, кроме «Плеера». Появляется после входа в Яндекс. На телефоне он есть всегда</small></div>
           <div class="set-ctl"><input type="checkbox" class="switch" id="set-minibar"></div></label>
@@ -1641,7 +1996,11 @@
 
   <!-- ================= ПЛЕЕР ================= -->
   <main id="tab-player" data-page hidden>
-    <header class="page-head"><div><h1>Плеер</h1><div class="sub" id="pl-source">—</div></div></header>
+    <header class="page-head"><div><h1>Плеер</h1><div class="sub" id="pl-source">—</div></div>
+      <div class="actions"><div class="seg" id="music-provider" role="group" aria-label="Провайдер музыки">
+        <button type="button" data-provider="yandex">Яндекс Музыка</button>
+        <button type="button" data-provider="zvuk">Сбер Звук</button>
+      </div></div></header>
     <section class="card" id="pl-login" hidden>
       <h2>Нужен вход в Яндекс</h2>
       <p class="hint">Войдите в виджете «Сейчас играет» на «Обзоре» — по QR-коду или через страницу Яндекса.</p>
@@ -1699,6 +2058,101 @@
           </section>
         </div>
       </div>
+      <div id="pl-zvuk" class="col" style="gap:14px">
+        <section class="card" id="zvuk-token-card">
+          <h2>Вход в Сбер Звук</h2>
+          <p class="hint">Токен не нужно искать в запросах браузера. Войдите на zvuk.com, откройте страницу
+            профиля, скопируйте её целиком (Ctrl+A, Ctrl+C) и вставьте сюда — панель сама найдёт поле
+            «token» и проверит его. Если вместо текста открылся сайт — вы ещё не вошли в Звук.
+            Токен хранится только на этом компьютере, права 600.</p>
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <a class="btn sm" href="https://zvuk.com" target="_blank" rel="noopener">1. Открыть zvuk.com</a>
+            <a class="btn sm" href="https://zvuk.com/api/tiny/profile" target="_blank" rel="noopener">2. Страница с токеном</a>
+          </div>
+          <div class="row" style="gap:8px;align-items:stretch;margin-top:8px">
+            <input class="field mono" id="zvuk-token" placeholder="вставьте токен или весь JSON со страницы профиля" aria-label="Токен «Звука»" style="flex:1;min-width:180px">
+            <button class="btn" id="zvuk-token-paste" title="Вставить из буфера">Вставить</button>
+            <button class="btn primary" id="zvuk-token-save">Сохранить</button>
+          </div>
+          <p class="hint" id="zvuk-token-status"></p>
+        </section>
+        <div id="zvuk-main" class="col" style="gap:14px" hidden>
+          <div class="zvuk-grid">
+            <section class="card" id="zvuk-mood-card">
+              <div class="card-head"><h2>Настроение</h2><span class="meta" id="zvuk-mood-v">энергия 50 · веселье 50</span></div>
+              <div class="zv-mood-pad" id="zvuk-mood-pad" role="group" aria-label="Настроение «Моего потока»">
+                <span class="zv-mood-l tl">Энергичное</span><span class="zv-mood-l tr">Весёлое</span>
+                <span class="zv-mood-l bl">Грустное</span><span class="zv-mood-l br">Спокойное</span>
+                <i class="zv-mood-dot" id="zvuk-mood-dot"></i>
+              </div>
+              <div class="zv-popular-row"><span>Популярность</span>
+                <select class="field" id="zvuk-popular" aria-label="Популярность «Моего потока»">
+                  <option value="0">Низкая</option>
+                  <option value="">Средняя</option>
+                  <option value="1">Высокая</option>
+                </select></div>
+              <div class="zv-filters">
+                <div class="zv-filter zv-genre-filter">
+                  <span>Жанры</span>
+                  <button type="button" class="field zv-genre-btn" id="zvuk-genre-btn" aria-haspopup="true" aria-expanded="false">Все жанры</button>
+                  <div class="zv-genre-menu" id="zvuk-genre-menu" hidden>
+                    <label><input type="checkbox" value="pop"> Поп</label>
+                    <label><input type="checkbox" value="rock"> Рок</label>
+                    <label><input type="checkbox" value="hip_hop"> Хип-хоп</label>
+                    <label><input type="checkbox" value="electronic"> Электроника</label>
+                    <label><input type="checkbox" value="classical"> Классика</label>
+                    <label><input type="checkbox" value="metal"> Метал</label>
+                    <label><input type="checkbox" value="indie"> Инди</label>
+                    <label><input type="checkbox" value="easy_listening_ambient"> Лёгкая музыка / эмбиент</label>
+                    <label><input type="checkbox" value="folk_world_country"> Фолк / мир / кантри</label>
+                    <label><input type="checkbox" value="soundtrack"> Саундтреки</label>
+                    <label><input type="checkbox" value="instrumental_acoustic"> Инструментал / акустика</label>
+                    <div class="zv-genre-actions">
+                      <button type="button" class="btn sm ghost" id="zvuk-genre-clear">Очистить</button>
+                      <button type="button" class="btn sm primary" id="zvuk-genre-done">Готово</button>
+                    </div>
+                  </div>
+                </div>
+                <label class="zv-filter"><span>Язык</span>
+                  <select class="field" id="zvuk-language" aria-label="Язык «Моего потока»">
+                    <option value="any">Любой</option>
+                    <option value="russian">Русское</option>
+                    <option value="foreign">Зарубежное</option>
+                    <option value="instrumental">Без слов</option>
+                  </select></label>
+              </div>
+              <div class="row" style="gap:8px"><button class="btn primary" id="zvuk-flow">Запустить поток</button>
+                <button class="btn" id="zvuk-mood-reset">Сбросить</button></div>
+              <p class="hint">Точка — энергия и веселье, ползунок — популярность, ниже — жанр и язык «Моего потока».</p>
+            </section>
+            <section class="card" id="zvuk-tracks-card">
+              <div class="card-head"><h2>Треки</h2>
+                <button class="btn sm ghost" id="zvuk-clear" title="Очистить очередь" hidden>Очистить</button></div>
+              <form class="row" id="zvuk-search-form" style="gap:8px;align-items:stretch">
+                <input class="field" id="zvuk-search" placeholder="Трек, альбом или исполнитель" aria-label="Поиск в «Звуке»" style="flex:1;min-width:140px">
+                <button class="btn sm primary">Найти</button>
+              </form>
+              <div class="seg" id="zvuk-list-tabs" role="group" aria-label="Что показать">
+                <button data-zv-list="queue" class="active">Очередь</button>
+                <button data-zv-list="album">Альбом</button>
+                <button data-zv-list="similar">Похожие</button>
+                <button data-zv-list="favorites">Избранное</button>
+                <button data-zv-list="search">Поиск</button>
+              </div>
+              <div id="zvuk-list" class="col" style="gap:2px"></div>
+              <p class="hint" id="zvuk-msg"></p>
+              <p class="hint">Звук качает компьютер с панелью; колонка забирает трек по локальной сети. Если компьютер
+                выключится или закроется панель, музыка остановится.</p>
+            </section>
+          </div>
+        </div>
+      </div>
+      <section class="card" id="zvuk-artist-card" hidden>
+        <div class="card-head"><h2 id="zvuk-artist-name">Исполнитель</h2></div>
+        <div class="zv-artist-head"><img id="zvuk-artist-img" class="zv-artist-img" alt="" loading="lazy" hidden>
+          <div class="col" style="gap:2px"><b>Популярные треки</b><span class="meta" id="zvuk-artist-meta"></span></div></div>
+        <div id="zvuk-artist-popular" class="col" style="gap:2px"></div>
+      </section>
       <section class="card pl-msheet-only" data-pl-sec="vol">
         <h2>Громкость</h2>
         <div class="mu-volrow"><svg width="18" height="18" aria-hidden="true"><use href="#i-vol"/></svg>
@@ -1741,8 +2195,8 @@
       <form class="al-form" id="al-form">
         <label class="f">Время<input type="time" class="field" id="al-time" required></label>
         <label class="f">Подпись<input type="text" class="field" id="al-label" maxlength="40" placeholder="например, «Работа»"></label>
-        <div class="f full"><label class="f" style="flex-direction:row;justify-content:space-between;align-items:center">Повторять
-          <span class="chips" id="al-presets"><button type="button" class="chip" data-d="">Один раз</button><button type="button" class="chip" data-d="12345">Будни</button><button type="button" class="chip" data-d="67">Выходные</button><button type="button" class="chip" data-d="1234567">Каждый день</button></span></label>
+        <div class="f full"><div class="f repeat-row" role="group" aria-label="Повторять" style="flex-direction:row;justify-content:space-between;align-items:center">Повторять
+          <span class="chips" id="al-presets"><button type="button" class="chip" data-d="">Один раз</button><button type="button" class="chip" data-d="12345">Будни</button><button type="button" class="chip" data-d="67">Выходные</button><button type="button" class="chip" data-d="1234567">Каждый день</button></span></div>
           <div class="chips day-chips" id="al-days" style="margin-top:8px"></div></div>
         <label class="f full">Что играет
           <select class="field" id="al-mode">
@@ -1817,8 +2271,8 @@
         <label class="f full" data-sc-voice hidden>Фразы, через запятую<input type="text" class="field" id="sc-phrases" maxlength="300" placeholder="спать, пора спать"></label>
         <p class="hint full" data-sc-voice hidden id="sc-voice-hint"></p>
         <label class="f" data-sc-time>Время<input type="time" class="field" id="sc-time"></label>
-        <div class="f full" data-sc-time><label class="f" style="flex-direction:row;justify-content:space-between;align-items:center"><span id="sc-days-cap">Повторять</span>
-          <span class="chips" id="sc-presets"><button type="button" class="chip" data-d="" id="sc-once">Один раз</button><button type="button" class="chip" data-d="12345">Будни</button><button type="button" class="chip" data-d="67">Выходные</button><button type="button" class="chip" data-d="1234567">Каждый день</button></span></label>
+        <div class="f full" data-sc-time><div class="f repeat-row" role="group" aria-labelledby="sc-days-cap" style="flex-direction:row;justify-content:space-between;align-items:center"><span id="sc-days-cap">Повторять</span>
+          <span class="chips" id="sc-presets"><button type="button" class="chip" data-d="" id="sc-once">Один раз</button><button type="button" class="chip" data-d="12345">Будни</button><button type="button" class="chip" data-d="67">Выходные</button><button type="button" class="chip" data-d="1234567">Каждый день</button></span></div>
           <div class="chips day-chips" id="sc-days" style="margin-top:8px"></div></div>
         <p class="hint full" id="sc-boot-hint" hidden>Запустится примерно через минуту после того, как Алиса загрузится, — при каждом включении колонки.</p>
         <div class="full sc-board" id="sc-board">
@@ -2116,8 +2570,13 @@
 
   <main id="tab-assistant" data-page hidden>
     <header class="page-head">
-      <div><h1>Ассистент</h1><div class="sub">Свой голосовой помощник: «Алиса, спроси GPT …» уходит выбранной модели</div></div>
-      <div class="actions"><span class="badge" id="as-badge">—</span></div>
+      <div><h1>Ассистент</h1><div class="sub">«Алиса, спроси GPT …» — вопрос уходит выбранной модели, ответ звучит на колонке</div></div>
+      <div class="actions">
+        <span class="as-state" id="as-state-chip"><span class="as-state-dot"></span><span id="as-state">—</span></span>
+        <label class="as-head-switch"><span>Отвечать на фразу</span><input type="checkbox" class="switch" id="as-enabled"></label>
+        <button class="btn sm primary" id="as-update" hidden>Обновить программу</button>
+        <button class="btn sm" id="as-restart">Перезапустить</button>
+      </div>
       <div class="untested" id="as-experimental" role="alert" hidden>
         <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2 1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V9h2v4z"/></svg>
         <div>
@@ -2128,6 +2587,7 @@
             с моделью и версией прошивки.</p>
         </div>
       </div>
+    </header>
 
     <section class="card" id="as-missing" hidden>
       <h2>Помощник не установлен</h2>
@@ -2138,106 +2598,251 @@
     </section>
 
     <div id="as-on" hidden>
-      <div class="cols" style="margin-bottom:14px">
-        <section class="card">
-          <div class="card-head"><h2>Помощник</h2>
-            <div class="actions"><button class="btn sm primary" id="as-update" hidden>Обновить программу</button>
-              <button class="btn sm" id="as-restart">Перезапустить</button></div></div>
-          <label class="toggle"><span>Отвечать на фразу <span class="meta" style="font-weight:500">— иначе Алиса работает как обычно</span></span>
-            <input type="checkbox" id="as-enabled"></label>
-          <label class="toggle"><span>Подсвечивать кольцо, пока думает <span class="meta" style="font-weight:500">— видно, что вопрос ушёл ассистенту</span></span>
-            <span class="row" style="gap:10px;flex-wrap:nowrap"><input type="color" id="as-led-color" value="#ff8a00" aria-label="Цвет подсветки"><input type="checkbox" id="as-led"></span></label>
-          <div class="as-form" style="margin-top:12px">
-            <label for="as-triggers">Фразы</label>
-            <input class="field" id="as-triggers" placeholder="спроси gpt, спроси нейросеть">
-            <p class="hint">Через запятую. Говорите: «Алиса, спроси GPT, …». «Алиса, спроси GPT, новый разговор» — забыть контекст.</p>
-          </div>
-          <p class="hint" id="as-error" hidden></p>
-          <p class="as-warn" id="as-privacy" role="note"></p>
-        </section>
-        <section class="card">
-          <div class="card-head"><h2>Проверка</h2></div>
-          <textarea class="field" id="as-question" placeholder="Вопрос текстом — ответ прозвучит на колонке" aria-label="Вопрос"></textarea>
-          <div class="row" style="margin-top:8px">
-            <button class="btn primary" id="as-ask">Спросить</button>
-            <button class="btn" id="as-stop">Остановить</button>
-          </div>
-          <div class="as-hist" id="as-hist"></div>
-        </section>
+      <div class="as-grid">
+        <div class="as-col">
+          <section class="card as-route" aria-labelledby="as-route-title">
+            <div class="as-route-top"><h2 id="as-route-title">Что происходит сейчас</h2>
+              <span class="as-draft" id="as-route-draft" hidden>черновик</span>
+            </div>
+            <div class="as-route-tabs" role="tablist" aria-label="Сценарий">
+              <button type="button" role="tab" data-as-route="current" aria-selected="true">Спросить разово</button>
+              <button type="button" role="tab" data-as-route="conversation" aria-selected="false">Разговор</button>
+              <button type="button" role="tab" data-as-route="panel" aria-selected="false">Из панели</button>
+            </div>
+            <p class="as-route-state" id="as-route-state"></p>
+            <ol class="as-steps" id="as-route-flow" aria-label="Маршрут запроса"></ol>
+            <div class="as-route-notes" id="as-route-notes"></div>
+            <p class="hint" id="as-error" hidden></p>
+            <div class="as-mode-row" id="as-mode-row" hidden>
+              <div class="as-mode-top">
+                <span class="as-mode-state" id="as-mode-state">—</span>
+                <button class="btn sm primary" id="as-mode-btn">Включить режим разговора</button>
+              </div>
+              <p class="hint" id="as-mode-help">Режим разговора: вопросы можно задавать без «Алисы».</p>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h2>Проверка</h2><span class="meta">Ответ прозвучит на колонке</span></div>
+            <div class="as-askbar">
+              <input class="field" id="as-question" placeholder="Напишите вопрос — например, «который час?»" aria-label="Вопрос">
+              <button class="btn primary" id="as-ask">Спросить</button>
+              <button class="btn" id="as-stop" title="Остановить ответ" aria-label="Остановить ответ"><svg width="16" height="16" aria-hidden="true"><use href="#i-stop"/></svg></button>
+            </div>
+            <div class="as-suggests" id="as-suggests">
+              <button type="button" class="chip" data-as-ask="Который час?">Который час?</button>
+              <button type="button" class="chip" data-as-ask="Что нового в мире?">Что нового в мире?</button>
+              <button type="button" class="chip" data-as-ask="Переведи: good morning">Переведи: good morning</button>
+            </div>
+            <div class="as-hist" id="as-hist"></div>
+          </section>
+        </div>
+        <div class="as-col">
+          <section class="card as-settings">
+            <div class="card-head"><h2>Настройка</h2><span class="meta" id="as-dirty">Сохранено</span></div>
+            <div class="as-tabs" role="tablist" aria-label="Раздел настроек">
+              <button type="button" role="tab" data-as-pane="voice" aria-selected="true">Слух</button>
+              <button type="button" role="tab" data-as-pane="model" aria-selected="false">Модель</button>
+              <button type="button" role="tab" data-as-pane="tts" id="as-tts-tab" aria-selected="false">Озвучка</button>
+              <button type="button" role="tab" data-as-pane="phrases" aria-selected="false">Фразы</button>
+              <button type="button" role="tab" data-as-pane="local" aria-selected="false">Локально</button>
+            </div>
+
+            <div role="tabpanel" class="as-pane is-open" data-as-pane="voice" id="as-pane-voice">
+              <div class="as-field">
+                <span class="as-label">Откуда брать вопрос</span>
+                <div class="as-choice-grid">
+                  <label class="as-choice"><input type="radio" name="as-source" value="alice" checked><b>Фраза Алисы</b><small>«Алиса, спроси GPT, …»</small></label>
+                  <label class="as-choice" id="as-source-mic-choice"><input type="radio" name="as-source" value="microphone" id="as-source-mic"><b>Микрофоны колонки</b><small>Слушает сама, без Алисы</small></label>
+                </div>
+                <select id="as-input" hidden tabindex="-1" aria-hidden="true"><option value="alice">Распознанная фраза Алисы</option><option value="microphone">Микрофоны колонки</option></select>
+                <p class="hint" id="as-input-hint">Захват пока проверен на Лайт 2. Подключение и отключение ненадолго перезапускает Алису. В режиме ассистента микрофоны получает выбранный помощник; при выходе — снова Алиса.</p>
+              </div>
+              <p class="as-warn" id="as-privacy-input" role="note" hidden></p>
+
+              <div class="as-block" id="as-mic-block" hidden>
+                <div class="as-inline"><span class="hint" id="as-mic-status" style="flex:1"></span><button class="btn sm" id="as-mic-connect">Подключить микрофоны</button></div>
+                <div class="as-field" id="as-stt-card">
+                  <label class="as-label" for="as-stt" data-stt-provider>Распознавание речи</label>
+                  <select class="field" id="as-stt" data-stt-provider><option value="alice" hidden disabled>Распознавание Алисы</option><option value="model">STT выбранного провайдера модели</option><option value="custom">Свой STT</option></select>
+                  <p class="hint" id="as-stt-hint"></p>
+                </div>
+                <div class="as-field" data-stt-custom>
+                  <label class="as-label" for="as-stt-url">Адрес STT API</label>
+                  <input class="field" id="as-stt-url" data-stt-custom placeholder="http://сервер:порт/v1">
+                </div>
+                <div class="as-field" data-stt-custom>
+                  <label class="as-label" for="as-stt-key">Ключ STT</label>
+                  <input class="field" id="as-stt-key" type="password" autocomplete="off" placeholder="не задан">
+                </div>
+                <div class="as-field" data-stt-custom>
+                  <label class="as-label" for="as-stt-proxy">Прокси STT</label>
+                  <input class="field" id="as-stt-proxy" placeholder="Пусто — напрямую">
+                </div>
+                <div class="as-field">
+                  <label class="as-label" for="as-stt-model">Модель STT</label>
+                  <input class="field" id="as-stt-model" placeholder="Автоматически для OpenAI и Groq">
+                </div>
+                <div class="as-field">
+                  <label class="as-label" for="as-stt-language">Язык</label>
+                  <input class="field" id="as-stt-language" placeholder="ru">
+                </div>
+                <details class="as-more" data-stt-custom>
+                  <summary>Запустить локальный Whisper в Docker</summary>
+                  <p>На компьютере с панелью откройте терминал в папке проекта. Команда запускает только сервис распознавания. Она подходит и когда панель запущена напрямую в Linux. При первом запуске Docker загрузит модель Whisper.</p>
+                  <pre class="field" style="white-space:pre-wrap;overflow-wrap:anywhere"><code>docker compose -f docker-compose.yml -f docker-compose.stt.yml --profile stt up -d --no-deps stt</code></pre>
+                  <p>Получите ключ STT на том же компьютере.</p>
+                  <pre class="field" style="white-space:pre-wrap;overflow-wrap:anywhere"><code>docker compose -f docker-compose.yml -f docker-compose.stt.yml --profile stt exec -T stt cat /data/stt.key</code></pre>
+                  <p>В поле «Адрес STT API» введите <code>http://IP_КОМПЬЮТЕРА:18445/v1</code>, подставив IP компьютера в локальной сети. Вставьте полученный ключ, укажите модель <code>base</code> и язык <code>ru</code>. Подключите микрофоны и сохраните настройки.</p>
+                  <p class="hint">Для локального распознавания компьютер, панель и контейнер Whisper должны работать.</p>
+                </details>
+                <details id="as-mic-controls"><summary>Чувствительность микрофонов</summary>
+                  <div class="as-field"><label class="as-label" for="as-mic-gain">Усиление</label><input class="field" id="as-mic-gain" type="number" min="1" max="128" value="32"></div>
+                  <div class="as-field"><label class="as-label" for="as-mic-threshold">Порог речи</label><input class="field" id="as-mic-threshold" type="number" min="50" max="10000" value="300"></div>
+                  <div class="as-field"><label class="as-label" for="as-mic-silence">Пауза до ответа, мс</label><input class="field" id="as-mic-silence" type="number" min="300" max="3000" value="900"></div>
+                </details>
+              </div>
+
+              <div class="as-field">
+                <span class="as-label">Подсветка кольца</span>
+                <div class="as-inline">
+                  <label class="toggle" style="flex:1"><span>Пока думает</span><input type="checkbox" class="switch" id="as-led"></label>
+                  <input type="color" id="as-led-color" value="#ff8a00" aria-label="Цвет подсветки" hidden>
+                  <button type="button" class="as-led-swatch" id="as-led-color-btn" aria-label="Цвет подсветки" title="Цвет подсветки"></button>
+                </div>
+              </div>
+            </div>
+
+            <div role="tabpanel" class="as-pane" data-as-pane="model" id="as-pane-model">
+              <div class="as-providers" id="as-providers" role="group" aria-label="Сохранённые провайдеры"></div>
+              <div class="as-presets" id="as-presets" aria-label="Добавить провайдера">
+                <button type="button" data-preset="https://api.openai.com/v1" data-name="OpenAI">OpenAI</button>
+                <button type="button" data-preset="https://openrouter.ai/api/v1" data-name="OpenRouter">OpenRouter</button>
+                <button type="button" data-preset="https://api.groq.com/openai/v1" data-name="Groq">Groq</button>
+                <button type="button" data-preset="https://generativelanguage.googleapis.com/v1beta/openai" data-name="Google Gemini">Google Gemini</button>
+                <button type="button" data-preset="https://api.orcarouter.ai/v1" data-name="OrcaRouter">OrcaRouter</button>
+                <button type="button" data-preset="https://api.commandcode.ai/provider/v1" data-name="Command Code">Command Code</button>
+                <button type="button" data-preset="http://IP-компьютера:11434/v1" data-name="Ollama">Ollama</button>
+                <button type="button" data-preset="http://IP-компьютера:1234/v1" data-name="LM Studio">LM Studio</button>
+                <button type="button" data-custom="1">Своё</button>
+              </div>
+              <div class="as-field">
+                <label class="as-label" for="as-url">Адрес API</label>
+                <input class="field" id="as-url" placeholder="https://…/v1">
+                <p class="hint" id="as-api-hint"></p>
+              </div>
+              <div class="as-field">
+                <label class="as-label" for="as-key">Ключ</label>
+                <input class="field" id="as-key" type="password" autocomplete="off" placeholder="не задан">
+                <p class="hint">Хранится на колонке и привязан к провайдеру. Пустое поле — оставить сохранённый.</p>
+              </div>
+              <div class="as-field">
+                <label class="as-label" for="as-model">Модель</label>
+                <div class="as-inline">
+                  <input class="field" id="as-model" placeholder="например, gpt-4o-mini">
+                  <button class="btn sm" id="as-models-btn" type="button" aria-expanded="false">Список</button>
+                </div>
+                <div class="as-picker" id="as-model-list" hidden></div>
+                <p class="hint" id="as-models-hint">Список моделей появится после ввода адреса и ключа.</p>
+              </div>
+              <div class="as-field" id="as-transport-row">
+                <span class="as-label" id="as-transport-label">Тип</span>
+                <div class="as-seg" id="as-transport-btns" role="group" aria-label="Тип модели">
+                  <button type="button" data-transport="chat" aria-pressed="true">Текст + озвучка</button>
+                  <button type="button" data-transport="realtime" aria-pressed="false">Realtime — голос модели</button>
+                </div>
+                <select id="as-transport" hidden><option value="chat">chat</option><option value="realtime">realtime</option></select>
+              </div>
+              <div class="as-field" id="as-realtime-voice-row" data-realtime hidden>
+                <label class="as-label" for="as-realtime-voice">Голос Realtime</label>
+                <select class="field" id="as-realtime-voice"><option value="marin">marin</option></select>
+              </div>
+              <details class="as-more"><summary>Инструкции, память и прокси</summary>
+                <div class="as-field"><label class="as-label" for="as-prompt">Системный промт</label><textarea class="field" id="as-prompt" rows="5"></textarea></div>
+                <div class="as-field"><label class="as-label" for="as-tokens">Длина ответа</label><input class="field" id="as-tokens" type="number" min="50" max="4000" step="50"></div>
+                <div class="as-field"><label class="as-label" for="as-history">Помнить реплик</label><input class="field" id="as-history" type="number" min="0" max="20"><p class="hint">Пар «вопрос — ответ». Через 10 минут тишины разговор начинается заново.</p></div>
+                <div class="as-field"><label class="as-label" for="as-proxy">Прокси</label><input class="field" id="as-proxy" placeholder="socks5://адрес:порт или http://адрес:порт"><p class="hint" id="as-proxy-hint">Для запросов к модели и озвучке; остальной трафик колонки не меняется.</p></div>
+              </details>
+              <p class="hint as-http" hidden></p>
+            </div>
+
+            <div role="tabpanel" class="as-pane" data-as-pane="tts" id="as-tts-card">
+              <div class="as-field">
+                <span class="as-label">Чем читать</span>
+                <div class="as-choice-grid">
+                  <label class="as-choice"><input type="radio" name="as-tts-src" value="alice" checked><b>Голосом Алисы</b><small>Без настройки</small></label>
+                  <label class="as-choice"><input type="radio" name="as-tts-src" value="openai"><b>Свой синтезатор</b><small>OpenAI-совместимый TTS</small></label>
+                </div>
+                <select id="as-tts" hidden><option value="alice">alice</option><option value="openai">openai</option></select>
+                <p class="hint" id="as-tts-hint"></p>
+              </div>
+              <p class="as-warn" id="as-privacy-tts" role="note" hidden></p>
+              <div class="as-block" id="as-tts-custom" hidden>
+                <div class="as-field"><label class="as-label" for="as-tts-preset">Пресет</label>
+                  <select class="field" id="as-tts-preset"><option value="">Свой</option><option value="fish">FishAudio</option></select></div>
+                <div class="as-field"><label class="as-label" for="as-tts-url">Адрес API</label><input class="field" id="as-tts-url" placeholder="https://…/v1"></div>
+                <div class="as-field"><label class="as-label" for="as-tts-key">Ключ</label><input class="field" id="as-tts-key" type="password" autocomplete="off" placeholder="не задан"></div>
+                <p class="hint as-http" data-http-scope="tts" hidden></p>
+                <div class="as-field"><label class="as-label" for="as-tts-model">Модель</label><input class="field" id="as-tts-model" placeholder="tts-1"></div>
+                <div class="as-field"><label class="as-label" for="as-tts-voice">Голос</label><input class="field" id="as-tts-voice" placeholder="например, alloy или ru_RU-irina-medium"></div>
+                <div class="as-field"><label class="as-label" for="as-tts-speed">Скорость</label><input class="field" id="as-tts-speed" type="number" min="0.5" max="2" step="0.1" value="1"></div>
+                <p class="hint">Если синтезатор не ответит, ответ прочитает Алиса.</p>
+              </div>
+            </div>
+
+            <div role="tabpanel" class="as-pane" data-as-pane="phrases" id="as-pane-phrases">
+              <div class="as-field">
+                <span class="as-label">Спросить</span>
+                <div class="as-tokens" id="as-trigger-chips"></div>
+                <input class="field as-add-input" id="as-trigger-add" placeholder="Новая фраза" aria-label="Новая фраза" hidden>
+                <p class="hint" id="as-wake-note"></p>
+              </div>
+              <div class="as-field">
+                <span class="as-label">Включить режим разговора</span>
+                <div class="as-tokens" id="as-enter-chips"></div>
+                <input class="field as-add-input" id="as-enter-add" placeholder="Новая фраза" aria-label="Новая фраза" hidden>
+              </div>
+              <div class="as-field" data-text-mode>
+                <span class="as-label">Выключить режим разговора</span>
+                <div class="as-tokens" id="as-exit-chips"></div>
+                <input class="field as-add-input" id="as-exit-add" placeholder="Новая фраза" aria-label="Новая фраза" hidden>
+              </div>
+              <input type="hidden" id="as-triggers"><input type="hidden" id="as-mode-enter"><input type="hidden" id="as-mode-exit">
+              <div class="as-field">
+                <label class="as-label" for="as-mode-timeout">Автоотключение</label>
+                <div class="as-inline"><input class="field" id="as-mode-timeout" type="number" min="1" max="240" style="max-width:110px"><span class="meta">минут тишины</span></div>
+              </div>
+              <label class="toggle"><span>Беседа без «Алисы» <span class="meta" style="font-weight:500" id="as-follow-hint">— после ответа колонка несколько секунд слушает следующий вопрос</span></span><input type="checkbox" class="switch" id="as-mode-follow"></label>
+            </div>
+
+            <div role="tabpanel" class="as-pane" data-as-pane="local" id="as-pane-local">
+              <div class="as-field">
+                <label class="toggle"><span>Время и дата <span class="meta" style="font-weight:500">— «который час», «какое сегодня число»</span></span><input type="checkbox" class="switch" id="as-skill-time" checked></label>
+                <label class="toggle"><span>Погода <span class="meta" style="font-weight:500">— «какая погода», «погода на завтра»</span></span><input type="checkbox" class="switch" id="as-skill-weather"></label>
+              </div>
+              <div class="as-field" id="as-weather-box" hidden>
+                <label class="as-label" for="as-weather-city">Город</label>
+                <div class="as-inline">
+                  <input class="field" id="as-weather-city" placeholder="например, Казань">
+                  <button class="btn sm" id="as-weather-geo" type="button">Определить</button>
+                  <button class="btn sm" id="as-weather-check" type="button" title="Сделать запрос погоды с колонки">Проверить</button>
+                </div>
+                <input type="hidden" id="as-weather-lat"><input type="hidden" id="as-weather-lon">
+                <p class="hint" id="as-weather-hint">MET Norway (api.met.no), без ключа. «Определить» берёт город по IP, «Проверить» делает запрос с колонки.</p>
+              </div>
+              <p class="hint">Эти ответы считаются на колонке: без токенов и ожидания модели, только озвучка.</p>
+              <p class="hint" id="as-skill-warn" hidden></p>
+            </div>
+
+            <div class="as-savebar">
+              <button class="btn primary" id="as-save" disabled>Сохранить</button>
+              <button class="btn ghost" id="as-save-cancel" hidden>Отменить</button>
+              <span class="meta" id="as-save-note"></span>
+              <button class="btn ghost as-danger" id="as-remove">Удалить с колонки</button>
+            </div>
+          </section>
+        </div>
       </div>
-
-      <section class="card" style="margin-bottom:14px">
-        <div class="card-head"><h2>Режим ассистента</h2>
-          <div class="actions"><span class="meta" id="as-mode-state">—</span><button class="btn sm primary" id="as-mode-btn">Включить</button></div></div>
-        <p class="hint" style="margin-top:0">Скажите «Алиса, переключись на GPT» — и дальше всё, что вы говорите Алисе, уходит модели, без «спроси GPT».
-          «Алиса, верни Алису» — обратно. Быстрые команды — «стоп», «громче», «тише», «пауза» — работают как обычно, а просьбы вроде
-          «включи музыку» в этом режиме тоже уходят модели.</p>
-        <div class="as-form">
-          <label for="as-mode-enter">Включить фразой</label><input class="field" id="as-mode-enter">
-          <label for="as-mode-exit">Выключить фразой</label><input class="field" id="as-mode-exit">
-          <p class="hint">Через запятую. Сохраняются кнопкой «Сохранить настройки» внизу.</p>
-          <label for="as-mode-timeout">Автоотключение</label>
-          <span class="row" style="gap:8px;flex-wrap:nowrap"><input class="field" id="as-mode-timeout" type="number" min="1" max="240" style="max-width:110px"><span class="meta">мин тишины</span></span>
-        </div>
-        <label class="toggle" style="margin-top:8px"><span>Беседа без «Алисы» <span class="meta" style="font-weight:500">— после ответа колонка несколько секунд слушает следующий вопрос</span></span>
-          <input type="checkbox" id="as-mode-follow"></label>
-      </section>
-
-      <section class="card" style="margin-bottom:14px">
-        <div class="card-head"><h2>Модель</h2>
-          <select class="field" id="as-preset" aria-label="Готовые настройки">
-            <option value="">Готовые адреса…</option>
-            <option value="https://api.openai.com/v1">OpenAI</option>
-            <option value="https://openrouter.ai/api/v1">OpenRouter</option>
-            <option value="https://api.groq.com/openai/v1">Groq</option>
-            <option value="https://generativelanguage.googleapis.com/v1beta/openai">Google Gemini</option>
-            <option value="https://api.commandcode.ai/provider/v1">Command Code</option>
-            <option value="http://IP-компьютера:11434/v1">Ollama на компьютере</option>
-            <option value="http://IP-компьютера:1234/v1">LM Studio на компьютере</option>
-          </select></div>
-        <div class="as-form">
-          <label for="as-url">Адрес API</label><input class="field" id="as-url" placeholder="https://…/v1">
-          <p class="hint">OpenAI-совместимый: помощник обращается к …/chat/completions.</p>
-          <label for="as-key">Ключ</label><input class="field" id="as-key" type="password" autocomplete="off" placeholder="не задан">
-          <p class="hint">Хранится только на колонке, свой для каждого адреса API: при смене провайдера ключ прежнего остаётся.
-            Пустое поле — оставить сохранённый.</p>
-          <span></span><div class="as-keys" id="as-keys"></div>
-          <p class="hint as-http" hidden></p>
-          <label for="as-model">Модель</label>
-          <span class="row" style="flex-wrap:nowrap;gap:8px"><input class="field" id="as-model" list="as-models" placeholder="например, gpt-4o-mini" style="flex:1;min-width:0">
-            <button class="btn sm" id="as-models-btn" type="button">Список</button></span>
-          <datalist id="as-models"></datalist>
-          <p class="hint" id="as-models-hint">Список моделей появится после ввода адреса и ключа.</p>
-          <label for="as-prompt">Системный промт</label><textarea class="field" id="as-prompt"></textarea>
-          <label for="as-tokens">Длина ответа</label><input class="field" id="as-tokens" type="number" min="50" max="4000" step="50" style="max-width:140px">
-          <label for="as-history">Помнить реплик</label><input class="field" id="as-history" type="number" min="0" max="20" style="max-width:140px">
-          <p class="hint">Пар «вопрос — ответ». Через 10 минут тишины разговор начинается заново.</p>
-          <label for="as-proxy">Прокси</label><input class="field" id="as-proxy" placeholder="socks5://адрес:порт или http://адрес:порт">
-          <p class="hint">Для запросов к модели и озвучке; остальной трафик колонки не меняется.</p>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Озвучка</h2></div>
-        <div class="as-form">
-          <label for="as-tts">Чем читать</label>
-          <select class="field" id="as-tts">
-            <option value="alice">Голосом Алисы</option>
-            <option value="openai">OpenAI-совместимый синтезатор</option>
-          </select>
-          <p class="hint" id="as-tts-hint"></p>
-          <label for="as-tts-url" data-tts>Адрес API</label><input class="field" id="as-tts-url" data-tts placeholder="https://…/v1">
-          <label for="as-tts-key" data-tts>Ключ</label><input class="field" id="as-tts-key" data-tts type="password" autocomplete="off" placeholder="не задан">
-          <p class="hint as-http" data-tts hidden></p>
-          <label for="as-tts-model" data-tts>Модель</label><input class="field" id="as-tts-model" data-tts placeholder="tts-1">
-          <label for="as-tts-voice" data-tts>Голос</label><input class="field" id="as-tts-voice" data-tts placeholder="например, alloy или ru_RU-irina-medium">
-          <label for="as-tts-speed" data-tts>Скорость</label><input class="field" id="as-tts-speed" data-tts type="number" min="0.5" max="2" step="0.1" style="max-width:140px">
-        </div>
-        <div class="row" style="margin-top:14px;justify-content:space-between">
-          <button class="btn primary" id="as-save">Сохранить настройки</button>
-          <button class="btn" id="as-remove">Удалить с колонки</button>
-        </div>
-      </section>
     </div>
   </main>
 
@@ -2563,6 +3168,13 @@
     </section>
   </main>
 </div>
+<div class="accent-pop" id="accent-pop" hidden>
+  <div class="accent-preview" id="accent-preview"></div>
+  <label>Оттенок<input class="hue" type="range" id="accent-h" min="0" max="360" step="1"></label>
+  <label>Насыщенность<input type="range" id="accent-s" min="0" max="100" step="1"></label>
+  <label>Яркость<input type="range" id="accent-l" min="20" max="80" step="1"></label>
+  <div class="accent-pop-foot"><span class="mono" id="accent-hex"></span><button class="btn sm primary" id="accent-done">Готово</button></div>
+</div>
 <div class="minibar" id="minibar" hidden>
   <div class="mb-track">
     <a class="mb-cover mu-cover" href="#player" title="Открыть плеер"><svg width="22" height="22" aria-hidden="true"><use href="#i-music"/></svg></a>
@@ -2591,6 +3203,7 @@
   <div class="actions"><button class="btn sm" id="ab-snooze">Отложить</button><button class="btn sm primary" id="ab-stop">Выключить</button></div>
 </div>
 
+<script src="./static/assistant-route.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 let online = false;   // есть ли связь с колонкой (см. «подключение» внизу)
@@ -2613,6 +3226,7 @@ async function api(path, body, opts = {}) {
   const data = await r.json().catch(() => ({ error: r.statusText }));
   if (!r.ok) {
     const e = new Error(data.error || r.statusText);
+    e.status = r.status;
     // «нет связи» объяснит экран подключения — без тостов
     if (r.status === 401 && data.auth) { e.offline = true; connCheck(); throw e; }
     if (data.offline || /^(Колонка не ответила|Связь с колонкой потеряна)/.test(e.message)) { e.offline = true; connCheck(); }
@@ -3265,10 +3879,11 @@ async function liveLeds() {
       if (Array.isArray(r.ring) && r.ring.length && Date.now() >= ringAnimUntil) toRing(r.ring);
     } catch {}
   }
-  // Эквалайзер Quasar держит на часах ~15 с после старта трека, потом снова часы: пока он есть — 10 раз
-  // в секунду, без него — реже, только чтобы не пропустить следующий. Живой спектр читаем 20 раз в секунду.
+  // Эквалайзер Quasar держит на часах ~15 с после старта трека, потом снова часы: пока он есть — 8 раз
+  // в секунду, без него — реже, только чтобы не пропустить следующий. Живой спектр — тоже 8 раз в секунду:
+  // визуализатор сглаживает между кадрами, а запросов вдвое меньше.
   const spectrumNow = window.__spectrum && performance.now() - window.__spectrum.t < 2500;
-  setTimeout(liveLeds, want ? (spectrumNow ? 50 : 700) : 500);
+  setTimeout(liveLeds, want ? (spectrumNow ? 125 : 700) : 500);
 }
 setTimeout(liveLeds, 1000);   // первый запуск — когда весь скрипт уже загружен
 function animateRing({ frames, loop }, seconds) {
@@ -3316,7 +3931,7 @@ const animLabel = (kind, n) => animTitle(n) + (animCustom[kind].includes(n) ? ' 
 function fillAnimSelect(kind) {
   const sel = $('#anim-' + kind), cur = sel.value || (kind === 'clock' ? boot.name : ra.name);
   const sort = l => l.sort((a, b) => animLabel(kind, a).localeCompare(animLabel(kind, b), 'ru'));
-  const all = patterns[kind] || [], mine = sort(all.filter(isMy)), std = sort(all.filter(n => !isMy(n)));
+  const all = [...new Set([...(patterns[kind] || []), ...animCustom[kind]])], mine = sort(all.filter(isMy)), std = sort(all.filter(n => !isMy(n)));
   const opts = l => l.map(n => `<option value="${esc(n)}">${esc(animLabel(kind, n))}</option>`).join('');
   sel.innerHTML = (mine.length ? `<optgroup label="Свои">${opts(mine)}</optgroup>` : '') + `<optgroup label="Встроенные">${opts(std)}</optgroup>`
     + '<option value="__new">＋ Добавить новую…</option>';
@@ -3584,7 +4199,10 @@ $('#ra-preview-btn').onclick = () => {
 $('#ra-device').onclick = e => act(e.currentTarget, () => api('/api/ring/try', { text: $('#ra-text').value, seconds: raSeconds() }), 'Анимация играет на колонке');
 async function loadRingAnim() {
   ra.name = $('#anim-ring').value; ra.def = null;
-  raSetText((await api('/api/ring/frames?name=' + encodeURIComponent(ra.name))).text || '');
+  const listed = (patterns.ring || []).includes(ra.name);
+  raSetText(listed ? (await api('/api/ring/frames?name=' + encodeURIComponent(ra.name))).text || '' : '');
+  $('#ra-reset').hidden = !animCustom.ring.includes(ra.name);
+  $('#ra-load-default').hidden = !listed || isMy(ra.name);
 }
 $('#anim-ring').onchange = e => {
   if (e.target.value === '__new') return myNewFromSelect('ring', () => ({ text: $('#ra-text').value }), loadRingAnim);
@@ -3637,9 +4255,12 @@ function renderBt() {
   const card = $('[data-widget="bt"]');
   $('#bt-power').checked = d.powered;
   $('#bt-off-hint').hidden = d.powered;
-  for (const el of [$('#bt-pair-row'), $('#bt-list'), card.querySelector('.vol-bt'), $('#bt-out-row')]) el.hidden = !d.powered;
-  // при выводе на Bluetooth-колонку ползунка громкости нет: остаются громкость Алисы и сама колонка
-  if (d.out?.on && d.out.state === 'bt') card.querySelector('.vol-bt').hidden = true;
+  for (const el of [$('#bt-pair-row'), $('#bt-list'), $('#bt-out-row')]) el.hidden = !d.powered;
+  // Громкость телефона нужна, только когда станция работает Bluetooth-колонкой для него.
+  // Подключённая внешняя колонка/наушники — это выход, а не источник: ползунок скрыт.
+  // И при переливании звука станции на внешнюю колонку он тоже не нужен.
+  const audioOut = conn.some(x => /^audio-/i.test(x.icon || ''));
+  card.querySelector('.vol-bt').hidden = !d.powered || !conn.length || audioOut || !!d.out?.on;
   if (!d.powered) $('#bt-out-pick').hidden = true;
   $('#bt-badge').textContent = !d.powered ? 'выключен' : conn.length ? 'подключено' : 'включён';
   $('#bt-badge').className = 'badge' + (d.powered ? ' ok' : '');
@@ -3669,6 +4290,7 @@ $('#bt-power').onchange = e => {
 };
 // ---- звук через Bluetooth-колонку ----
 let btEq = null;
+let eqDrag = null;
 function renderBtOut() {
   const o = btData?.out || { on: false }, last = !o.on && o.last;
   const self = `из колонки «${esc($('#model-name').textContent.trim() || 'Станция')}»`;   // откуда звук на самом деле
@@ -3693,6 +4315,9 @@ function renderBtOut() {
 const EQ_NAMES = { flat: 'Без изменений', rock: 'Рок', electronic: 'Электроника', vocal: 'Вокал / подкаст', night: 'Ночной', custom: 'Свой' };
 const EQ_DEFAULT = [60, 230, 910, 3600, 14000];
 const fmtDb = g => (g > 0 ? '+' : '') + g + ' дБ';
+const EQ_PAD = { l: 28, r: 6, t: 6, b: 15 };
+const eqX = (f, w) => EQ_PAD.l + Math.log10(Math.max(20, Math.min(20000, f)) / 20) / Math.log10(1000) * (w - EQ_PAD.l - EQ_PAD.r);
+const eqY = (d, h) => EQ_PAD.t + (1 - (d + 15) / 30) * (h - EQ_PAD.t - EQ_PAD.b);
 async function loadBtEq() {
   try { btEq = await api('/api/btout/eq'); renderBtEq(); } catch { btEq = null; }
 }
@@ -3704,7 +4329,7 @@ function buildEqCustom() {
       <span class="meta">Гц</span>
       <input type="range" class="eq-g" min="-12" max="12" step="1" value="0" aria-label="Усиление ${i + 1}, дБ">
       <span class="mono eq-gv">0 дБ</span></div>`).join('')
-    + '<p class="hint">Перекрывающиеся полосы складываются. Для более заметного эффекта попробуйте также убавить соседние частоты.</p>';
+    + '<p class="hint">Тяните точки на графике или ползунки. Перекрывающиеся полосы складываются. Для более заметного эффекта попробуйте также убавить соседние частоты.</p>';
   box.addEventListener('input', e => {
     const band = e.target.closest('.eq-band');
     if (!band) return;
@@ -3751,6 +4376,7 @@ function renderBtEq() {
     sel.innerHTML = names.map(v => `<option value="${v}">${EQ_NAMES[v] || v}</option>`).join('');
   sel.value = btEq.preset;
   $('#bt-eq-custom').hidden = btEq.preset !== 'custom';
+  $('#bt-eq-curve').classList.toggle('editable', btEq.preset === 'custom');
   if (btEq.preset === 'custom') fillEqCustom(btEq.custom);
   drawEqCurve();
 }
@@ -3758,15 +4384,15 @@ function drawEqCurve() {
   const cv = $('#bt-eq-curve');
   if (!cv || !btEq) return;
   const ctx = cv.getContext('2d'), w = cv.width, h = cv.height;
-  const padL = 28, padR = 6, padT = 6, padB = 15;
+  const { l: padL, r: padR, t: padT, b: padB } = EQ_PAD;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   ctx.clearRect(0, 0, w, h);
   const css = getComputedStyle(document.documentElement);
   const grid = css.getPropertyValue('--line-2').trim() || '#ddd';
   const muted = css.getPropertyValue('--muted').trim() || '#888';
   const accent = css.getPropertyValue('--accent').trim() || '#e8590c';
-  const X = f => padL + Math.log10(f / 20) / Math.log10(1000) * plotW;
-  const Y = d => padT + (1 - (d + 15) / 30) * plotH;
+  const X = f => eqX(f, w);
+  const Y = d => eqY(d, h);
   const marks = [[20, '20'], [50, '50'], [100, '100'], [200, '200'], [500, '500'], [1000, '1k'],
                  [2000, '2k'], [5000, '5k'], [10000, '10k'], [20000, '20k']];
   ctx.lineWidth = 1; ctx.strokeStyle = grid;
@@ -3783,13 +4409,69 @@ function drawEqCurve() {
   ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.beginPath();
   (btEq.freqs || []).forEach((f, i) => { const x = X(f), y = Y(btEq.db[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
   ctx.stroke();
+  // В «Своём» на графике видны точки полос — их можно тянуть вверх/вниз прямо здесь.
+  if (btEq.preset === 'custom') {
+    const bands = btEq.custom || eqCustomBands();
+    bands.forEach((b, i) => {
+      ctx.beginPath(); ctx.arc(X(b.f), Y(b.g), i === eqDrag ? 5.5 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = accent; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = css.getPropertyValue('--card').trim() || '#fff'; ctx.stroke();
+    });
+  }
 }
+function eqBandUnder(clientX) {
+  const cv = $('#bt-eq-curve'), r = cv.getBoundingClientRect();
+  const x = (clientX - r.left) * (cv.width / r.width);
+  const bands = btEq?.custom || [];
+  let idx = -1, best = Infinity;
+  bands.forEach((b, i) => { const d = Math.abs(eqX(b.f, cv.width) - x); if (d < best) { best = d; idx = i; } });
+  return idx;
+}
+function eqGainAt(clientY) {
+  const cv = $('#bt-eq-curve'), r = cv.getBoundingClientRect();
+  const y = (clientY - r.top) * (cv.height / r.height);
+  return Math.round(Math.max(-12, Math.min(12, 15 - 30 * (y - EQ_PAD.t) / (cv.height - EQ_PAD.t - EQ_PAD.b))));
+}
+function setEqGain(i, gain) {
+  const row = $$('#bt-eq-custom .eq-band')[i];
+  if (!row) return;
+  const g = Math.max(-12, Math.min(12, Math.round(gain)));
+  row.querySelector('.eq-g').value = g;
+  row.querySelector('.eq-gv').textContent = fmtDb(g);
+  if (btEq?.custom?.[i]) btEq.custom[i].g = g;
+  drawEqCurve();
+  scheduleEqCustom();
+}
+const eqCanvasEl = $('#bt-eq-curve');
+eqCanvasEl.addEventListener('pointerdown', e => {
+  if (btEq?.preset !== 'custom') return;
+  const i = eqBandUnder(e.clientX);
+  if (i < 0) return;
+  e.preventDefault();
+  eqDrag = i;
+  eqCanvasEl.setPointerCapture(e.pointerId);
+  setEqGain(i, eqGainAt(e.clientY));
+});
+eqCanvasEl.addEventListener('pointermove', e => {
+  if (eqDrag == null) return;
+  setEqGain(eqDrag, eqGainAt(e.clientY));
+});
+const eqDragEnd = e => {
+  if (eqDrag == null) return;
+  eqDrag = null;
+  try { eqCanvasEl.releasePointerCapture(e.pointerId); } catch {}
+  drawEqCurve();
+};
+eqCanvasEl.addEventListener('pointerup', eqDragEnd);
+eqCanvasEl.addEventListener('pointercancel', eqDragEnd);
 $('#bt-eq').onchange = e => {
   const preset = e.target.value, name = EQ_NAMES[preset] || preset;
   $('#bt-eq-custom').hidden = preset !== 'custom';
+  $('#bt-eq-curve').classList.toggle('editable', preset === 'custom');
   if (preset === 'custom') fillEqCustom(btEq?.custom);
   act(e.target, async () => {
     btEq = await api('/api/btout/eq', { preset, bands: preset === 'custom' ? eqCustomBands() : undefined });
+    $('#bt-eq-curve').classList.toggle('editable', btEq.preset === 'custom');
     if (btEq.preset === 'custom') fillEqCustom(btEq.custom);
     drawEqCurve();
   }, 'Эквалайзер: ' + name);
@@ -4153,7 +4835,12 @@ function showTab() {
   if (tab === 'charts') loadCharts();
   if (tab === 'settings') { loadAccess(); loadAgent(); loadFootprint(); loadPanelVersion().catch(() => {}); loadPanelModel(); }
   if (tab === 'overview') loadBt();
-  if (tab === 'player') { renderMusic(); loadPlayerExtras(); loadMusic(); }
+  if (tab === 'player') {
+    renderMusic();
+    if (musicProvider !== 'zvuk') loadPlayerExtras();
+    loadMusic();
+    if (musicProvider === 'zvuk') loadZvuk();
+  }
   updateMinibar();
 }
 window.addEventListener('hashchange', showTab);
@@ -4233,11 +4920,22 @@ function updateMinibar() {
 }
 
 let voiceInput = null;
+let musicProvider = 'yandex';
+function applyMusicProvider() {
+  document.body.dataset.provider = musicProvider;
+  $$('#music-provider [data-provider]').forEach(b => b.classList.toggle('active', b.dataset.provider === musicProvider));
+  const sel = $('#mu-provider');
+  if (sel) sel.value = musicProvider;
+}
 async function loadMusic() {
   const need = !$('#tab-overview').hidden || !$('#tab-player').hidden || (minibarOn() && mu.info?.auth?.logged_in !== false) || !!aliceWait;
   if (!online) { voiceInput?.update(false); return; }
   if (document.hidden || !need) return;
   try { mu.info = await api('/api/music'); } catch { voiceInput?.update(false); return; }
+  const prevProvider = musicProvider;
+  musicProvider = mu.info.provider || mu.info.auth?.provider || 'yandex';
+  if (prevProvider === 'zvuk' && musicProvider === 'yandex') toast('Колонка переключилась на Яндекс');
+  applyMusicProvider();
   // Алиса пропала при живой колонке (её перезапустили — например, сторож Bluetooth-колонки) — экран ожидания
   const gNow = !!mu.info?.glagol?.connected;
   if (gWas && !gNow && online && mu.info?.auth?.logged_in && !aliceWait) aliceRestarting('Ждём, пока она снова выйдет на связь — обычно это меньше минуты', 'Алиса недоступна');
@@ -4301,7 +4999,8 @@ function renderMusic() {
   $('#mu-player').hidden = !logged;
   $('#mu-logout').hidden = !logged;
   ymLogin = logged ? i.auth.login || '' : '';
-  $('#mu-account').innerHTML = ymLogin ? secret('login', ymLogin) : '';
+  const account = $('#mu-account');
+  if (account.dataset.login !== ymLogin) { account.dataset.login = ymLogin; account.innerHTML = ymLogin ? secret('login', ymLogin) : ''; }
   $('#pl-login').hidden = logged;
   $('#pl-body').hidden = !logged;
   if (!logged) { if (!mu.qr && !$('#tab-overview').hidden) startQr(); return; }
@@ -4313,7 +5012,8 @@ function renderMusic() {
   $('#mu-err').hidden = g.connected || aliceWaitActive();
   $('#mu-err').textContent = g.connected ? '' : (g.error || 'Подключаемся к колонке…');
   const title = has ? p.title : 'Ничего не играет';
-  const artist = has ? (p.subtitle || '') + (isBt && p.extra?.album ? ' — ' + p.extra.album : '') : (g.connected ? 'Нажмите ▶ — включится «Моя волна»' : '');
+  const wave = musicProvider === 'zvuk' ? 'Мой поток' : 'Моя волна';
+  const artist = has ? (p.subtitle || '') + (isBt && p.extra?.album ? ' — ' + p.extra.album : '') : (g.connected ? `Нажмите ▶ — включится «${wave}»` : '');
   // В виджете и на вкладке «Плеер» название и исполнители — ссылки на Яндекс Музыку (нижний плеер ведёт во вкладку).
   const t = !isBt && mu.track && mu.track.id === String(p?.id) ? mu.track : null;
   const links = !plMobile();   // на телефоне ссылок наружу нет: исполнитель открывает «Об исполнителе»
@@ -4333,16 +5033,24 @@ function renderMusic() {
     e.style.backgroundImage = url ? `url("${url}")` : '';
     if (e.firstElementChild) e.firstElementChild.style.display = url ? 'none' : '';
   });
-  plTint(has && !isBt ? coverUrl(p.extra?.coverURI, 50) : '');
+  const tintSrc = has && !isBt ? (musicProvider === 'zvuk' && p.extra?.coverURI
+    ? `/api/zvuk/cover?u=${encodeURIComponent(p.extra.coverURI)}`
+    : coverUrl(p.extra?.coverURI, 50)) : '';
+  plTint(tintSrc);
   if (!s?.playing !== plPausedShown) { plPausedShown = !s?.playing; plTintApply(plTintHsl); }
 
   const playing = !!s?.playing, rep = p?.entityInfo?.repeatMode || 'None';
-  $$('[data-mu="play"]').forEach(b => { b.innerHTML = icon(playing ? 'i-pause' : 'i-play', 24); b.setAttribute('aria-label', playing ? 'Пауза' : 'Играть'); });
+  $$('[data-mu="play"]').forEach(b => {
+    const ico = playing ? 'i-pause' : 'i-play';
+    if (b.dataset.ico !== ico) { b.dataset.ico = ico; b.innerHTML = icon(ico, 24); }   // не перерисовываем каждые 250 мс: клик по кнопке иначе теряется
+    b.setAttribute('aria-label', playing ? 'Пауза' : 'Играть');
+  });
   $$('[data-mu="prev"]').forEach(b => b.disabled = !p?.hasPrev);
   $$('[data-mu="next"]').forEach(b => b.disabled = !p?.hasNext);
   $$('[data-mu="repeat"]').forEach(b => {
     b.classList.toggle('on', rep !== 'None');
-    b.innerHTML = icon('i-repeat', 18) + (rep === 'One' ? '<span class="one">1</span>' : '');
+    const ico = 'repeat:' + rep;
+    if (b.dataset.ico !== ico) { b.dataset.ico = ico; b.innerHTML = icon('i-repeat', 18) + (rep === 'One' ? '<span class="one">1</span>' : ''); }
     b.setAttribute('aria-label', { None: 'Повтор выключен', All: 'Повтор всех', One: 'Повтор трека' }[rep]);
   });
   $$('[data-mu="shuffle"]').forEach(b => b.classList.toggle('on', !!p?.entityInfo?.shuffled));
@@ -4362,7 +5070,7 @@ function renderMusic() {
     $$('.mu-vol-v').forEach(e => e.textContent = Math.round(s.volume * 100));
   }
 
-  if (p?.id && p.id !== mu.trackId) {   // сменился трек — подробности и всё для вкладки «Плеер»
+  if (musicProvider !== 'zvuk' && p?.id && p.id !== mu.trackId) {   // сменился трек — подробности и всё для вкладки «Плеер»
     mu.trackId = p.id; mu.track = null; mu.extras = {};
     if (!isBt) api('/api/music/info?id=' + encodeURIComponent(p.id)).then(t => { if (mu.trackId === p.id) { mu.track = t; renderMusic(); } }).catch(() => {});
     if (!$('#tab-player').hidden) loadPlayerExtras();
@@ -4410,7 +5118,13 @@ function renderPlayerTab() {
 function renderRaw() {
   const out = [], walk = (o, pre) => Object.entries(o || {}).forEach(([k, v]) =>
     v && typeof v === 'object' && !Array.isArray(v) ? walk(v, pre + k + '.') : out.push([pre + k, Array.isArray(v) ? `[${v.length}]` : String(v)]));
-  walk(muState(), '');
+  if (musicProvider === 'zvuk') {
+    walk(zvukData || {}, 'zvuk.');       // полный ответ /api/zvuk: трек, очередь, настройки волны
+    walk(muState(), 'glagol.');           // то, что видит плеер панели (синтетический playerState)
+  } else {
+    walk(muState(), '');                  // состояние колонки
+    walk(mu.track, 'track.');             // полный трек из /api/music/info
+  }
   $('#pl-raw').innerHTML = out.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v.length > 140 ? v.slice(0, 140) + '…' : v)}</dd>`).join('');
 }
 $('#pl-raw-box').addEventListener('toggle', renderRaw);
@@ -4582,7 +5296,7 @@ $('#pl-back').onclick = plClose;
 // Вбок по обложке или названию — сменить трек: влево следующий, вправо предыдущий; обложка уезжает за пальцем,
 // а новая выезжает с другой стороны, когда колонка переключит трек. Направление — по первым ~10 px движения.
 function plGesture(e) {
-  if (!plMobile() || e.pointerType === 'mouse' || e.button || e.target.closest('button, input, textarea, a, [data-pl-sec], .pl-mtabs, .pl-controls, .mu-volrow, .progress'))
+  if (!plMobile() || e.pointerType === 'mouse' || e.button || e.target.closest('button, input, textarea, a, [data-pl-sec], .pl-mtabs, .pl-controls, .mu-volrow, .progress, .zv-row'))
     return;
   // вбок — только над перемоткой: обложка с фоном вокруг неё и название; вниз — откуда угодно
   const allowSide = !plSwapping && !!e.target.closest('.pl-cover-box, .pl-title, .pl-artist');
@@ -4713,8 +5427,9 @@ async function loadPlayerExtras() {
   $('#pl-lyrics').innerHTML = $('#pl-queue').innerHTML = $('#pl-similar').innerHTML = '<div class="empty">Загрузка…</div>';
   const p = muPlayer(), isBt = p?.playerType === 'bluetooth';
   // По Bluetooth у трека нет id Яндекса: текст ищем в LRCLIB по названию, очередь и похожие не нужны.
-  const lyUrl = isBt ? '/api/music/lyrics?' + new URLSearchParams({ title: p.title || '', artist: p.subtitle || '', album: p.extra?.album || '', duration: p.duration || 0 })
-                     : '/api/music/lyrics?id=' + id;
+  const lyParams = { title: p?.title || '', artist: p?.subtitle || '', album: p?.extra?.album || '', duration: p?.duration || 0 };
+  const lyUrl = isBt ? '/api/music/lyrics?' + new URLSearchParams(lyParams)
+                     : '/api/music/lyrics?' + new URLSearchParams({ id, ...lyParams });
   const none = Promise.reject(new Error('—'));
   none.catch(() => {});
   const [ly, q, sim] = await Promise.allSettled([api(lyUrl), isBt ? none : api('/api/music/queue'), isBt ? none : api('/api/music/similar?id=' + id)]);
@@ -4778,11 +5493,45 @@ function musicAction(a, btn, noAnim) {
       && !matchMedia('(prefers-reduced-motion: reduce)').matches)
     return plCoverSwap(a, () => musicAction(a, btn, true));
   if (a === 'play') {
+    if (musicProvider === 'zvuk') {
+      if (!muHas() && !s?.playing) return act(btn, () => zvukFlow(), 'Включаю «Мой поток»');
+      return act(btn, async () => {
+        zvukData = await zvukAct(s?.playing ? 'pause' : 'resume');
+        renderZvuk(); await loadMusic();
+      });
+    }
     if (!muHas() && !s?.playing) return muCmd(btn, { command: 'sendText', text: 'Включи мою волну' }, 'Включаю «Мою волну»');
     // пауза и «играть» — на странице сразу, не дожидаясь колонки; не вышло — вернём как есть
     const want = !s?.playing;
     muOptimistic(want);
     return muCmd(null, { command: want ? 'play' : 'stop' }).then(r => { if (!r) { muWant = null; loadMusic(); } });
+  }
+  if (musicProvider === 'zvuk') {
+    if (a === 'prev' || a === 'next') return act(btn, async () => {
+      zvukData = await zvukAct(a); renderZvuk(); await loadMusic();
+    });
+    if (a === 'like') {
+      const t = zvukData?.track; if (!t) return;
+      const on = !t.liked;
+      return act(btn, async () => {
+        const r = await api('/api/zvuk/action', { action: 'like', track_id: t.id, on });
+        t.liked = r.liked;
+        if (mu.track) mu.track.liked = r.liked; else mu.track = { liked: r.liked };
+        $$('[data-mu="like"]').forEach(b => b.classList.toggle('liked', !!r.liked));
+        renderZvuk();
+        toast(r.liked ? '♥ В избранное' : 'Лайк убран');
+      });
+    }
+    if (a === 'dislike') {
+      const t = zvukData?.track; if (!t) return;
+      return act(btn, async () => {
+        await api('/api/zvuk/action', { action: 'dislike', track_id: t.id, on: true });
+        toast('Скрыто — дальше');
+        try { zvukData = await zvukAct('next'); } catch {}
+        renderZvuk(); await loadMusic();
+      });
+    }
+    if (a === 'shuffle' || a === 'repeat') return;
   }
   if (a === 'prev' || a === 'next') {
     if (plSwapping && !noAnim) return;   // идёт смена трека — ждём новый
@@ -4799,6 +5548,338 @@ function musicAction(a, btn, noAnim) {
   });
   if (a === 'dislike') return act(btn, () => api('/api/music/dislike', { id: p.id }), 'Дизлайк — дальше');
 }
+// ---- провайдер «Сбер Звук»: очередь/альбом/похожие, настроение, исполнитель ----
+let zvukData = null, zvukResults = null, zvukArtist = null, zvukLeft = {};
+let zvukListMode = 'queue', zvukTrackId = null, zvukListExpanded = false;
+const ZVUK_LIST_LIMIT = 10;
+const ZVUK_MOOD_KEY = 'zvuk.mood';
+const zvukMoodClamp = (v, d = .5) => { const n = +v; return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : d; };
+let zvukMood = (() => {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(ZVUK_MOOD_KEY) || 'null'); } catch {}
+  const p = saved?.popular;
+  const popular = p === 0 || p === '0' ? 0 : (p === 1 || p === '1' ? 1 : '');
+  return { energy: zvukMoodClamp(saved?.energy), fun: zvukMoodClamp(saved?.fun), popular,
+           genre: Array.isArray(saved?.genre) ? saved.genre.filter(x => typeof x === 'string' && x)
+             : (typeof saved?.genre === 'string' && saved.genre ? [saved.genre] : []),
+           language: typeof saved?.language === 'string' && saved.language ? saved.language : 'any' };
+})();
+let zvukMoodInit = false, zvukMoodTimer = 0;
+function saveZvukMood() { try { localStorage.setItem(ZVUK_MOOD_KEY, JSON.stringify(zvukMood)); } catch {} }
+function parseZvukMood(s) {
+  const out = {};
+  String(s || '').split(',').forEach(part => {
+    const [k, v] = part.split(':'); if (!k) return;
+    const n = parseFloat(v); if (Number.isFinite(n)) out[k.trim()] = Math.max(0, Math.min(1, n));
+  });
+  return out;
+}
+function zvukPopularOption() {
+  // Три положения как в официальном клиенте: 0 — низкая, NULL — средняя (не передаём), 1 — высокая.
+  return zvukMood.popular === '' ? null : Number(zvukMood.popular);
+}
+function zvukWaveOptions() {
+  const instr = zvukMood.language === 'instrumental';
+  const lang = instr || zvukMood.language === 'any' ? '' : zvukMood.language;
+  // «Без слов» — vocal: 0 без языка; остальные — с вокалом, русское/зарубежное — с языком.
+  return { language: lang, vocal: instr ? 0 : 1 };
+}
+function syncZvukMood() {
+  saveZvukMood(); renderZvukMood();
+  clearTimeout(zvukMoodTimer);
+  zvukMoodTimer = setTimeout(() => {
+    zvukAct('settings', { mood: zvukMoodString(), popular: zvukPopularOption(), genre: zvukMood.genre, ...zvukWaveOptions() }).catch(() => {});
+  }, 250);
+}
+const zvukAct = (action, extra = {}) => api('/api/zvuk/action', { action, ...extra });
+const zvukEq = (a, b) => String(a ?? '') === String(b ?? '');
+function emptyMusicInfo(provider) {
+  return { provider, auth: { logged_in: true, login: provider === 'zvuk' ? 'Сбер Звук' : '', provider },
+           glagol: { connected: true, error: null, updated: Date.now() / 1000, progress_at: Date.now() / 1000,
+                     state: { playing: false, playerState: null } } };
+}
+async function loadZvuk() {
+  if (musicProvider !== 'zvuk') return;
+  try { zvukData = await api('/api/zvuk'); } catch { zvukData = null; }
+  const id = zvukData?.track?.id || null;
+  if (!zvukMoodInit && zvukData) {
+    zvukMoodInit = true;
+    let hasLocal = false;
+    try { hasLocal = localStorage.getItem(ZVUK_MOOD_KEY) != null; } catch {}
+    if (!hasLocal) {
+      const m = parseZvukMood(zvukData.mood);
+      if (m.energy != null) zvukMood.energy = m.energy;
+      if (m.fun != null) zvukMood.fun = m.fun;
+      if (zvukData.popular === 0) zvukMood.popular = 0;
+      else if (zvukData.popular === 1) zvukMood.popular = 1;
+      else if (zvukData.popular == null) zvukMood.popular = '';
+      if (Array.isArray(zvukData.genre)) zvukMood.genre = zvukData.genre.filter(x => typeof x === 'string' && x);
+      else if (typeof zvukData.genre === 'string' && zvukData.genre) zvukMood.genre = [zvukData.genre];
+      else zvukMood.genre = [];
+      if (typeof zvukData.language === 'string') zvukMood.language = zvukData.language || 'any';
+      saveZvukMood();
+    }
+    renderZvukMood();
+  }
+  if (id !== zvukTrackId) {
+    zvukTrackId = id; zvukLeft = {};
+    loadZvukLyrics(zvukData?.track);
+    loadZvukArtist(zvukData?.track);
+    if (zvukListMode === 'album' || zvukListMode === 'similar' || zvukListMode === 'favorites') loadZvukList(zvukListMode);
+  }
+  renderZvuk();
+}
+function zvukRow(t, i, kind) {
+  const cover = t.cover ? `<img class="zv-cover" src="${esc(t.cover)}" alt="" loading="lazy">` : '<span class="zv-cover"></span>';
+  const cur = zvukEq(t.id, zvukData?.track?.id);
+  const acts = kind === 'queue'
+    ? `<button class="btn sm ghost" data-zv-remove="${i}" title="Убрать">✕</button>`
+    : `<button class="btn sm ghost" data-zv-add="${i}" title="В очередь">+</button>`;
+  const rowAct = kind === 'queue' ? `data-zv-jump="${i}"` : `data-zv-play="${i}"`;
+  const label = kind === 'queue' ? 'Перейти' : 'Играть';
+  return `<div class="zv-row${cur ? ' cur' : ''}" ${rowAct} role="button" tabindex="0" aria-label="${label}: ${esc(t.title || '')}">${cover}<span class="zv-t"><b>${esc(t.title || '—')}</b>`
+    + `<span>${esc(t.artists || '')}${t.album ? ' · ' + esc(t.album) : ''}</span></span>`
+    + `<span class="zv-actions">${acts}</span></div>`;
+}
+function zvukModeTracks() {
+  if (zvukListMode === 'queue') return zvukData?.queue || [];
+  if (zvukListMode === 'album') return zvukLeft.album?.tracks || [];
+  if (zvukListMode === 'similar') return zvukLeft.similar?.tracks || [];
+  if (zvukListMode === 'favorites') return zvukLeft.favorites?.tracks || [];
+  return zvukResults?.tracks || [];
+}
+// 10 строк вокруг текущего трека: сам трек, несколько до и после; кнопка открывает весь список.
+function zvukListRows(tracks) {
+  if (zvukListExpanded || tracks.length <= ZVUK_LIST_LIMIT) return tracks.map((t, i) => [t, i]);
+  const curId = zvukData?.track?.id;
+  let cur = tracks.findIndex(t => zvukEq(t.id, curId));
+  if (cur < 0) cur = 0;
+  const start = Math.max(0, Math.min(cur - Math.floor(ZVUK_LIST_LIMIT / 2), tracks.length - ZVUK_LIST_LIMIT));
+  return tracks.slice(start, start + ZVUK_LIST_LIMIT).map((t, j) => [t, start + j]);
+}
+function renderZvukList() {
+  const tracks = zvukModeTracks();
+  const playAll = (zvukListMode === 'album' || zvukListMode === 'similar' || zvukListMode === 'favorites') && tracks.length
+    ? '<button class="btn sm primary zv-playall" data-zv-playall>Играть всё</button>' : '';
+  const rows = zvukListRows(tracks);
+  const more = tracks.length > ZVUK_LIST_LIMIT
+    ? `<button class="btn sm ghost zv-more" data-zv-more>${zvukListExpanded ? 'Свернуть плейлист' : `Открыть плейлист полностью (${tracks.length})`}</button>`
+    : '';
+  $('#zvuk-list').innerHTML = playAll + (tracks.length
+    ? rows.map(([t, i]) => zvukRow(t, i, zvukListMode === 'queue' ? 'queue' : 'list')).join('') + more
+    : `<div class="zv-empty">${zvukListMode === 'queue' ? 'Очередь пуста' : zvukListMode === 'album' ? 'Альбом не выбран' : zvukListMode === 'similar' ? 'Похожих нет' : zvukListMode === 'favorites' ? 'В избранном пусто' : 'Ничего не найдено'}</div>`);
+  $$('#zvuk-list-tabs [data-zv-list]').forEach(b => b.classList.toggle('active', b.dataset.zvList === zvukListMode));
+}
+function renderZvuk() {
+  const z = zvukData, token = !!(z && z.has_token);
+  $('#zvuk-token-card').hidden = token;
+  $('#zvuk-main').hidden = !token;
+  if (!token) { $('#zvuk-token-status').textContent = z ? 'Токен ещё не сохранён' : ''; $('#zvuk-artist-card').hidden = true; return; }
+  $('#zvuk-msg').textContent = z.track ? '' : 'Включить «Мой поток»: ▶ в плеере или «Запустить поток»';
+  $('#zvuk-clear').hidden = !(z.queue || []).length;
+  if (z.track) mu.track = { liked: !!z.track.liked };
+  $$('[data-mu="like"]').forEach(b => b.classList.toggle('liked', !!z.track?.liked));
+  renderZvukList();
+  renderZvukMood();
+  if ($('#pl-raw-box').open) renderRaw();
+}
+async function loadZvukList(mode) {
+  if (mode !== 'queue' && mode !== 'search') {
+    try { zvukLeft[mode] = await zvukAct(mode); }
+    catch (e) { zvukLeft[mode] = { tracks: [] }; toast(e.message, true); }
+  }
+  renderZvukList();
+}
+async function loadZvukArtist(track) {
+  if (!track) { $('#zvuk-artist-card').hidden = true; zvukArtist = null; return; }
+  const ids = track.artist_ids || [];
+  if (!ids.length) { $('#zvuk-artist-card').hidden = true; return; }
+  if (zvukArtist?.id === ids[0]) { $('#zvuk-artist-card').hidden = false; return; }
+  try { zvukArtist = await zvukAct('artist', { id: ids[0] }); } catch { zvukArtist = null; }
+  if (!zvukArtist) { $('#zvuk-artist-card').hidden = true; return; }
+  $('#zvuk-artist-card').hidden = false;
+  $('#zvuk-artist-name').textContent = zvukArtist.name || 'Исполнитель';
+  const img = $('#zvuk-artist-img');
+  img.hidden = !zvukArtist.cover; if (zvukArtist.cover) img.src = zvukArtist.cover;
+  $('#zvuk-artist-meta').textContent = `${(zvukArtist.popular || []).length} треков`;
+  $('#zvuk-artist-popular').innerHTML = (zvukArtist.popular || []).slice(0, 8).map((t, i) => zvukRow(t, i, 'list')).join('');
+}
+function renderZvukMood() {
+  const dot = $('#zvuk-mood-dot'); if (!dot) return;
+  dot.style.left = (zvukMood.fun * 100) + '%';
+  dot.style.top = ((1 - zvukMood.energy) * 100) + '%';
+  $('#zvuk-mood-v').textContent = `энергия ${Math.round(zvukMood.energy * 100)} · веселье ${Math.round(zvukMood.fun * 100)}`;
+  const pop = $('#zvuk-popular');
+  if (pop) pop.value = zvukMood.popular === '' ? '' : String(zvukMood.popular);
+  const genreBtn = $('#zvuk-genre-btn');
+  if (genreBtn) {
+    $$('#zvuk-genre-menu input').forEach(i => { i.checked = zvukMood.genre.includes(i.value); });
+    const names = $$('#zvuk-genre-menu input:checked').map(i => i.closest('label').textContent.trim());
+    genreBtn.textContent = names.length === 0 ? 'Все жанры' : (names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`);
+    genreBtn.title = names.length ? names.join(', ') : 'Все жанры';
+  }
+  const lang = $('#zvuk-language');
+  if (lang) {
+    if (zvukMood.language && ![...lang.options].some(o => o.value === zvukMood.language)) {
+      const o = document.createElement('option'); o.value = zvukMood.language; o.textContent = zvukMood.language; lang.append(o);
+    }
+    lang.value = zvukMood.language || '';
+  }
+}
+function zvukMoodString() { return `energy:${zvukMood.energy.toFixed(2)},fun:${zvukMood.fun.toFixed(2)}`; }
+async function zvukFlow(mood, popular) {
+  zvukData = await zvukAct('flow', {
+    mood: mood || zvukMoodString(),
+    popular: zvukPopularOption(),
+    genre: zvukMood.genre,
+    ...zvukWaveOptions(),
+  });
+  renderZvuk(); await loadMusic();
+}
+async function loadZvukLyrics(track) {
+  if (musicProvider !== 'zvuk') return;
+  if (!track) { mu.extras = {}; $('#pl-lyrics').innerHTML = '<div class="empty">—</div>'; $('#pl-ly-meta').textContent = ''; $('#pl-ly-src').hidden = true; return; }
+  if (mu.extras?.lyFor === track.id) return;
+  mu.extras = { lyFor: track.id, lyrics: null, lyIdx: -1 };
+  $('#pl-lyrics').innerHTML = '<div class="empty">Загрузка…</div>';
+  $('#pl-ly-src').hidden = true;
+  try {
+    const L = await api('/api/music/lyrics?' + new URLSearchParams({ title: track.title || '', artist: track.artists || '', album: track.album || '', duration: track.duration || 0 }));
+    if (mu.extras?.lyFor !== track.id) return;
+    mu.extras.lyrics = L;
+    $('#pl-lyrics').innerHTML = L.sync ? L.sync.map(l => `<span class="ln">${esc(l[1]) || '&nbsp;'}</span>`).join('')
+      : (L.text ? esc(L.text) : '<div class="empty">Текст не нашёлся</div>');
+    $('#pl-ly-meta').textContent = L.sync ? 'идёт вместе с песней' : '';
+    $('#pl-ly-src').hidden = !L.source;
+    $('#pl-ly-src').innerHTML = L.source ? `Источник: ${L.sourceUrl ? `<a href="${esc(L.sourceUrl)}" target="_blank" rel="noopener">${esc(L.source)}</a>` : esc(L.source)}` : '';
+    renderPlayerTab();
+  } catch {
+    if (mu.extras?.lyFor === track.id) $('#pl-lyrics').innerHTML = '<div class="empty">Текст не нашёлся</div>';
+  }
+}
+async function switchProvider(provider) {
+  try {
+    const r = await api('/api/music/provider', { provider });
+    musicProvider = r.provider || provider;
+    applyMusicProvider();
+    zvukData = null; zvukResults = null; zvukArtist = null; zvukLeft = {};
+    zvukTrackId = null; zvukListMode = 'queue'; zvukListExpanded = false;
+    mu.info = emptyMusicInfo(musicProvider); mu.track = null; mu.trackId = null; mu.extras = {};
+    loadZvukLyrics(null);
+    $('#pl-lyrics').innerHTML = '<div class="empty">—</div>';
+    $('#pl-ly-meta').textContent = ''; $('#pl-ly-src').hidden = true;
+    $('#zvuk-artist-card').hidden = true; zvukArtist = null;
+    renderMusic(); renderZvuk();
+    await loadMusic();
+    if (musicProvider === 'zvuk') {
+      await loadZvuk();
+      if (!zvukData?.has_token && location.hash !== '#player') location.hash = '#player';
+    }
+    toast('Музыка: ' + (musicProvider === 'zvuk' ? 'Сбер Звук' : 'Яндекс Музыка'));
+  } catch (e) { applyMusicProvider(); toast(e.message, true); }
+}
+$$('#music-provider [data-provider]').forEach(b => b.onclick = () => switchProvider(b.dataset.provider));
+$('#mu-provider').onchange = e => switchProvider(e.target.value);
+$('#zvuk-token-paste').onclick = async () => {
+  try {
+    if (!navigator.clipboard?.readText) throw new Error('no clipboard');
+    const text = (await navigator.clipboard.readText()).trim();
+    if (!text) throw new Error('empty');
+    $('#zvuk-token').value = text;
+    $('#zvuk-token').focus();
+  } catch {
+    toast('Браузер не дал прочитать буфер — вставьте в поле вручную (Ctrl+V)', true);
+  }
+};
+$('#zvuk-token-save').onclick = e => act(e.currentTarget, async () => {
+  zvukData = await api('/api/zvuk/token', { token: $('#zvuk-token').value.trim() });
+  $('#zvuk-token').value = '';
+  renderZvuk(); await loadMusic();
+}, 'Токен «Звука» сохранён');
+$('#zvuk-flow').onclick = e => act(e.currentTarget, () => zvukFlow(), 'Включаю «Мой поток»');
+$('#zvuk-mood-reset').onclick = () => { zvukMood = { energy: .5, fun: .5, popular: '', genre: [], language: 'any' }; syncZvukMood(); };
+$('#zvuk-popular').onchange = e => { zvukMood.popular = e.target.value === '' ? '' : Number(e.target.value); syncZvukMood(); };
+const genreBtn = $('#zvuk-genre-btn'), genreMenu = $('#zvuk-genre-menu');
+const closeGenreMenu = () => { genreMenu.hidden = true; genreBtn.setAttribute('aria-expanded', 'false'); };
+genreBtn.onclick = e => {
+  e.stopPropagation();
+  const open = genreMenu.hidden;
+  genreMenu.hidden = !open;
+  genreBtn.setAttribute('aria-expanded', String(open));
+};
+genreMenu.onclick = e => e.stopPropagation();
+document.addEventListener('click', () => closeGenreMenu());
+$$('#zvuk-genre-menu input').forEach(box => box.addEventListener('change', () => {
+  zvukMood.genre = $$('#zvuk-genre-menu input:checked').map(i => i.value);
+  renderZvukMood(); syncZvukMood();
+}));
+$('#zvuk-genre-clear').onclick = () => {
+  zvukMood.genre = [];
+  $$('#zvuk-genre-menu input').forEach(i => { i.checked = false; });
+  renderZvukMood(); syncZvukMood();
+};
+$('#zvuk-genre-done').onclick = () => closeGenreMenu();
+$('#zvuk-language').onchange = e => { zvukMood.language = e.target.value; syncZvukMood(); };
+const moodPad = $('#zvuk-mood-pad');
+function setZvukMood(e) {
+  const r = moodPad.getBoundingClientRect();
+  zvukMood.fun = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  zvukMood.energy = Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height));
+  syncZvukMood();
+}
+moodPad.addEventListener('pointerdown', e => { e.preventDefault(); moodPad.setPointerCapture(e.pointerId); setZvukMood(e); });
+moodPad.addEventListener('pointermove', e => { if (moodPad.hasPointerCapture?.(e.pointerId)) setZvukMood(e); });
+const moodEnd = e => { try { moodPad.releasePointerCapture(e.pointerId); } catch {} };
+moodPad.addEventListener('pointerup', moodEnd);
+moodPad.addEventListener('pointercancel', moodEnd);
+$('#zvuk-search-form').onsubmit = e => {
+  e.preventDefault();
+  const q = $('#zvuk-search').value.trim(); if (!q) return;
+  if (!zvukData?.has_token) { toast('Сначала сохраните токен «Звука»', true); return; }
+  act(null, async () => { zvukResults = await zvukAct('search', { q }); zvukListExpanded = false; zvukListMode = 'search'; renderZvukList(); });
+};
+$('#zvuk-list-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-zv-list]'); if (!b) return;
+  zvukListExpanded = false;
+  zvukListMode = b.dataset.zvList;
+  if (zvukListMode === 'album' || zvukListMode === 'similar' || zvukListMode === 'favorites') loadZvukList(zvukListMode); else renderZvukList();
+});
+$('#zvuk-clear').onclick = e => act(e.currentTarget, async () => {
+  zvukData = await zvukAct('queue-clear'); renderZvuk();
+}, 'Очередь очищена');
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('.zv-row[data-zv-play],.zv-row[data-zv-jump]');
+  if (!row || e.target !== row) return;
+  e.preventDefault(); row.click();
+});
+document.addEventListener('click', e => {
+  const more = e.target.closest('[data-zv-more]');
+  if (more) { zvukListExpanded = !zvukListExpanded; renderZvukList(); return; }
+  const row = e.target.closest('[data-zv-play],[data-zv-add],[data-zv-jump],[data-zv-remove],[data-zv-playall]');
+  if (!row) return;
+  const inArtist = !!row.closest('#zvuk-artist-popular');
+  const tracks = row.dataset.zvPlayall != null ? zvukModeTracks()
+    : (inArtist ? (zvukArtist?.popular || []) : zvukModeTracks());
+  if (row.dataset.zvPlayall != null) {
+    return act(row, async () => { zvukData = await zvukAct('play-list', { tracks }); renderZvuk(); await loadMusic(); }, 'Играю всё');
+  }
+  const i = +(row.dataset.zvPlay ?? row.dataset.zvAdd ?? row.dataset.zvJump ?? row.dataset.zvRemove);
+  const track = tracks[i]; if (!track) return;
+  if (row.dataset.zvPlay != null) {
+    const fromTab = !inArtist && (zvukListMode === 'album' || zvukListMode === 'similar' || zvukListMode === 'favorites');
+    return act(row, async () => {
+      zvukData = fromTab ? await zvukAct('play-list', { tracks, index: i }) : await zvukAct('play', { track });
+      renderZvuk(); await loadMusic();
+    }, 'Играю');
+  }
+  if (row.dataset.zvAdd != null) return act(row, async () => { zvukData = await zvukAct('queue-add', { track }); renderZvuk(); }, 'В очередь');
+  if (row.dataset.zvJump != null) return act(row, async () => { zvukData = await zvukAct('jump', { index: i }); renderZvuk(); await loadMusic(); });
+  return act(row, async () => { zvukData = await zvukAct('remove', { index: i }); renderZvuk(); });
+});
+setInterval(() => { if (musicProvider === 'zvuk' && !document.hidden && !$('#tab-player').hidden) loadZvuk(); }, 2000);
+applyMusicProvider();
+renderZvukMood();
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-mu]');
   if (b) return musicAction(b.dataset.mu, b);
@@ -4866,7 +5947,21 @@ async function pollQr() {
       $('#mu-qr-status').innerHTML = (plMobile() ? 'Ссылка для входа устарела.' : 'QR-код устарел.') + ' <button class="btn sm" id="mu-qr-new">Новый код</button>';
       $('#mu-qr-new').onclick = () => startQr();
     }
-  } catch (e) { if (!e.offline) $('#mu-qr-status').textContent = e.message; }
+  } catch (e) {
+    if (e.offline) return;
+    if (/HTTP 403/.test(e.message)) {
+      clearInterval(mu.qrTimer); mu.qrTimer = null;
+      $('#mu-qr-status').innerHTML = 'Яндекс не пускает вход с этого IP (403). Подождите, смените IP или войдите через Яндекс ниже. '
+        + '<button class="btn sm" id="mu-qr-retry">Повторить</button>';
+      const d = $('#mu-oauth')?.closest('details'); if (d) d.open = true;
+      $('#mu-qr-retry').onclick = () => {
+        $('#mu-qr-status').textContent = 'Пробуем ещё раз…';
+        mu.qrTimer = setInterval(pollQr, 3000);
+        pollQr();
+      };
+      api('/api/auth').then(a => $('#mu-oauth').href = a.oauth_url).catch(() => {});
+    } else $('#mu-qr-status').textContent = e.message;
+  }
 }
 $('#mu-oauth-go').onclick = e => act(e.currentTarget, async () => {
   const r = await api('/api/auth/oauth', { url: $('#mu-oauth-url').value });
@@ -5549,18 +6644,29 @@ wrap.ondragleave = e => { if (!wrap.contains(e.relatedTarget)) wrap.classList.re
 wrap.ondrop = e => { e.preventDefault(); wrap.classList.remove('over'); fsUpload([...e.dataTransfer.files]); };
 
 // ---------- настройка «Обзора»: виджеты можно убирать, возвращать и переставлять ----------
-const LAYOUT_KEY = 'ov.layout', ZONES = ['wz-top', 'wz-left', 'wz-right'];
+const navMode = () => document.documentElement.dataset.nav === 'rail' && matchMedia('(min-width: 761px)').matches ? 'rail' : 'classic';
+const ZONES = ['wz-top', 'wz-left', 'wz-right', 'wz-third'];
 const widgetEls = () => $$('[data-widget]');
 function readLayout() {
   const ids = el => [...el.children].filter(c => c.dataset.widget).map(c => c.dataset.widget);
   return { zones: Object.fromEntries(ZONES.map(z => [z, ids($('#' + z))])), hidden: ids($('#wz-hidden')) };
 }
-const DEFAULT_LAYOUT = { zones: {
+const DEFAULT_CLASSIC = { zones: {
   'wz-top': ['stats'],
   'wz-left': ['model', 'alice', 'say', 'bt', 'sounds'],
   'wz-right': ['music', 'volume', 'clock', 'light', 'device'],
+  'wz-third': [],
 }, hidden: [] };
-const homeZone = id => ZONES.find(z => DEFAULT_LAYOUT.zones[z].includes(id)) || 'wz-right';
+const DEFAULT_RAIL = { zones: {
+  'wz-top': ['stats'],
+  'wz-left': ['model', 'alice', 'say'],
+  'wz-right': ['music', 'volume', 'clock', 'light'],
+  'wz-third': ['bt', 'sounds', 'device'],
+}, hidden: [] };
+const defaultLayout = () => navMode() === 'rail' ? DEFAULT_RAIL : DEFAULT_CLASSIC;
+const layoutKey = () => navMode() === 'rail' ? 'ov.layout.rail' : 'ov.layout';
+const homeZone = id => ZONES.find(z => defaultLayout().zones[z].includes(id)) || 'wz-right';
+const visibleColumns = () => navMode() === 'rail' ? ['wz-left', 'wz-right', 'wz-third'] : ['wz-left', 'wz-right'];
 function applyLayout(l) {
   const byId = Object.fromEntries(widgetEls().map(w => [w.dataset.widget, w]));
   const put = (parent, id) => { if (byId[id]) { parent.append(byId[id]); delete byId[id]; } };
@@ -5573,7 +6679,13 @@ function applyLayout(l) {
     $('[data-widget="model"]').after($('[data-widget="alice"]'));
 }
 function saveLayout() {
-  store.set(LAYOUT_KEY, JSON.stringify(readLayout()));
+  store.set(layoutKey(), JSON.stringify(readLayout()));
+  renderHiddenList();
+}
+function loadLayout() {
+  let saved = null;
+  try { saved = JSON.parse(store.get(layoutKey())); } catch {}
+  applyLayout(saved || defaultLayout());
   renderHiddenList();
 }
 function renderHiddenList() {
@@ -5591,7 +6703,7 @@ function moveWidget(w, how) {
   const sib = dir => { let s = w[dir]; while (s && !s.dataset.widget) s = s[dir]; return s; };
   if (how === 'up') { const s = sib('previousElementSibling'); if (s) zone.insertBefore(w, s); }
   else if (how === 'down') { const s = sib('nextElementSibling'); if (s) s.after(w); }
-  else if (how === 'side') $(zone.id === 'wz-left' ? '#wz-right' : '#wz-left').append(w);
+  else if (how === 'side') { const cols = visibleColumns(); $('#' + cols[(cols.indexOf(zone.id) + 1) % cols.length]).append(w); }
   else if (how === 'hide') $('#wz-hidden').append(w);
   saveLayout();
 }
@@ -5620,7 +6732,7 @@ $('#set-layout-edit').onclick = () => { location.hash = '#overview'; setTimeout(
 $('#set-layout-reset').onclick = () => $('#ov-reset').click();
 $('#ov-done').onclick = () => setEditing(false);
 $('#ov-reset').onclick = () => {
-  applyLayout(DEFAULT_LAYOUT); $$('#wz-hidden > [data-widget]').forEach(w => $('#' + homeZone(w.dataset.widget)).append(w)); saveLayout();
+  applyLayout(defaultLayout()); $$('#wz-hidden > [data-widget]').forEach(w => $('#' + homeZone(w.dataset.widget)).append(w)); saveLayout();
   store.set('ov.tiles', JSON.stringify(TILE_DEFAULT)); buildTiles(); fillTileSettings();   // и плитку «Состояние»
   toast('Раскладка по умолчанию');
 };
@@ -5650,15 +6762,51 @@ ZONES.forEach(z => $('#' + z).addEventListener('dragover', e => {
   if (before) { if (dragW.nextElementSibling !== before) zone.insertBefore(dragW, before); }
   else if (zone.lastElementChild !== dragW) zone.append(dragW);
 }));
-applyLayout(DEFAULT_LAYOUT);
-try { const saved = JSON.parse(store.get(LAYOUT_KEY)); if (saved) applyLayout(saved); } catch {}
+
+// ---------- макет: обычный или с боковым меню (работает только на компьютере и планшете) ----------
+function applyNav() {
+  const root = document.documentElement;
+  const mode = store.get('ui.nav') === 'rail' ? 'rail' : 'classic';
+  if (mode === 'rail') root.dataset.nav = 'rail'; else delete root.dataset.nav;
+  const collapsed = store.get('ui.navCollapsed') === '1';
+  if (collapsed) root.dataset.navCollapsed = '1'; else delete root.dataset.navCollapsed;
+  const btn = $('#nav-collapse');
+  if (btn) {
+    const label = collapsed ? 'Развернуть меню' : 'Свернуть меню';
+    btn.querySelector('.nav-collapse-glyph').textContent = collapsed ? '›' : '‹';
+    btn.querySelector('.nav-collapse-label').textContent = label;
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+  }
+  $$('#set-nav button').forEach(b => b.classList.toggle('active', b.dataset.v === mode));
+}
+function setNavMode(mode) {
+  const next = mode === 'rail' ? 'rail' : 'classic';
+  if (next === (store.get('ui.nav') === 'rail' ? 'rail' : 'classic')) return;
+  saveLayout();               // раскладка текущего макета — под его ключ
+  store.set('ui.nav', next);
+  applyNav();
+  loadLayout();               // свой вид «Обзора» у нового макета
+}
+function setNavCollapsed(collapsed) {
+  store.set('ui.navCollapsed', collapsed ? '1' : '0');
+  applyNav();
+}
+$('#nav-collapse').onclick = () => setNavCollapsed(store.get('ui.navCollapsed') !== '1');
+$$('#set-nav button').forEach(b => b.onclick = () => { setNavMode(b.dataset.v); applyUI(); });
+
+applyNav();
+loadLayout();
+// на телефоне всегда классическая раскладка: боковое меню там не включается
+matchMedia('(min-width: 761px)').addEventListener('change', () => { applyNav(); loadLayout(); });
 
 // Оформление: тема, акцент, визуализатор (храним в браузере; применяется ещё в <head>).
 function applyUI() {
   const root = document.documentElement, theme = store.get('ui.theme') || 'auto', accent = store.get('ui.accent') || '';
   if (theme === 'auto') delete root.dataset.theme; else root.dataset.theme = theme;
   for (const [k, v] of [['--accent', accent], ['--accent-ink', accent && `color-mix(in srgb, ${accent} 72%, var(--text))`],
-                        ['--accent-soft', accent && `color-mix(in srgb, ${accent} 15%, var(--card))`]])
+                        ['--accent-soft', accent && `color-mix(in srgb, ${accent} 15%, var(--card))`],
+                        ['--on-accent', accent && accentOn(accent)]])
     v ? root.style.setProperty(k, v) : root.style.removeProperty(k);
   window.__vizOff = store.get('ui.viz') === '0';
   window.__vizStyle = store.get('ui.vizStyle') || 'rays';
@@ -5666,7 +6814,10 @@ function applyUI() {
   const glow = store.get('ui.glow') || 'cursor';
   if (glow === 'off') delete root.dataset.glow; else root.dataset.glow = glow;
   $$('#set-glow button').forEach(b => b.classList.toggle('active', b.dataset.v === glow));
-  $$('#set-accent .sw').forEach(b => b.classList.toggle('sel', b.dataset.v === accent));
+  const presets = $$('#set-accent .sw:not(.sw-rainbow)').map(b => b.dataset.v);
+  $$('#set-accent .sw:not(.sw-rainbow)').forEach(b => b.classList.toggle('sel', b.dataset.v === accent));
+  const customBtn = $('#set-accent-custom');
+  if (customBtn) customBtn.classList.toggle('sel', !!accent && !presets.includes(accent));
   $('#set-viz').checked = !window.__vizOff;
   $('#set-viz-style').value = window.__vizStyle;
   window.__vizIdleOff = store.get('ui.vizIdle') === '0';
@@ -5678,6 +6829,7 @@ function applyUI() {
   if (logText) renderLog();
   $('#set-minibar').checked = store.get('ui.minibar') !== '0';
   updateMinibar();
+  applyNav();
   appBars();
   window.dispatchEvent(new Event('themechange'));
 }
@@ -5699,6 +6851,86 @@ document.addEventListener('pointermove', e => {
   c.style.setProperty('--mx', (e.clientX - r.left) + 'px'); c.style.setProperty('--my', (e.clientY - r.top) + 'px');
 }, { passive: true });
 $$('#set-accent .sw').forEach(b => b.onclick = () => { store.set('ui.accent', b.dataset.v); applyUI(); });
+// Свой цвет: кружок-радуга и попап под курсором со спектром.
+(() => {
+  const pop = $('#accent-pop'); if (!pop) return;
+  const h = $('#accent-h'), s = $('#accent-s'), l = $('#accent-l');
+  const preview = $('#accent-preview'), hexLabel = $('#accent-hex');
+  const toHex = (hue, sat, lig) => {
+    sat /= 100; lig /= 100;
+    const k = n => (n + hue / 30) % 12;
+    const a = sat * Math.min(lig, 1 - lig);
+    const f = n => lig - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    const c = n => Math.round(255 * f(n)).toString(16).padStart(2, '0');
+    return '#' + c(0) + c(8) + c(4);
+  };
+  const fromHex = hex => {
+    const m = String(hex || '').trim().match(/^#?([0-9a-f]{6})$/i);
+    if (!m) return [24, 90, 48];
+    const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const rr = r / 255, gg = g / 255, bb = b / 255, max = Math.max(rr, gg, bb), min = Math.min(rr, gg, bb), d = max - min;
+    let hue = 0;
+    if (d) hue = max === rr ? ((gg - bb) / d) % 6 : max === gg ? (bb - rr) / d + 2 : (rr - gg) / d + 4;
+    hue = Math.round(hue * 60); if (hue < 0) hue += 360;
+    const lig = (max + min) / 2, sat = d ? d / (1 - Math.abs(2 * lig - 1)) : 0;
+    return [hue, Math.round(sat * 100), Math.round(lig * 100)];
+  };
+  const show = () => {
+    const lig = Math.min(80, Math.max(20, +l.value));
+    if (+l.value !== lig) l.value = lig;
+    const hex = toHex(+h.value, +s.value, lig);
+    preview.style.background = hex;
+    hexLabel.textContent = hex;
+    return hex;
+  };
+  const close = () => {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    const done = popDone; popDone = null; popApply = null;
+    if (done) done();
+  };
+  let popApply = null, popDone = null;
+  const open = (e, hex, apply, done) => {
+    popApply = apply; popDone = done || null;
+    const [hh, ss, ll] = fromHex(hex);
+    h.value = hh; s.value = ss; l.value = Math.min(80, Math.max(20, ll)); show();
+    pop.style.left = Math.min(Math.max(8, e.clientX - 24), innerWidth - 244) + 'px';
+    pop.style.top = Math.min(e.clientY + 10, innerHeight - 236) + 'px';
+    pop.hidden = false;
+    setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
+  };
+  $('#set-accent-custom').onclick = e => {
+    e.stopPropagation();
+    const cur = store.get('ui.accent') || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#E8590C';
+    open(e, cur, hex => { store.set('ui.accent', hex); applyUI(); });
+  };
+  $('#as-led-color-btn').onclick = e => {
+    e.stopPropagation();
+    open(e, $('#as-led-color').value || '#ff8a00',
+      hex => { $('#as-led-color').value = hex; $('#as-led-color-btn').style.background = hex; },
+      () => asLed());
+  };
+  pop.onclick = e => e.stopPropagation();
+  [h, s, l].forEach(el => el.oninput = () => {
+    const hex = show();
+    if (popApply) popApply(hex);
+  });
+  $('#accent-done').onclick = close;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  window.addEventListener('scroll', close, { passive: true, capture: true });
+  window.addEventListener('resize', close);
+})();
+$('#as-tts-preset').onchange = e => {
+  const fish = e.target.value === 'fish';
+  if (fish) {
+    $('#as-tts-url').value = 'https://api.fish.audio/compat/v1';
+    $('#as-tts-model').value = 'fish-audio/s2.1-pro-free';
+    $('#as-tts-voice').placeholder = 'id голоса из Fish Voice Library (пусто — по умолчанию)';
+  } else {
+    $('#as-tts-voice').placeholder = 'например, alloy или ru_RU-irina-medium';
+  }
+  asKeysView(); asDirty(); asHttpWarning();
+};
 $('#set-viz').onchange = e => { store.set('ui.viz', e.target.checked ? '1' : '0'); applyUI(); };
 $('#set-viz-style').onchange = e => { store.set('ui.vizStyle', e.target.value); applyUI(); };
 $('#set-viz-idle').onchange = e => { store.set('ui.vizIdle', e.target.checked ? '1' : '0'); applyUI(); };
@@ -5832,6 +7064,10 @@ const AS_TTS_HINT = {
   openai: 'Любой сервер с OpenAI-совместимым /audio/speech: OpenAI, Piper на компьютере через openedai-speech, голоса Edge через openai-edge-tts.',
 };
 let asTimer = null, asCfg = null;
+let asRouteRuntime = {}, asRouteJourney = 'current';
+let asMicPending = null, asMicNotice = '';
+const asProtocolModels = new Map();
+let asModelList = {url:'',models:[]};
 function asPoll(on) {
   clearTimeout(asTimer);
   if (on) loadAssistant(true);
@@ -5845,34 +7081,84 @@ async function loadAssistant(fill) {
   $('#as-missing').hidden = st.installed;
   $('#as-on').hidden = !st.installed;
   $('#as-update').hidden = !st.outdated;
+  const daemonSkills = st.state && st.state.skills;
+  const skillWarn = $('#as-skill-warn');
+  skillWarn.hidden = !(st.installed && st.running && !daemonSkills);
+  if (!skillWarn.hidden) {
+    skillWarn.textContent = st.outdated
+      ? 'Программа на колонке старой версии: нажмите «Обновить программу», иначе локальные команды будут уходить модели.'
+      : 'Программа на колонке не сообщает о локальных командах — обновите её кнопкой «Обновить программу».';
+  }
+  asRouteRuntime = st;
   const s = st.state || {}, c = st.config || {};
-  const [label, cls] = !st.installed ? ['Не установлен', ''] : !st.running ? ['Остановлен', 'bad']
-    : !c.enabled ? ['Выключен', ''] : AS_STATE[s.state] || ['—', ''];
-  $('#as-badge').textContent = label;
-  $('#as-badge').className = 'badge' + (cls ? ' ' + cls : '');
+  const [label, cls] = !st.installed ? ['Не установлен', 'is-off'] : !st.running ? ['Остановлен', 'is-bad']
+    : !c.enabled ? ['Выключен', 'is-off'] : s.mode ? ['Режим разговора', ''] : [(AS_STATE[s.state] || ['Работает'])[0], ''];
+  $('#as-state').textContent = label;
+  $('#as-state-chip').className = 'as-state' + (cls ? ' ' + cls : '');
   const err = s.config_error || s.error;
   $('#as-error').hidden = !err;
   $('#as-error').textContent = err ? 'Последняя ошибка: ' + err : '';
-  $('#as-hist').innerHTML = (s.history || []).slice().reverse().map(h => `<div><b>${esc(h.question)}</b>`
-    + (h.answer ? esc(h.answer) : `<span class="err">${esc(h.error || '')}</span>`)
-    + `<small>${new Date(h.at * 1000).toLocaleTimeString()} · ${h.source === 'voice' ? 'голосом' : 'из панели'}`
-    + `${h.ms ? ' · ' + (h.ms / 1000).toFixed(1) + ' с' : ''}</small></div>`).join('');
+  $('#as-hist').innerHTML = (s.history || []).slice().reverse().map(h => {
+    const lat = [['stt_ms', 'STT'], ['model_ms', 'Модель'], ['tts_ms', 'Синтез'], ['playback_ms', 'Воспроизведение']]
+      .filter(([k]) => h[k]).map(([k, label]) => `<span>${label} ${(h[k] / 1000).toFixed(1)} с</span>`).join('');
+    const when = new Date(h.at * 1000).toLocaleTimeString();
+    const source = ['voice', 'microphone'].includes(h.source) ? 'голосом' : 'из панели';
+    return `<div class="pair"><div class="q">${esc(h.question)}</div><div class="a">`
+      + (h.answer ? esc(h.answer) : `<span class="err">${esc(h.error || '')}</span>`)
+      + `<small>${when} · ${source}${h.local ? ' · локально' : ''}${h.ms ? ' · ' + (h.ms / 1000).toFixed(1) + ' с' : ''}</small>`
+      + (lat ? `<small>${lat}</small>` : '')
+      + '</div></div>';
+  }).join('');
   const until = s.mode_until ? new Date(s.mode_until * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-  $('#as-mode-state').textContent = s.mode ? 'включён' + (until ? ` · отключится в ${until}, если молчать` : '') : 'выключен';
-  $('#as-mode-btn').textContent = s.mode ? 'Выключить' : 'Включить';
+  $('#as-mode-state').textContent = s.mode ? 'режим включён' + (until ? ` · до ${until}` : '') : 'режим выключен';
+  $('#as-mode-state').classList.toggle('is-on', !!s.mode);
+  $('#as-mode-btn').textContent = s.mode ? 'Выключить режим разговора' : 'Включить режим разговора';
   $('#as-mode-btn').className = 'btn sm' + (s.mode ? '' : ' primary');
   $('#as-mode-btn').dataset.on = s.mode ? '1' : '';
   $('#as-mode-btn').disabled = !st.running || !c.enabled;
-  if (s.mode && st.running && c.enabled) { $('#as-badge').textContent = 'Режим ассистента'; $('#as-badge').className = 'badge ok'; }
-  if (fill && st.installed) asFill(c);
+  asModeRow();
+  const mic = s.microphone || {};
+  if (!asMicPending) {
+    $('#as-mic-status').textContent = asMicNotice || (st.microphone_installed ? (mic.ready ? 'Микрофонный поток подключён' : mic.error || 'Ожидание микрофонного потока') : 'Микрофонный захват не подключён');
+    $('#as-mic-connect').textContent = st.microphone_installed ? 'Отключить захват' : 'Подключить микрофоны';
+    $('#as-mic-connect').dataset.on = st.microphone_installed ? '1' : '';
+  }
+  if (fill && st.installed) { asFill(c); asWakeLoad(true); }
+  asAudioView();
   if (!$('#tab-assistant').hidden) asTimer = setTimeout(loadAssistant, s.state && s.state !== 'idle' ? 1000 : 4000);
 }
 function asFill(c) {
   asCfg = c;
-  const llm = c.llm || {}, tts = c.tts || {};
+  const llm = c.llm || {}, tts = c.tts || {}, stt = c.stt || {}, mic = c.microphone || {};
+  // Сохранённые провайдеры: вкладка помнит адрес, модель и тип API
+  asConns = {};
+  for (const [id, conn] of Object.entries(c.connections || {})) {
+    if (conn && conn.base_url) asConns[id] = { base_url: conn.base_url, model: conn.model || '',
+      transport: conn.transport || 'chat', voice: conn.voice || 'marin' };
+  }
+  asActiveConn = '';
+  $('#as-transport').value = llm.transport || 'chat';
+  asTransportButtons();
+  if (llm.base_url && llm.model) { const remembered = asProtocolModels.get(llm.base_url) || {}; remembered[AssistantRoute.capabilities(llm.base_url,llm.model).realtime ? 'realtime' : 'chat'] = llm.model; asProtocolModels.set(llm.base_url,remembered); }
+  $('#as-realtime-voice').dataset.voices = '';
+  $('#as-realtime-voice').innerHTML = `<option value="${esc(llm.voice || 'marin')}">${esc(llm.voice || 'marin')}</option>`;
+  $('#as-realtime-voice').value = llm.voice || 'marin';
+  const source = mic.source || 'alice';
+  $('#as-input').value = source;
+  $$('input[name="as-source"]').forEach(r => r.checked = r.value === source);
+  $('#as-stt').value = stt.provider || 'alice';
+  $('#as-stt-url').value = stt.base_url || '';
+  $('#as-stt-key').value = '';
+  $('#as-stt-proxy').value = stt.proxy || '';
+  $('#as-stt-model').value = stt.model || '';
+  $('#as-stt-language').value = stt.language || 'ru';
+  $('#as-mic-gain').value = mic.gain || 32;
+  $('#as-mic-threshold').value = mic.threshold || 300;
+  $('#as-mic-silence').value = mic.silence_ms || 900;
   $('#as-enabled').checked = !!c.enabled;
   $('#as-led').checked = c.led?.enabled ?? true;
   $('#as-led-color').value = c.led?.color || '#ff8a00';
+  $('#as-led-color-btn').style.background = $('#as-led-color').value;
   $('#as-triggers').value = (c.triggers || ['спроси gpt', 'спроси джипити', 'спроси чат gpt', 'спроси нейросеть']).join(', ');
   const mode = c.mode || {};
   $('#as-mode-enter').value = (mode.enter || ['переключись на gpt', 'переключись на ассистента', 'включи ассистента']).join(', ');
@@ -5887,37 +7173,311 @@ function asFill(c) {
   $('#as-tokens').value = llm.max_tokens || 500;
   $('#as-history').value = llm.history ?? 6;
   $('#as-proxy').value = llm.proxy || '';
-  if (llm.base_url && (c.keys || {})[asKeyId(llm.base_url)]) asModels(true);
   $('#as-tts').value = tts.provider || 'alice';
+  $$('input[name="as-tts-src"]').forEach(r => r.checked = r.value === (tts.provider || 'alice'));
   $('#as-tts-url').value = tts.base_url || '';
+  $('#as-tts-preset').value = /fish\.audio\/compat\/v1/i.test(tts.base_url || '') ? 'fish' : '';
+  $('#as-tts-voice').placeholder = /fish\.audio/i.test(tts.base_url || '')
+    ? 'id голоса из Fish Voice Library (пусто — по умолчанию)'
+    : 'например, alloy или ru_RU-irina-medium';
   $('#as-tts-key').value = '';
   $('#as-tts-model').value = tts.model || 'tts-1';
   $('#as-tts-voice').value = tts.voice || '';
   $('#as-tts-speed').value = tts.speed || 1;
-  asTtsView();
+  const skills = c.skills || {}, weather = c.weather || {};
+  $('#as-skill-time').checked = skills.time ?? true;
+  $('#as-skill-weather').checked = !!skills.weather;
+  $('#as-weather-city').value = weather.city || '';
+  $('#as-weather-lat').value = weather.lat || '';
+  $('#as-weather-lon').value = weather.lon || '';
+  asWeatherView();
+  asWeatherHint();
+  // Активная вкладка — провайдер, на который смотрит колонка
+  const base = (llm.base_url || '').trim();
+  asActiveConn = base ? asKeyId(base) : '';
+  if (asActiveConn && !asConns[asActiveConn]) asConns[asActiveConn] = { base_url: base, model: llm.model || '', transport: llm.transport || 'chat', voice: llm.voice || 'marin' };
+  asProvidersRender();
+  asPhrasesRender();
   asKeysView();
+  asAudioView();
+  if (!llm.base_url && !asFilledOnce) asPane('model');
+  if (llm.base_url && (c.keys || {})[asKeyId(llm.base_url)]) asModels(true);
+  asFilledOnce = true;
+  asSavedSig = asFormSig();
+  asDirty();
 }
+// Diagram is a preview only: it never saves settings or switches a mode.
+function asRouteForm() {
+  return { enabled:$('#as-enabled').checked, microphone:{source:$('#as-input').value},
+    llm:{transport:$('#as-transport').value,base_url:$('#as-url').value.trim(),model:$('#as-model').value.trim(),voice:$('#as-realtime-voice').value.trim() || 'marin'},
+    tts:{provider:$('#as-tts').value,base_url:$('#as-tts-url').value.trim(),model:$('#as-tts-model').value.trim(),voice:$('#as-tts-voice').value.trim()},
+    stt:{provider:$('#as-stt').value,base_url:$('#as-stt-url').value.trim(),model:$('#as-stt-model').value.trim()} };
+}
+function asRouteRender() {
+  if (!asCfg || !window.AssistantRoute) return;
+  const form = asRouteForm(), draft = AssistantRoute.signature(form) !== AssistantRoute.signature(asCfg) && AssistantRoute.signature(form) !== AssistantRoute.signature(asRouteRuntime.config || asCfg);
+  const config = draft ? form : asRouteRuntime.config || asCfg;
+  const route = AssistantRoute.build(config, asRouteRuntime, asRouteJourney);
+  $('#as-route-draft').hidden = !draft;
+  $('#as-route-state').textContent = asRouteRuntime.running === false ? 'Помощник остановлен' : asRouteJourney === 'panel' ? 'Проверка из панели' : !config.enabled ? 'Отвечает Алиса' : asRouteJourney === 'conversation' ? 'Разговор с ассистентом' : asRouteRuntime.state?.mode ? 'Режим разговора включён' : 'Одноразовый вопрос через Алису';
+  const icons = {input:'i-edit', stt:'i-wave', model:'i-flow', tts:'i-wave', speaker:'i-vol'};
+  const stageOf = {stt:'voice', model:'model', tts:'tts'};
+  const flow = $('#as-route-flow'), openStage = flow.dataset && flow.dataset.stage;
+  // «Вопрос» и «Распознавание» — один шаг «Слух»; для текста из панели вопроса в цепочке нет
+  const steps = route.nodes.filter(n => n.kind !== 'input')
+    .map(n => n.kind === 'stt' ? { ...n, label: 'Слух' } : n);
+  flow.innerHTML = steps.map(n => {
+    const stage = stageOf[n.kind] || '', open = !!stage && stage === openStage;
+    const cls = `as-step${n.bad ? ' is-bad' : ''}${open ? ' is-stage-open' : ''}`;
+    const icon = `<span class="as-step-icon" aria-hidden="true"><svg><use href="#${icons[n.kind]}"></use></svg></span>`;
+    const body = `<span class="as-step-body"><small>${esc(n.label)}</small><strong>${esc(n.title)}</strong><span class="as-route-detail">${esc(n.detail)}</span></span>`;
+    if (!stage) return `<li class="${cls}" data-kind="${n.kind}"><div class="as-step-static">${icon}${body}</div></li>`;
+    return `<li class="${cls}" data-kind="${n.kind}"><button type="button" class="as-step-btn" data-target="${stage}" aria-pressed="${open}">${icon}${body}<span class="as-step-go" aria-hidden="true">→</span></button></li>`;
+  }).join('');
+  $('#as-route-notes').innerHTML = route.notes.map(n => `<p${n.bad ? ' class="is-bad"' : ''}>${esc(n.text)}</p>`).join('');
+}
+function asSelectJourney(journey) {
+  asRouteJourney = journey;
+  $$('[data-as-route]').forEach(el => el.setAttribute('aria-selected', String(el.dataset.asRoute === journey)));
+  asModeRow();
+}
+$$('[data-as-route]').forEach(b => b.onclick = () => {
+  asSelectJourney(b.dataset.asRoute);
+  asRouteRender();
+});
+$('#as-on').addEventListener('input',asRouteRender);
+$('#as-on').addEventListener('change',asRouteRender);
+$('#as-on').addEventListener('input',asDirty);
+$('#as-on').addEventListener('change',asDirty);
+
+// ---------- разделы настроек ----------
+let asPaneName = 'voice';
+function asModeRow() {
+  $('#as-mode-row').hidden = asRouteJourney !== 'conversation';
+}
+function asPane(name, scroll) {
+  if (!name || name === 'none') return;
+  asPaneName = name;
+  if (name !== 'model') asModelListOpen(false);
+  $$('.as-tabs button[data-as-pane]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.asPane === name)));
+  $$('.as-pane[data-as-pane]').forEach(p => p.classList.toggle('is-open', p.dataset.asPane === name));
+  $('#as-route-flow').dataset.stage = name;
+  asRouteRender();
+  if (name === 'phrases') asWakeLoad();
+  if (scroll && window.matchMedia('(max-width:1050px)').matches) {
+    const card = $('.as-settings');
+    if (card) card.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+}
+$$('.as-tabs button[data-as-pane]').forEach(b => b.onclick = () => asPane(b.dataset.asPane));
+$('#as-route-flow').addEventListener('click', event => {
+  const node = event.target.closest('[data-target]');
+  if (node) asPane(node.dataset.target, true);
+});
+$('#as-route-flow').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const node = event.target.closest('[data-target]');
+  if (!node) return;
+  event.preventDefault();
+  asPane(node.dataset.target, true);
+});
+
+// ---------- сохранённые провайдеры ----------
+let asConns = {}, asActiveConn = '', asSavedSig = '', asFilledOnce = false;
+function asTransportButtons() {
+  const v = $('#as-transport').value;
+  $$('#as-transport-btns button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.transport === v)));
+}
+function asProviderName(id) {
+  const conn = asConns[id];
+  const url = String(conn?.base_url || '').trim();
+  if (!url) return 'Новый';
+  const preset = $$('#as-presets [data-preset]').find(b => asKeyId(b.dataset.preset) === asKeyId(url));
+  return preset ? preset.dataset.name : (asHostText(url) || 'Свой адрес');
+}
+function asProvidersRender() {
+  $('#as-providers').innerHTML = Object.keys(asConns).map(id => {
+    const active = id === asActiveConn, name = asProviderName(id);
+    return `<span class="as-provider${active ? ' is-active' : ''}">`
+      + `<button type="button" class="as-provider-tab" aria-pressed="${active}" data-conn="${esc(id)}">${esc(name)}</button>`
+      + `<button type="button" class="as-provider-del" data-conn-del="${esc(id)}" title="Удалить провайдера" aria-label="Удалить провайдера ${esc(name)}">×</button>`
+      + '</span>';
+  }).join('') + '<button type="button" class="as-provider-add" data-conn-add="1" title="Добавить провайдера" aria-label="Добавить провайдера">+</button>';
+}
+function asPresetsOpen(on) { $('#as-presets').classList.toggle('is-open', on); }
+function asConnStore() {
+  if (!asActiveConn) return;
+  const conn = { base_url: $('#as-url').value.trim(), model: $('#as-model').value.trim(),
+    transport: $('#as-transport').value, voice: $('#as-realtime-voice').value.trim() || 'marin' };
+  const id = asKeyId(conn.base_url);
+  if (id && id !== asActiveConn) delete asConns[asActiveConn];
+  if (id) { asConns[id] = conn; asActiveConn = id; } else asConns[asActiveConn] = conn;
+}
+function asConnLoad(conn) {
+  $('#as-url').value = conn.base_url || '';
+  $('#as-model').value = conn.model || '';
+  $('#as-transport').value = conn.transport || 'chat';
+  $('#as-key').value = '';
+  asModelListOpen(false);
+  asTransportButtons();
+  asProvidersRender();
+  asKeysView();
+  asAudioView();
+  if (conn.base_url && (asCfg?.keys || {})[asKeyId(conn.base_url)]) asModels(true);
+  asDirty();
+}
+function asConnActivate(id) {
+  if (!id || id === asActiveConn) return;
+  asConnStore();
+  const conn = asConns[id];
+  if (!conn) return;
+  asActiveConn = id;
+  asConnLoad(conn);
+  asPresetsOpen(false);
+}
+function asConnAdd(url) {
+  asConnStore();
+  const id = asKeyId(url);
+  if (id) {
+    if (!asConns[id]) asConns[id] = { base_url: url, model: '', transport: 'chat', voice: 'marin' };
+    asActiveConn = id;
+  } else {
+    asActiveConn = 'new:' + Date.now();
+    asConns[asActiveConn] = { base_url: '', model: '', transport: 'chat', voice: 'marin' };
+  }
+  asConnLoad(asConns[asActiveConn]);
+  asPresetsOpen(false);
+  if (!url) $('#as-url').focus();
+}
+async function asConnDelete(id) {
+  const conn = asConns[id];
+  if (!conn) return;
+  if (!conn.base_url || id.startsWith('new:')) {
+    delete asConns[id];
+    if (asActiveConn === id) {
+      asActiveConn = Object.keys(asConns)[0] || 'new:' + Date.now();
+      if (!asConns[asActiveConn]) asConns[asActiveConn] = { base_url: '', model: '', transport: 'chat', voice: 'marin' };
+      asConnLoad(asConns[asActiveConn]);
+    }
+    asProvidersRender();
+    asDirty();
+    return;
+  }
+  if (!confirm(`Удалить провайдера «${asProviderName(id)}» и его ключ?`)) return;
+  await act(null, async () => {
+    asFill((await api('/api/assistant', { delete_connection: conn.base_url })).config);
+  }, 'Провайдер удалён');
+}
+$('#as-providers').addEventListener('click', event => {
+  const del = event.target.closest('[data-conn-del]');
+  if (del) return asConnDelete(del.dataset.connDel);
+  const add = event.target.closest('[data-conn-add]');
+  if (add) return asPresetsOpen(true);
+  const tab = event.target.closest('[data-conn]');
+  if (tab) asConnActivate(tab.dataset.conn);
+});
+$$('#as-presets [data-preset]').forEach(b => b.onclick = () => asConnAdd(b.dataset.preset));
+$('#as-presets [data-custom]').onclick = () => asConnAdd('');
+$$('#as-transport-btns button').forEach(b => b.onclick = () => {
+  if ($('#as-transport').value === b.dataset.transport) return;
+  $('#as-transport').value = b.dataset.transport;
+  asAudioView({ target: { id: 'as-transport' } });
+  asDirty();
+});
+
+// ---------- фразы ----------
+let asWakeWords = [], asWakeFetched = false, asWakeLoading = false;
+function asWakeLoad(force) {
+  if (asWakeLoading || (asWakeFetched && !force)) return;
+  asWakeLoading = true;
+  api('/api/wakeword/actions').then(wa => {
+    asWakeWords = Object.entries(wa?.actions || {}).filter(([, a]) => a && a.type === 'assistant').map(([w]) => w);
+  }).catch(() => { asWakeWords = []; }).finally(() => {
+    asWakeLoading = false; asWakeFetched = true; asPhrasesRender();
+  });
+}
+function asPhraseList(id) { return $(id).value.split(',').map(s => s.trim()).filter(Boolean); }
+function asPhraseSet(id, list) {
+  $(id).value = list.slice(0, 10).join(', ');
+  asPhrasesRender();
+  if (asSavedSig) asDirty();
+}
+function asPhraseChips(chipsId, hiddenId, locked, addId) {
+  const words = asPhraseList(hiddenId);
+  $(chipsId).innerHTML = words.map(w => `<span class="as-token">${esc(w)}<button type="button" data-phrase-del="${esc(hiddenId)}" data-word="${esc(w)}" aria-label="Удалить фразу ${esc(w)}">×</button></span>`).join('')
+    + (locked || []).map(w => `<span class="as-token is-locked" title="Слово из вкладки «Активация»">${esc(w)}</span>`).join('')
+    + `<button type="button" class="as-token add" data-phrase-add="${esc(addId)}">+ фраза</button>`;
+}
+function asPhrasesRender() {
+  asPhraseChips('#as-trigger-chips', '#as-triggers', asWakeWords, '#as-trigger-add');
+  asPhraseChips('#as-enter-chips', '#as-mode-enter', null, '#as-enter-add');
+  asPhraseChips('#as-exit-chips', '#as-mode-exit', null, '#as-exit-add');
+  $('#as-wake-note').innerHTML = asWakeWords.length
+    ? `Слова из <a href="#wakeword">«Активации»</a> с действием «Ассистент» — ${asWakeWords.length} шт., удаляются там же.`
+    : 'Свои слова активации можно привязать к ассистенту во вкладке <a href="#wakeword">«Активация»</a>.';
+}
+['#as-trigger-chips', '#as-enter-chips', '#as-exit-chips'].forEach(id => $(id).addEventListener('click', event => {
+  const add = event.target.closest('[data-phrase-add]');
+  if (add) {
+    const input = $(add.dataset.phraseAdd);
+    input.hidden = false;
+    input.value = '';
+    input.focus();
+    return;
+  }
+  const b = event.target.closest('[data-phrase-del]');
+  if (!b) return;
+  asPhraseSet(b.dataset.phraseDel, asPhraseList(b.dataset.phraseDel).filter(w => w !== b.dataset.word));
+}));
+[['#as-trigger-add', '#as-triggers'], ['#as-enter-add', '#as-mode-enter'], ['#as-exit-add', '#as-mode-exit']].forEach(([add, hidden]) => {
+  const input = $(add);
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { input.value = ''; input.hidden = true; return; }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const word = input.value.trim();
+    if (word) {
+      const list = asPhraseList(hidden);
+      if (!list.includes(word)) asPhraseSet(hidden, [...list, word]);
+    }
+    input.value = '';
+    input.hidden = true;
+  });
+  input.addEventListener('blur', () => { if (!input.value.trim()) input.hidden = true; });
+});
+
+// ---------- изменения и сохранение ----------
+function asFormSig() {
+  const key = id => $(id).value ? id + ':' + $(id).value : '';
+  return JSON.stringify([$('#as-input').value, $('#as-triggers').value, $('#as-mode-enter').value, $('#as-mode-exit').value,
+    $('#as-mode-timeout').value, $('#as-mode-follow').checked, $('#as-url').value.trim(), $('#as-model').value.trim(),
+    $('#as-transport').value, $('#as-realtime-voice').value, $('#as-prompt').value, $('#as-tokens').value, $('#as-history').value,
+    $('#as-proxy').value.trim(), $('#as-mic-gain').value, $('#as-mic-threshold').value, $('#as-mic-silence').value,
+    $('#as-stt').value, $('#as-stt-url').value, $('#as-stt-proxy').value, $('#as-stt-model').value, $('#as-stt-language').value,
+    $('#as-tts').value, $('#as-tts-url').value, $('#as-tts-model').value, $('#as-tts-voice').value, $('#as-tts-speed').value,
+    $('#as-skill-time').checked, $('#as-skill-weather').checked, $('#as-weather-city').value.trim(),
+    $('#as-weather-lat').value, $('#as-weather-lon').value,
+    key('#as-key'), key('#as-stt-key'), key('#as-tts-key')]);
+}
+function asDirty() {
+  const dirty = !asSavedSig || asFormSig() !== asSavedSig;
+  $('#as-save').disabled = !dirty;
+  $('#as-save-cancel').hidden = !dirty;
+  $('#as-dirty').textContent = dirty ? 'Изменения не сохранены' : 'Сохранено';
+  return dirty;
+}
+$('#as-save-cancel').onclick = () => { if (asCfg) { asFill(asCfg); toast('Изменения отменены'); } };
+
 // Ключи хранятся по адресу API — как keyID в device/assistant
 const asKeyId = url => String(url || '').trim().replace(/\/+$/, '').toLowerCase();
-function asProvider(url) {
-  const opt = [...$('#as-preset').options].find(o => o.value && asKeyId(o.value) === url);
-  return opt ? opt.textContent : url.replace(/^https?:\/\//, '').split('/')[0];
-}
 function asKeysView() {
   const keys = asCfg?.keys || {};
-  [['#as-url', '#as-key'], ['#as-tts-url', '#as-tts-key']].forEach(([u, k]) => {
+  [['#as-url', '#as-key'], ['#as-tts-url', '#as-tts-key'], ['#as-stt-url', '#as-stt-key']].forEach(([u, k]) => {
     const has = keys[asKeyId($(u).value)];
     $(k).placeholder = has ? 'сохранён ' + has : 'не задан';
   });
-  $('#as-keys').innerHTML = Object.entries(keys).map(([url, m]) =>
-    `<span title="${esc(url)}">${esc(asProvider(url))} ${esc(m)}<button type="button" data-url="${esc(url)}" aria-label="Удалить ключ ${esc(asProvider(url))}">×</button></span>`).join('');
 }
-['#as-url', '#as-tts-url'].forEach(id => $(id).addEventListener('input', asKeysView));
-$('#as-keys').onclick = e => {
-  const url = e.target.closest('button')?.dataset.url;
-  if (!url || !confirm(`Удалить с колонки ключ для ${asProvider(url)}?`)) return;
-  act(null, async () => asFill((await api('/api/assistant', { delete_key: url })).config), 'Ключ удалён');
-};
+['#as-url', '#as-tts-url', '#as-stt-url'].forEach(id => $(id).addEventListener('input', asKeysView));
 // Панель открыта по HTTP с другого устройства: ключ уйдёт по сети открытым текстом. Не запрещаем — в домашней сети
 // это обычный случай, — но предупреждаем и даём ссылку на HTTPS, если он включён.
 function asHttpWarning() {
@@ -5925,55 +7485,283 @@ function asHttpWarning() {
   const port = accessInfo?.ports?.https;
   const url = port && Object.assign(new URL(location.href), { protocol: 'https:', port: String(port) }).href;
   $$('.as-http').forEach(el => {
-    if (el.matches('[data-tts]') && $('#as-tts').value !== 'openai') { el.hidden = true; return; }
-    el.hidden = !plain;
+    const ttsOnly = el.dataset.httpScope === 'tts';
+    el.hidden = !plain || (ttsOnly && $('#as-tts-custom').hidden);
     el.innerHTML = 'Панель открыта по HTTP: ключ уйдёт до компьютера с панелью открытым текстом. В своей домашней сети риск '
       + 'невелик, в чужой или общей — заметнее. ' + (url ? `Безопаснее <a href="${esc(url)}">открыть панель по HTTPS</a>.`
       : 'Безопаснее включить HTTPS («Настройки» → «Доступ»).');
   });
 }
+// Что всё равно уходит Яндексу: вопрос — когда его распознаёт Алиса, ответ — когда его читает Алиса.
+function asPrivacyView() {
+  const direct = $('#as-input').value === 'microphone', realtime = $('#as-transport').value === 'realtime';
+  const input = $('#as-privacy-input'), tts = $('#as-privacy-tts');
+  input.hidden = direct;
+  if (!direct) input.innerHTML = '<b>Обратите внимание!</b> ' + esc('Яндекс по-прежнему получает голосовые вопросы: «Алиса, спроси GPT, …» распознаёт её облако, '
+    + 'звук и текст фразы уходят на серверы Яндекса, как обычный запрос к Алисе. Вопросы из «Проверки» Яндекс не видит.');
+  tts.hidden = realtime || $('#as-tts').value !== 'alice';
+  if (!tts.hidden) tts.innerHTML = '<b>Обратите внимание!</b> ' + esc('Ответ модели уходит Яндексу: Алиса озвучивает его запросом «Повтори за мной».');
+}
 function asTtsView() {
   const v = $('#as-tts').value;
-  $$('[data-tts]').forEach(el => el.hidden = v !== 'openai');
+  $$('input[name="as-tts-src"]').forEach(r => r.checked = r.value === v);
+  $('#as-tts-custom').hidden = $('#as-transport').value === 'realtime' || v !== 'openai';
   $('#as-tts-hint').textContent = AS_TTS_HINT[v];
   asHttpWarning();
-  // что при этом всё равно уходит Яндексу — зависит от способа озвучки
-  $('#as-privacy').innerHTML = '<b>Обратите внимание!</b> ' + esc('Яндекс по-прежнему получает голосовые вопросы: «Алиса, спроси GPT, …» распознаёт её облако, '
-    + 'звук и текст фразы уходят на серверы Яндекса, как обычный запрос к Алисе. '
-    + (v === 'alice' ? 'Ответ модели тоже уходит Яндексу: Алиса озвучивает его запросом «Повтори за мной».'
-      : 'Ответ модели Яндекс не получает — его озвучивает выбранный синтезатор.')
-    + ' Вопросы из «Проверки» Яндекс не видит.' + (v === 'alice' ? ' Только ответ на них.' : ''));
+  asPrivacyView();
 }
-$('#as-tts').onchange = asTtsView;
+$$('input[name="as-tts-src"]').forEach(r => r.onchange = () => {
+  $('#as-tts').value = r.value;
+  asTtsView();
+  asRouteRender();
+  asDirty();
+});
+function asAudioView() {
+  const cap = AssistantRoute.capabilities($('#as-url').value.trim(), $('#as-model').value.trim());
+  // OpenAI exposes both protocols. Choosing Realtime also chooses a compatible
+  // model, so users never have to guess the hidden model/protocol dependency.
+  const providerRealtime = cap.openai;
+  const target = arguments[0]?.target?.id;
+  const base = $('#as-url').value.trim(), model = $('#as-model').value.trim();
+  const remembered = asProtocolModels.get(base) || {};
+  if (target === 'as-transport' && providerRealtime) {
+    const next = $('#as-transport').value;
+    if (next === 'realtime' && !cap.realtime) {
+      if (/^(gpt-|o\d|chatgpt-)/i.test(model) || asModelList.url === base && asModelList.models.includes(model)) remembered.chat = model;
+      $('#as-model').value = remembered.realtime || asModelList.models.find(m => asModelList.url === base && AssistantRoute.capabilities(base,m).realtime) || 'gpt-realtime';
+    } else if (next === 'chat' && cap.realtime) {
+      remembered.realtime = model;
+      $('#as-model').value = remembered.chat || asModelList.models.find(m => asModelList.url === base && AssistantRoute.conversationModel(base,m) && !AssistantRoute.capabilities(base,m).realtime) || 'gpt-4o-mini';
+    }
+  }
+  const effective = AssistantRoute.capabilities(base,$('#as-model').value.trim());
+  const realtime = effective.realtime, microphoneSupported = asRouteRuntime.microphone_supported !== false;
+  asProtocolModels.set(base,remembered);
+  // Тип API выбирается только там, где провайдер умеет оба протокола
+  $('#as-transport-row').hidden = !providerRealtime;
+  $('#as-transport').value = realtime ? 'realtime' : 'chat';
+  asTransportButtons();
+  $$('[data-realtime]').forEach(el => el.hidden = !realtime);
+  // Источник речи
+  $('#as-source-mic-choice').hidden = !microphoneSupported;
+  $('#as-input').querySelector('option[value="microphone"]').hidden = !microphoneSupported;
+  $('#as-input').querySelector('option[value="microphone"]').disabled = !microphoneSupported;
+  if (!microphoneSupported && $('#as-input').value === 'microphone') {
+    $('#as-input').value = 'alice';
+    $$('input[name="as-source"]').forEach(r => r.checked = r.value === 'alice');
+  }
+  const direct = $('#as-input').value === 'microphone';
+  $$('[data-text-mode]').forEach(el => el.hidden = realtime && direct);
+  $('#as-proxy-hint').textContent = realtime ? 'Для соединения с голосовой моделью; остальной трафик колонки не меняется.' : 'Для запросов к модели и озвучке; остальной трафик колонки не меняется.';
+  $('#as-api-hint').textContent = realtime ? 'Голосовая модель · отвечает своим голосом через Realtime.' : 'Текстовая модель · ответ читает выбранный ниже голос.';
+  const voice = $('#as-realtime-voice').value;
+  if (realtime && $('#as-realtime-voice').dataset.voices !== effective.voices.join(',')) {
+    $('#as-realtime-voice').innerHTML = effective.voices.map(v => `<option value="${v}">${v}</option>`).join('');
+    $('#as-realtime-voice').value = effective.voices.includes(voice) ? voice : effective.voices[0];
+    $('#as-realtime-voice').dataset.voices = effective.voices.join(',');
+  }
+  // Realtime отвечает своим голосом — отдельный синтезатор не нужен
+  $('#as-tts-card').hidden = realtime;
+  $('#as-tts-tab').disabled = realtime;
+  if (realtime && asPaneName === 'tts') asPane('model');
+  $('#as-stt-card').hidden = realtime || !direct;
+  $('#as-mic-block').hidden = !direct;
+  $('#as-mic-controls').hidden = !direct;
+  $('#as-mic-status').hidden = !direct && !asMicPending && !asMicNotice;
+  $('#as-mic-connect').hidden = !direct && !asRouteRuntime.microphone_installed;
+  const oldBackend = typeof asRouteRuntime.running === 'boolean' && !('microphone_installed' in asRouteRuntime);
+  $('#as-mic-connect').disabled = !!asMicPending || oldBackend;
+  if (asMicPending) {
+    $('#as-mic-connect').textContent = asMicPending === 'connect' ? 'Подключаю…' : 'Отключаю…';
+    $('#as-mic-status').textContent = asMicPending === 'connect' ? 'Подключение захвата: аудиослужбы Алисы перезапускаются. Обычно это занимает несколько десятков секунд; первая установка может быть дольше.' : 'Отключение захвата и восстановление аудиотракта Алисы…';
+  } else if (asMicNotice) $('#as-mic-status').textContent = asMicNotice;
+  if (oldBackend && direct) $('#as-mic-status').textContent = 'Сервер панели ещё не поддерживает подключение микрофонов. Перезапустите панель после обновления.';
+  $('#as-led-color').hidden = true;
+  $('#as-led-color-btn').hidden = !$('#as-led').checked;
+  $$('[data-stt-provider]').forEach(el => el.hidden = !cap.modelSTT);
+  $('#as-stt').querySelector('option[value="model"]').hidden = !cap.modelSTT;
+  $('#as-stt').querySelector('option[value="model"]').disabled = !cap.modelSTT;
+  if (direct && !realtime && ($('#as-stt').value === 'alice' || $('#as-stt').value === 'model' && !cap.modelSTT)) {
+    $('#as-stt').value = cap.modelSTT ? 'model' : 'custom';
+  }
+  const stt = $('#as-stt').value;
+  $$('[data-stt-custom]').forEach(el => el.hidden = realtime || !direct || stt !== 'custom');
+  $('#as-stt').disabled = realtime || !direct;
+  $('#as-input-hint').textContent = direct ? 'Прямой захват пока проверен на Лайт 2. Подключение и отключение ненадолго перезапускает Алису. В режиме разговора звук получает выбранный помощник.' : 'Фразу распознаёт Алиса. Чтобы выбрать другой распознаватель, переключите источник на микрофоны колонки.';
+  const sttName = stt === 'custom' ? 'свой STT' : stt === 'model' ? 'провайдера модели' : 'Алисы';
+  $('#as-mode-help').textContent = direct ? `Скажите «Алиса, переключись на GPT» — дальше звук слушает ${sttName}. Остановить ответ и выключить режим можно в панели.` : 'Скажите «Алиса, переключись на GPT» — и следующие вопросы к Алисе уйдут модели. «Алиса, верни Алису» возвращает обычный режим.';
+  $('#as-follow-hint').textContent = direct ? '— после ответа слушать следующий вопрос без нового обращения' : '— после ответа Алиса несколько секунд слушает следующий вопрос';
+  $('#as-stt-hint').textContent = stt === 'model' ? 'Распознавание использует адрес, ключ и прокси выбранного провайдера модели.' : 'Укажите свой OpenAI-совместимый STT-сервер или откройте инструкцию запуска Whisper в Docker ниже.';
+  asTtsView();
+  asRouteRender();
+}
+function asHostText(url) {
+  const s = String(url || '').trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  return s.split(/[/?#]/)[0].replace(/^.*@/, '');
+}
+$('#as-transport').onchange = event => {
+  const select = event.currentTarget;
+  const top = select.getBoundingClientRect().top;
+  asAudioView(event);
+  const offset = select.getBoundingClientRect().top - top;
+  if (offset) window.scrollBy({top:offset, behavior:'instant'});
+};
+['#as-stt', '#as-input'].forEach(id => $(id).onchange = event => {
+  if ($('#as-input').value === 'microphone') asSelectJourney('conversation');
+  asAudioView(event);
+  asDirty();
+});
+$$('input[name="as-source"]').forEach(r => r.onchange = () => {
+  $('#as-input').value = r.value;
+  if (r.value === 'microphone') asSelectJourney('conversation');
+  asAudioView();
+  asDirty();
+});
+['#as-url', '#as-model'].forEach(id => $(id).addEventListener('input',asAudioView));
+async function asMicrophoneToggle(button) {
+  if (asMicPending) return;
+  const on = !button.dataset.on;
+  asMicPending = on ? 'connect' : 'disconnect';
+  asMicNotice = '';
+  asAudioView();
+  try {
+    const st = await api('/api/assistant/microphone', {on});
+    if (on && (!st.microphone_installed || !st.state?.microphone?.ready)) throw new Error('Сервер не подтвердил подключение микрофонного потока. Проверьте состояние программы помощника.');
+    asRouteRuntime = st;
+    button.dataset.on = st.microphone_installed ? '1' : '';
+    asMicNotice = on ? 'Захват подключён, поток микрофонов получен. Настройки распознавания сохраняются отдельно.' : 'Захват отключён. Обычный аудиотракт Алисы восстановлен.';
+  } catch (e) {
+    asMicNotice = e.status === 404 ? 'Сервер панели не знает команду подключения микрофонов. Перезапустите панель после обновления.' : 'Не удалось изменить захват микрофонов: ' + e.message;
+  } finally {
+    asMicPending = null;
+    button.textContent = button.dataset.on ? 'Отключить захват' : 'Подключить микрофоны';
+    asAudioView();
+  }
+}
+$('#as-mic-connect').onclick = e => asMicrophoneToggle(e.currentTarget);
+
 const asLed = () => act(null, async () => asFill((await api('/api/assistant', { led: { enabled: $('#as-led').checked, color: $('#as-led-color').value } })).config));
 $('#as-led').onchange = asLed;
 $('#as-led-color').onchange = asLed;
 // Модели спрашивает сама колонка (её сеть и прокси); ключ — из поля или уже сохранённый
 let asModelsReq = 0;
+function asModelListOpen(on) {
+  $('#as-model-list').hidden = !on;
+  $('#as-models-btn').setAttribute('aria-expanded', String(!!on));
+}
 async function asModels(quiet) {
   const url = $('#as-url').value.trim();
   if (!url) return quiet || toast('Сначала укажите адрес API', true);
-  const req = ++asModelsReq, hint = $('#as-models-hint');
+  const req = ++asModelsReq, hint = $('#as-models-hint'), list = $('#as-model-list');
   hint.textContent = 'Запрашиваю список моделей…';
   try {
     const r = await api('/api/assistant/models', { base_url: url, api_key: $('#as-key').value, proxy: $('#as-proxy').value.trim() });
     if (req !== asModelsReq) return;
-    $('#as-models').innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join('');
-    hint.textContent = r.models.length ? `Доступно моделей: ${r.models.length}. Начните вводить название или нажмите на поле.` : 'API не вернул ни одной модели.';
+    asModelList = {url,models:r.models};
+    const models = r.models.filter(m => AssistantRoute.conversationModel(url,m));
+    list.innerHTML = models.map(m => `<button type="button" class="as-picker-row" data-model="${esc(m)}">${esc(m)}</button>`).join('');
+    hint.textContent = models.length ? `Доступно моделей: ${models.length}. Нажмите «Список», чтобы выбрать.` : 'API не вернул ни одной модели.';
+    if (!quiet) asModelListOpen(!!models.length);
   } catch (e) {
-    if (req === asModelsReq) hint.textContent = 'Список не получен: ' + e.message;
+    if (req === asModelsReq) {
+      hint.textContent = 'Список не получен: ' + e.message;
+      if (!quiet) asModelListOpen(false);
+    }
   }
 }
-$('#as-models-btn').onclick = () => asModels();
+$('#as-models-btn').onclick = () => {
+  if (!$('#as-model-list').hidden) return asModelListOpen(false);
+  asModels();
+};
+function asModelSuggest() {
+  const q = $('#as-model').value.trim().toLowerCase(), base = $('#as-url').value.trim();
+  const list = $('#as-model-list');
+  const all = (asModelList.models || []).filter(m => AssistantRoute.conversationModel(base, m));
+  if (!all.length || !q) { asModelListOpen(false); return; }
+  const matches = all.filter(m => m.toLowerCase().includes(q));
+  list.innerHTML = matches.slice(0, 8).map(m => `<button type="button" class="as-picker-row" data-model="${esc(m)}">${esc(m)}</button>`).join('');
+  asModelListOpen(matches.length > 0);
+}
+$('#as-model').addEventListener('input', () => {
+  const base = $('#as-url').value.trim();
+  if (!asModelList.models.length || asKeyId(asModelList.url) !== asKeyId(base)) {
+    if (base) asModels(true).then(asModelSuggest);
+  } else {
+    asModelSuggest();
+  }
+});
+$('#as-model-list').addEventListener('click', e => {
+  const row = e.target.closest('[data-model]');
+  if (!row) return;
+  $('#as-model').value = row.dataset.model;
+  asModelListOpen(false);
+  asAudioView();
+  asDirty();
+});
+document.addEventListener('click', e => {
+  if (e.target.closest('#as-model-list') || e.target.closest('#as-models-btn')) return;
+  if (!$('#as-model-list').hidden) asModelListOpen(false);
+});
+
+// ---------- локальные ответы ----------
+function asWeatherView() {
+  $('#as-weather-box').hidden = !$('#as-skill-weather').checked;
+}
+function asWeatherHint() {
+  const city = $('#as-weather-city').value.trim(), lat = $('#as-weather-lat').value, lon = $('#as-weather-lon').value;
+  const hint = $('#as-weather-hint');
+  hint.textContent = (lat && lon)
+    ? `${city ? city + ' · ' : ''}координаты ${Number(lat).toFixed(2)}, ${Number(lon).toFixed(2)}.`
+    : 'Город не задан — нажмите «Определить» или введите вручную. Без него вопрос о погоде уйдёт модели.';
+}
+async function asWeatherGeo(silent) {
+  const city = $('#as-weather-city').value.trim(), hint = $('#as-weather-hint'), btn = $('#as-weather-geo');
+  if (btn) btn.disabled = true;
+  hint.textContent = city ? 'Ищу город…' : 'Определяю город по IP…';
+  try {
+    const r = await api('/api/assistant/geo', { city });
+    $('#as-weather-city').value = r.city || city;
+    $('#as-weather-lat').value = r.lat;
+    $('#as-weather-lon').value = r.lon;
+    asWeatherHint();
+    asDirty();
+  } catch (e) {
+    hint.textContent = silent ? 'Город не определился — введите вручную.' : e.message;
+    if (!silent) toast(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+$('#as-skill-weather').addEventListener('change', () => {
+  asWeatherView();
+  if ($('#as-skill-weather').checked && !$('#as-weather-lat').value) asWeatherGeo(true);
+});
+$('#as-weather-check').addEventListener('click', async () => {
+  const hint = $('#as-weather-hint'), btn = $('#as-weather-check');
+  const lat = Number($('#as-weather-lat').value) || 0, lon = Number($('#as-weather-lon').value) || 0;
+  hint.textContent = 'Проверяю запрос с колонки…';
+  btn.disabled = true;
+  try {
+    const r = await api('/api/assistant/weather', { lat, lon });
+    hint.textContent = r.text || 'пустой ответ';
+  } catch (e) {
+    hint.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+$('#as-weather-geo').onclick = () => asWeatherGeo(false);
+$('#as-weather-city').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); asWeatherGeo(false); }
+});
 ['#as-url', '#as-key', '#as-proxy'].forEach(id => $(id).addEventListener('change', () => asModels(true)));
 $('#as-update').onclick = e => act(e.currentTarget, async () => { await api('/api/assistant/install', {}); await loadAssistant(); }, 'Программа на колонке обновлена');
-$('#as-preset').onchange = e => { if (e.target.value) { $('#as-url').value = e.target.value; asKeysView(); asModels(true); } e.target.value = ''; };
 $('#as-install').onclick = e => act(e.currentTarget, async () => { await api('/api/assistant/install', {}); await loadAssistant(true); },
   'Помощник установлен. Укажите модель и включите его');
 $('#as-mode-btn').onclick = e => {
   const on = !e.currentTarget.dataset.on;
   act(e.currentTarget, async () => { await api('/api/assistant/mode', { on }); setTimeout(loadAssistant, 400); },
-    on ? 'Режим ассистента включён — колонка скажет об этом' : 'Режим ассистента выключен');
+    on ? 'Режим разговора включён — колонка скажет об этом' : 'Режим разговора выключен');
 };
 $('#as-mode-follow').onchange = e => act(null, async () => asFill((await api('/api/assistant', { mode: { follow_up: e.target.checked } })).config));
 $('#as-restart').onclick = e => act(e.currentTarget, async () => { await api('/api/assistant/start', {}); await loadAssistant(); }, 'Перезапущен');
@@ -5981,19 +7769,40 @@ $('#as-enabled').onchange = e => act(null, async () => { await api('/api/assista
   e.target.checked ? 'Помощник отвечает на фразу' : 'Помощник выключен');
 $('#as-save').onclick = e => act(e.currentTarget, async () => {
   const num = (id, d) => Number($(id).value) || d;
-  const st = await api('/api/assistant', {
+  const realtime = $('#as-transport').value === 'realtime', direct = $('#as-input').value === 'microphone';
+  asConnStore();
+  const payload = {
     triggers: $('#as-triggers').value.split(',').map(s => s.trim()).filter(Boolean),
     mode: { enter: $('#as-mode-enter').value.split(',').map(s => s.trim()).filter(Boolean),
       exit: $('#as-mode-exit').value.split(',').map(s => s.trim()).filter(Boolean),
       timeout_min: Math.max(1, Math.min(240, Number($('#as-mode-timeout').value) || 10)), follow_up: $('#as-mode-follow').checked },
-    llm: { base_url: $('#as-url').value.trim(), api_key: $('#as-key').value, model: $('#as-model').value.trim(),
+    llm: { transport: $('#as-transport').value, voice: $('#as-realtime-voice').value.trim(), base_url: $('#as-url').value.trim(), api_key: $('#as-key').value, model: $('#as-model').value.trim(),
       system_prompt: $('#as-prompt').value.trim(), max_tokens: num('#as-tokens', 500), history: Math.max(0, Number($('#as-history').value) || 0),
       proxy: $('#as-proxy').value.trim() },
+    microphone: { source: $('#as-input').value, gain: num('#as-mic-gain', 32), threshold: num('#as-mic-threshold', 300), silence_ms: num('#as-mic-silence', 900) },
+    stt: { proxy: $('#as-stt-proxy').value.trim(), provider: $('#as-stt').value, base_url: $('#as-stt-url').value.trim(), api_key: $('#as-stt-key').value, model: $('#as-stt-model').value.trim(), language: $('#as-stt-language').value.trim() },
     tts: { provider: $('#as-tts').value, base_url: $('#as-tts-url').value.trim(), api_key: $('#as-tts-key').value,
       model: $('#as-tts-model').value.trim(), voice: $('#as-tts-voice').value.trim(), speed: num('#as-tts-speed', 1) },
-  });
+    skills: { time: $('#as-skill-time').checked, weather: $('#as-skill-weather').checked },
+    weather: { city: $('#as-weather-city').value.trim(), lat: Number($('#as-weather-lat').value) || 0,
+      lon: Number($('#as-weather-lon').value) || 0 },
+  };
+  if (realtime) { delete payload.tts; delete payload.stt; if (direct) delete payload.mode.exit; }
+  if (!direct) { payload.microphone = {source: 'alice'}; delete payload.stt; }
+  if (!realtime) delete payload.llm.voice;
+  if (payload.stt?.provider === 'model') { for (const k of ['base_url','api_key','proxy']) delete payload.stt[k]; }
+  if (payload.tts?.provider === 'alice') payload.tts = {provider:'alice'};
+  const st = await api('/api/assistant', payload);
   asFill(st.config);
+  $('#as-save-note').textContent = 'Применено на колонке';
 }, 'Настройки сохранены');
+$('#as-question').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('#as-ask').click(); }
+});
+$$('#as-suggests [data-as-ask]').forEach(b => b.onclick = () => {
+  $('#as-question').value = b.dataset.asAsk;
+  $('#as-ask').click();
+});
 $('#as-ask').onclick = e => {
   const text = $('#as-question').value.trim();
   if (!text) return;
@@ -6219,8 +8028,9 @@ $('#bk-file').onchange = async e => {
   const r = await act($('#bk-restore'), () => api('/api/backup/restore', f, { raw: true, headers: { 'Content-Type': 'application/gzip' } }));
   if (!r) return;
   try { for (const [k, v] of Object.entries(r.ui || {})) if (UI_KEYS.test(k)) localStorage.setItem(PanelContext.storageKey(k), v); } catch {}
-  applyUI(); buildTiles(); fillTileSettings();
-  try { const saved = JSON.parse(store.get(LAYOUT_KEY)); if (saved) applyLayout(saved); } catch {}
+  applyUI();
+  buildTiles(); fillTileSettings();
+  loadLayout();
   bootLoaded = false; alarmsData = null;
   await loadFootprint();
   const when = r.created ? new Date(r.created.replace(/([+-]\d\d)(\d\d)$/, '$1:$2')).toLocaleString('ru-RU') : '';

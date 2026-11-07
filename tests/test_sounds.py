@@ -96,11 +96,13 @@ class AnimOverrides(unittest.TestCase):
     def test_only_listed_animations(self):
         p = server.Panel(Mock())
         p.patterns = lambda: {"ring": ["qc.led"], "clock": ["boot.binscled.zst", "blink.binscled.zst"]}
+        p.anim_custom = lambda: {"ring": [], "clock": []}
         for kind, name in (("ring", "../../etc/passwd"), ("clock", "qc.led"), ("evil", "qc.led")):
             with self.assertRaisesRegex(server.AdbError, "нет такой анимации"):
                 p.anim_reset(kind, name)
         self.assertEqual(p._anim_paths("ring", "qc.led")[1], f"{server.OVR_DIR}/ledpatterns/oknix/qc.led")
-        p.boot_reset, p._remove_override, p.anim_custom = Mock(), Mock(), Mock()
+        p.boot_reset, p._remove_override = Mock(), Mock()
+        p.anim_custom = Mock(return_value={"ring": [], "clock": ["boot.binscled.zst"]})
         p.anim_reset("clock", "boot.binscled.zst")
         p.boot_reset.assert_called_once()   # заставка — по-старому, через вкладку «Запуск»
         p._remove_override.assert_not_called()

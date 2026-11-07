@@ -43,6 +43,8 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 import access
 import agent as agentlink
 import glagol
+import zvuk
+import zvuk_player
 # Старый ZIP-обновлятор ещё не знает новый модуль. main() сначала восстановит файлы.
 try:
     import model_colors
@@ -158,7 +160,7 @@ DATA_DIR = ROOT
 
 
 def set_data_dir(path):
-    global DATA_DIR, AUTH_FILE, PANEL_AUTH_FILE, METRICS_FILE, TLS_DIR, SETTINGS_FILE, AGENT_FILE
+    global DATA_DIR, AUTH_FILE, PANEL_AUTH_FILE, METRICS_FILE, TLS_DIR, SETTINGS_FILE, AGENT_FILE, ZVUK_AUTH_FILE
     DATA_DIR = Path(path).resolve()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     AUTH_FILE = DATA_DIR / ".yandex_auth.json"
@@ -167,6 +169,7 @@ def set_data_dir(path):
     TLS_DIR = DATA_DIR / ".tls"
     SETTINGS_FILE = DATA_DIR / ".panel_settings.json"
     AGENT_FILE = DATA_DIR / ".agent.json"
+    ZVUK_AUTH_FILE = DATA_DIR / ".zvuk_auth.json"
     JOURNAL.open(DATA_DIR / ".panel_journal.jsonl")
 
 
@@ -329,6 +332,8 @@ ASSIST_CMD = "/tmp/webpanel_assistant.cmd"
 ASSIST_SD = "/tmp/webpanel_assistant.sd"
 ASSIST_RUN = f"exec {ASSISTD} -dir {ASSIST_DIR} >{ASSIST_DIR}/assistant.log 2>&1"
 ASSIST_SRC = Path(__file__).resolve().parent / "device" / "assistant"
+MIC_SRC = Path(__file__).resolve().parent / "device" / "mic-tap"
+MIC_DIR = f"{ASSIST_DIR}/microphone"
 # Живой спектр с колонки: маленькая программа читает захват кодека (то, что реально играет усилитель,
 # а не микрофон — микрофон остаётся Алисе) и раз в 50 мс пишет 4 полосы в /tmp. Панель читает их тем же
 # потоком, что и светодиоды. Пока экспериментально: после перезагрузки колонки не поднимается сам.
@@ -570,6 +575,8 @@ BOOT_HOOK_SCRIPT = (
     f"start-stop-daemon -S -b -m -p /tmp/webpanel_yamd.sd -x /bin/sh -- -c {shlex.quote(YAMD_CMD)}\n"
     f"[ -f {ALARM_CONF} ] && [ -f {ALARMD} ] && start-stop-daemon -S -b -m -p {ALARM_SD} -x /bin/sh -- {ALARMD}\n"
     f"[ -f {ASSIST_CONF} ] && [ -x {ASSISTD} ] && start-stop-daemon -S -b -m -p {ASSIST_SD} -x /bin/sh -- -c {shlex.quote(ASSIST_RUN)}\n"
+    f"[ -f {MIC_DIR}/enabled ] && [ -f {MIC_DIR}/manage.sh ] && "
+    f"sh {MIC_DIR}/manage.sh boot >{MIC_DIR}/boot.log 2>&1 &\n"
     f"[ -f {BTOUT_MAC} ] && [ -f {BTOUT_SH} ] && start-stop-daemon -S -b -m -p {BTOUT_SD} -x /bin/sh -- {BTOUT_SH}\n"
     # свои слова активации: демон из yam-пакета, стартуем из /data (rootfs-init после OTA пропадает)
     f"[ -f {WAKE_AUTOSTART} ] && [ -x {WAKE_BIN} ] && start-stop-daemon -S -b -m -N 10 -p {WAKE_PID} -x /bin/sh -- -c "
@@ -1103,6 +1110,9 @@ class Connection:
     connecting — идёт adb connect; adb_error — колонка в сети, но adb не подключается (повтор с паузой).
     """
     RETRY = (3, 5, 10, 15, 30)
+    PROBE_TIMEOUT = 10
+    PROBE_INTERVAL = 15
+    PROBE_FAILURES = 3
 
     def __init__(self, adb):
         self.adb = adb
@@ -1112,6 +1122,8 @@ class Connection:
         self.retry_at = 0.0
         self.log = collections.deque(maxlen=80)
         self.wake = threading.Event()
+        self._probe_failures = 0
+        self._probe_error = ""
 
     @property
     def online(self):
@@ -1154,10 +1166,15 @@ class Connection:
         if self.adb.transfers:      # пока идёт передача файла, медленный ответ — не обрыв
             return True
         try:
-            p = subprocess.run(self.adb._base() + ["shell", "echo ok"], capture_output=True, timeout=4)
-            return p.stdout.strip() == b"ok"
+            p = subprocess.run(self.adb._base() + ["shell", "echo ok"],
+                               capture_output=True, timeout=self.PROBE_TIMEOUT)
+            if p.returncode == 0 and p.stdout.strip() == b"ok":
+                return True
+            self._probe_error = (f"код {p.returncode}, stdout={p.stdout.decode('utf-8', 'replace')[:200]!r}, "
+                                 f"stderr={p.stderr.decode('utf-8', 'replace')[:200]!r}")
         except subprocess.TimeoutExpired:
-            return False
+            self._probe_error = f"таймаут {self.PROBE_TIMEOUT} с"
+        return False
 
     def _drop(self):
         if self.adb.serial and ":" in self.adb.serial:
@@ -1183,6 +1200,7 @@ class Connection:
         network = bool(self.adb.serial and ":" in self.adb.serial)
         while True:
             if self._agent_alive():
+                self._probe_failures = 0
                 if not self.online:
                     self.note(f"Подключено через агента: {self.adb.serial}")
                 self.attempts = 0
@@ -1192,16 +1210,23 @@ class Connection:
             state, err = self._adb_state()
             # голый TCP-коннект к 5555 оставлял на adbd сокеты в CLOSE_WAIT и забивал его;
             # живость проверяем через сам adb: get-state и короткую shell-команду
+            # Единичная задержка под нагрузкой не должна рвать все shell-сеансы, включая консоль.
             if state == "device" and not self._alive():
+                self._probe_failures += 1
+                self.note(f"проверка adb {self._probe_failures}/{self.PROBE_FAILURES}: {self._probe_error}", "warn")
+                if self._probe_failures < self.PROBE_FAILURES:
+                    self._sleep(self.PROBE_INTERVAL)
+                    continue
                 self.note("adb числит колонку подключённой, но она не отвечает — сбрасываем соединение", "warn")
                 self._drop()
                 state = ""
+            self._probe_failures = 0
             if state == "device":
                 if not self.online:
                     self.note(f"Подключено: {self.adb.serial or 'устройство по умолчанию'}")
                 self.attempts = 0
                 self._set("online")
-                self._sleep(3)
+                self._sleep(self.PROBE_INTERVAL)
                 continue
             if not network:
                 if self.state != "waiting":
@@ -1868,6 +1893,8 @@ class Panel:
         self._ww_router = None
         self._ww_router_stop = threading.Event()
         self._ww_last_hit = None
+        self._music_lock = threading.Lock()
+        self._music_wish_at = 0
 
     def _configure_glagol(self, device_id):
         # Glagol использует тип устройства из прошивки, а не профиль LED/часов панели.
@@ -2496,8 +2523,10 @@ echo @@BLUEZ
         return parse_led(self.adb.read_bytes(self._pattern_path("ring", name)).decode("utf-8", "replace"))
 
     # ---------- свои анимации: подмена файлов ledpatterns, как у звуков ----------
-    def _anim_paths(self, kind, name):
-        if kind not in PATTERNS or name not in self.patterns()[kind] or name.startswith("my/"):
+    def _anim_paths(self, kind, name, reset=False):
+        valid_name = isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", name)
+        if (kind not in PATTERNS or not valid_name or
+                name not in (self.anim_custom()[kind] if reset else self.patterns()[kind])):
             raise AdbError("нет такой анимации")
         target = f"{PATTERNS[kind]}/{name}"
         return target, f"{OVR_DIR}/{posixpath.relpath(target, QUASAR)}"
@@ -2538,7 +2567,7 @@ echo @@BLUEZ
         return self.anim_custom()
 
     def anim_reset(self, kind, name):
-        target, custom = self._anim_paths(kind, name)
+        target, custom = self._anim_paths(kind, name, reset=True)
         if target == BOOT_TARGET:
             self.boot_reset()
         else:
@@ -2822,8 +2851,12 @@ echo @@BLUEZ
         return self.privacy_status()
 
     # ---------- свой голосовой помощник ----------
-    ASSIST_FIELDS = {"llm": ("base_url", "model", "system_prompt", "max_tokens", "history", "proxy"),
+    ASSIST_FIELDS = {"llm": ("base_url", "model", "system_prompt", "max_tokens", "history", "proxy", "transport", "voice"),
+                     "stt": ("provider", "base_url", "model", "language", "proxy"),
+                     "microphone": ("source", "gain", "threshold", "silence_ms"),
                      "tts": ("provider", "base_url", "model", "voice", "speed"),
+                     "skills": ("time", "weather"),
+                     "weather": ("city", "lat", "lon"),
                      "led": ("enabled", "color"),
                      "mode": ("timeout_min", "follow_up")}
 
@@ -2841,7 +2874,7 @@ echo @@BLUEZ
         build = src / "build" / name
         go = shutil.which("go")
         if go:
-            sources = list(src.glob("*.go")) + [src / "go.mod"]
+            sources = list(src.glob("*.go")) + [src / "go.mod", src / "go.sum"]
             fresh = build.exists() and all(f.stat().st_mtime <= build.stat().st_mtime for f in sources if f.exists())
             if not fresh:
                 env = {**os.environ, "CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": "arm64"}
@@ -2908,29 +2941,93 @@ echo @@BLUEZ
             self._assist_md5 = (mtime, hashlib.md5(out.read_bytes()).hexdigest())
         return self._assist_md5[1]
 
+    def assistant_music_start(self):
+        """Фоновый опрос заявок помощника — в тестах не запускаем, только в реальном сервере."""
+        threading.Thread(target=self._assistant_music_loop, daemon=True, name="assistant-music").start()
+
+    def _assist_state_file(self):
+        """Лёгкое чтение статуса помощника: только файл, без проверок установки."""
+        out, _, _ = self.adb.shell(f"cat {ASSIST_STATUS} 2>/dev/null", check=False)
+        try:
+            return json.loads(strip_ansi(out).strip() or "{}")
+        except ValueError:
+            return {}
+
+    def _assistant_music_loop(self):
+        while True:
+            time.sleep(1.5)
+            try:
+                self._assistant_music(self._assist_state_file())
+            except Exception:  # noqa: BLE001 — голосовой хук не должен ронять панель
+                pass
+
+    def _assistant_music(self, state):
+        """Заявка из помощника: переключить провайдера и (для «включи») запустить поток."""
+        music = (state or {}).get("music") or {}
+        at = int(music.get("at") or 0)
+        if not at:
+            return
+        with self._music_lock:
+            if at == self._music_wish_at:
+                return
+            self._music_wish_at = at
+        provider = str(music.get("provider") or "")
+        if provider not in ("zvuk", "yandex"):
+            return
+        try:
+            self.music_provider(provider)
+            if music.get("play"):
+                if provider == "zvuk":
+                    if self.zvuk.auth.token:
+                        self.zvuk.flow()
+                else:
+                    self.music_cmd({"command": "sendText", "text": "включи мою волну"})
+        except Exception:  # noqa: BLE001 — музыка не должна ронять опрос статуса
+            pass
+        finally:
+            try:
+                self.assistant_command({"music_seen": True})
+            except Exception:  # noqa: BLE001
+                pass
+
     def assistant_status(self):
         out, _, _ = self.adb.shell(
             f"[ -x {ASSISTD} ] && echo @installed && md5sum {ASSISTD}; "
             f"[ -f {ASSIST_SD} ] && kill -0 $(cat {ASSIST_SD}) 2>/dev/null "
-            f"&& echo @running; echo @status; cat {ASSIST_STATUS} 2>/dev/null; echo; true", check=False)
+            f"&& echo @running; [ -f {MIC_DIR}/enabled ] && echo @microphone; echo @status; cat {ASSIST_STATUS} 2>/dev/null; echo; true", check=False)
         out = strip_ansi(out)
         flags = set(re.findall(r"^@(\w+)$", out, re.M))
         try:
             state = json.loads(out.split("@status", 1)[1].strip() or "{}")
         except (ValueError, IndexError):
             state = {}
-        cfg = self._assist_keys_migrate(self._assist_config())
+        self._assistant_music(state)
+        cfg = self._assist_connections_migrate(self._assist_keys_migrate(self._assist_config()))
         # ключи наружу не отдаём: только для каких адресов они есть и последние символы
         mask = lambda k: ("…" + k[-4:]) if len(k) > 8 else "задан"
         cfg["keys"] = {url: mask(k) for url, k in (cfg.get("keys") or {}).items() if k}
-        for part in ("llm", "tts"):
+        for part in ("llm", "tts", "stt"):
             sec = cfg.setdefault(part, {})
             sec["key"] = cfg["keys"].get(self._key_id(sec.get("base_url", "")), "")
         running = "running" in flags
         local = self._assist_local_md5() if "installed" in flags else None
         return {"supported": True, "installed": "installed" in flags, "running": running, "config": cfg,
+                "microphone_installed": "microphone" in flags,
                 "outdated": bool(local) and local not in out,
                 "state": state if running else {}}
+
+    def _assist_timezone(self):
+        """Колонка живёт в UTC: копируем местный TZif рядом с конфигом, чтобы ассистент знал местное время.
+        Тот же приём, что у будильника (`_pc_tz` → ALARM_DIR/localtime)."""
+        _, data = self._pc_tz()
+        if not data:
+            return
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "localtime"
+            f.write_bytes(data)
+            self.adb.shell(f"mkdir -p {ASSIST_DIR}", check=False)
+            self.adb.push(f, f"{ASSIST_DIR}/localtime")
+        self.adb.shell(f"chmod 644 {ASSIST_DIR}/localtime", check=False)
 
     def assistant_install(self):
         arch, _, _ = self.adb.shell("uname -m", check=False)
@@ -2943,6 +3040,7 @@ echo @@BLUEZ
         self.adb.shell(f"chmod 755 {ASSISTD}.new; mv {ASSISTD}.new {ASSISTD}")
         if not self._assist_config():
             self._assist_write({"enabled": False})
+        self._assist_timezone()
         try:
             self._ensure_hook()
         except AdbError:
@@ -2977,17 +3075,55 @@ echo @@BLUEZ
     def _assist_keys_migrate(self, cfg):
         """Ключи хранятся по адресу API (cfg["keys"]); раньше лежали прямо в llm/tts — переносим."""
         keys = cfg.setdefault("keys", {})
-        for part in ("llm", "tts"):
+        for part in ("llm", "tts", "stt"):
             sec = cfg.get(part) or {}
             key = sec.pop("api_key", None)
             if key and sec.get("base_url") and not keys.get(self._key_id(sec["base_url"])):
                 keys[self._key_id(sec["base_url"])] = key
         return cfg
 
+    def _assist_connections_migrate(self, cfg):
+        """Сохранённые провайдеры: у каждого свой адрес, модель и тип API. Старые настройки знали только
+        текущего провайдера — переносим один раз, чтобы удаление провайдера не возвращало его обратно."""
+        conns = cfg.setdefault("connections", {})
+        if cfg.get("connections_ready"):
+            return cfg
+        llm = cfg.get("llm") or {}
+        base = str(llm.get("base_url") or "").strip()
+        if base:
+            conns[self._key_id(base)] = {
+                "base_url": base,
+                "model": str(llm.get("model") or ""),
+                "transport": llm.get("transport") if llm.get("transport") in ("chat", "realtime") else "chat",
+                "voice": str(llm.get("voice") or "marin"),
+            }
+        cfg["connections_ready"] = True
+        return cfg
+
+    def _assist_connection_delete(self, cfg, url):
+        """Удаляет сохранённого провайдера вместе с его ключом. Если он был текущим — переключаемся
+        на другого сохранённого, чтобы помощник не остался с настройками удалённой вкладки."""
+        cid = self._key_id(url)
+        conns = cfg.setdefault("connections", {})
+        conns.pop(cid, None)
+        cfg.setdefault("keys", {}).pop(cid, None)
+        llm = cfg.setdefault("llm", {})
+        if self._key_id(llm.get("base_url")) != cid:
+            return
+        if conns:
+            nc = conns[next(iter(conns))]
+            llm["base_url"] = nc.get("base_url", "")
+            llm["model"] = nc.get("model", "")
+            llm["transport"] = nc.get("transport", "chat")
+            llm["voice"] = nc.get("voice", "marin")
+        else:
+            llm["base_url"] = ""
+            llm["model"] = ""
+
     def assistant_set(self, d):
         """Меняет только переданные поля. Ключ пишется для адреса API своего раздела: новый — заменить,
-        пусто или нет поля — оставить. delete_key — удалить ключ указанного адреса."""
-        cfg = self._assist_keys_migrate(self._assist_config())
+        пусто или нет поля — оставить. delete_key / delete_connection — удалить ключ или провайдера."""
+        cfg = self._assist_connections_migrate(self._assist_keys_migrate(self._assist_config()))
         if "enabled" in d:
             cfg["enabled"] = bool(d["enabled"])
         phrases = lambda xs: [str(x).strip()[:60] for x in xs if str(x).strip()][:10]
@@ -3009,8 +3145,19 @@ echo @@BLUEZ
                 if not sec.get("base_url"):
                     raise AdbError("ключ сохраняется для адреса API — сначала укажите адрес")
                 cfg["keys"][self._key_id(sec["base_url"])] = key
+        llm = cfg.get("llm") or {}
+        base = str(llm.get("base_url") or "").strip()
+        if isinstance(d.get("llm"), dict) and base:
+            cfg.setdefault("connections", {})[self._key_id(base)] = {
+                "base_url": base,
+                "model": str(llm.get("model") or ""),
+                "transport": llm.get("transport") if llm.get("transport") in ("chat", "realtime") else "chat",
+                "voice": str(llm.get("voice") or "marin"),
+            }
         if d.get("delete_key"):
             cfg["keys"].pop(self._key_id(d["delete_key"]), None)
+        if d.get("delete_connection"):
+            self._assist_connection_delete(cfg, d["delete_connection"])
         mode = cfg.get("mode", {})
         if "timeout_min" in mode:
             mode["timeout_min"] = max(1, min(240, int(mode["timeout_min"])))
@@ -3020,10 +3167,104 @@ echo @@BLUEZ
         tts = cfg.get("tts", {})
         if tts.get("provider") not in (None, "alice", "openai"):
             raise AdbError("неизвестный способ озвучки")
+        if cfg.get("llm", {}).get("transport", "chat") not in ("chat", "realtime"):
+            raise AdbError("неизвестный режим API")
+        if cfg.get("stt", {}).get("provider", "alice") not in ("alice", "model", "custom"):
+            raise AdbError("неизвестный способ распознавания речи")
+        mic = cfg.get("microphone", {})
+        if mic.get("source", "alice") not in ("alice", "microphone"):
+            raise AdbError("неизвестный источник речи")
+        for field, lo, hi in (("gain", 1, 128), ("threshold", 50, 10000), ("silence_ms", 300, 3000)):
+            if field in mic:
+                value = float(mic[field])
+                if not math.isfinite(value) or not lo <= value <= hi:
+                    raise AdbError(f"параметр микрофона {field}: от {lo} до {hi}")
+                mic[field] = int(value) if field == "silence_ms" else value
+        skills = cfg.get("skills") or {}
+        cfg["skills"] = {"time": bool(skills.get("time", True)), "weather": bool(skills.get("weather", False))}
+        weather = cfg.get("weather") or {}
+        try:
+            lat, lon = float(weather.get("lat") or 0), float(weather.get("lon") or 0)
+        except (TypeError, ValueError):
+            raise AdbError("координаты погоды — числа") from None
+        if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
+            raise AdbError("координаты погоды вне диапазона")
+        cfg["weather"] = {"city": str(weather.get("city") or "").strip()[:80], "lat": lat, "lon": lon}
         if not self.assistant_status()["installed"]:
             raise AdbError("помощник не установлен на колонке")
         self._assist_write(cfg)
+        self._assist_timezone()
         return self.assistant_status()
+
+    def _microphone_binary(self):
+        binary = MIC_SRC / "build" / "mic-tap.so"
+        zig = shutil.which("zig")
+        if zig:
+            sources = [MIC_SRC / "tap.c", MIC_SRC / "build.sh"]
+            if not binary.exists() or any(p.stat().st_mtime > binary.stat().st_mtime for p in sources):
+                env = {**os.environ, "PATH": str(Path(zig).parent) + os.pathsep + os.environ.get("PATH", "")}
+                r = subprocess.run(["sh", str(MIC_SRC / "build.sh")], env=env,
+                                   capture_output=True, text=True, timeout=300)
+                if r.returncode:
+                    raise AdbError("не удалось собрать захват микрофонов: " + r.stderr[-400:])
+            return binary
+        if binary.exists() and (MIC_SRC / "build" / "VERSION").exists() and (MIC_SRC / "build" / "VERSION").read_text().strip() == VERSION:
+            return binary
+        cached = DATA_DIR / f".mic-tap-{VERSION}"
+        if cached.exists():
+            return cached
+        return self._release_download("mic-tap-linux-armhf.so", cached, "mic-tap")
+
+    def assistant_microphone(self, on):
+        """Opt-in capture: temporary bind and guarded restart; disabling restores stock audio."""
+        if not on:
+            self.adb.shell(f"[ ! -f {MIC_DIR}/manage.sh ] || sh {MIC_DIR}/manage.sh disable", timeout=45)
+            return self.assistant_status()
+        if not self.assistant_status()["running"]:
+            raise AdbError("сначала установите и запустите помощник")
+        out, _, _ = self.adb.shell("cat /proc/device-tree/model; cat /proc/asound/pcm; true", check=False)
+        # Only the capture layout actually tested on Lite 2 is supported.
+        if "PDM-dummy" not in out or "fs2105" not in out:
+            raise AdbError("захват проверен только на аудиотракте Лайт 2 (PDM и fs2105)")
+        # If this is already our live bind, there is no need to restart again.
+        out, _, _ = self.adb.shell("cat /tmp/webpanel-mic/mounted 2>/dev/null; "
+                                 "grep -c ' /system/vendor/quasar/launch.json ' /proc/mounts; true", check=False)
+        if strip_ansi(out).strip() == "1":
+            st = self.assistant_status()
+            if st.get("state", {}).get("microphone", {}).get("ready"):
+                if not st.get("microphone_installed"):
+                    self.adb.shell(f"sh {MIC_DIR}/manage.sh confirm")
+                    return self.assistant_status()
+                return st
+        out, _, _ = self.adb.shell("cat /system/vendor/quasar/launch.json", check=False)
+        launch = json.loads(strip_ansi(out))
+        tasks = [task for node in launch["nodes"] for task in node["tasks"] if "--platformd" in task.get("arg", [])]
+        if len(tasks) != 1:
+            raise AdbError("не найден единственный процесс аудиослужбы Алисы")
+        envs = tasks[0].setdefault("envs", [])
+        if any(str(v).startswith("LD_PRELOAD=") for v in envs):
+            raise AdbError("у аудиослужбы уже задан LD_PRELOAD; автоматическая замена небезопасна")
+        envs.append(f"LD_PRELOAD={MIC_DIR}/mic-tap.so")
+        binary = self._microphone_binary()
+        self.adb.shell(f"mkdir -p {MIC_DIR}; chmod 700 {MIC_DIR}")
+        self.adb.push(binary, f"{MIC_DIR}/mic-tap.so.new")
+        self.adb.push(MIC_SRC / "manage.sh", f"{MIC_DIR}/manage.sh")
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "launch.json"
+            write_unix(p, json.dumps(launch))
+            self.adb.push(p, f"{MIC_DIR}/launch.json")
+        self.adb.shell(f"chmod 600 {MIC_DIR}/launch.json; mv {MIC_DIR}/mic-tap.so.new {MIC_DIR}/mic-tap.so")
+        self._ensure_hook()
+        # A watchdog on the column rolls back even if the panel disconnects.
+        self.detach("mic-tap", f"sh {MIC_DIR}/manage.sh enable >{MIC_DIR}/install.log 2>&1")
+        for _ in range(35):
+            time.sleep(1)
+            st = self.assistant_status()
+            if st.get("state", {}).get("microphone", {}).get("ready"):
+                self.adb.shell(f"sh {MIC_DIR}/manage.sh confirm")
+                return self.assistant_status()
+        self.adb.shell(f"sh {MIC_DIR}/manage.sh disable", timeout=45, check=False)
+        raise AdbError("захват не запустился; исходный аудиотракт восстановлен")
 
     def assistant_models(self, d):
         """Список моделей API — запрашивает сама колонка: её сеть и прокси, ключ из настроек или ещё не сохранённый."""
@@ -3045,6 +3286,71 @@ echo @@BLUEZ
         if res.get("error"):
             raise AdbError(res["error"])
         return {"models": res.get("models") or []}
+
+    @staticmethod
+    def _http_json(url, timeout=8):
+        req = urllib.request.Request(url, headers={"User-Agent": f"yapanel-web/{VERSION} (+https://github.com/dimap/yapanel-web)"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read(256 << 10).decode("utf-8", "replace"))
+
+    def _geocode_city(self, name):
+        """Название города → координаты (Nominatim/OpenStreetMap, без ключа)."""
+        q = urlencode({"q": name, "format": "json", "limit": 1, "accept-language": "ru"})
+        try:
+            data = self._http_json(f"https://nominatim.openstreetmap.org/search?{q}", timeout=10)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, list) or not data:
+            return None
+        try:
+            return {"city": name, "lat": float(data[0]["lat"]), "lon": float(data[0]["lon"])}
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+
+    def _geo_by_ip(self):
+        """Город по IP панели: два бесплатных сервиса, первый ответивший выигрывает."""
+        for url in ("https://ipwho.is/", "https://ipapi.co/json/"):
+            try:
+                data = self._http_json(url, timeout=6)
+            except (OSError, ValueError):
+                continue
+            if data.get("success") is False:
+                continue
+            try:
+                city = str(data.get("city") or data.get("region") or "").strip()
+                lat, lon = float(data.get("latitude")), float(data.get("longitude"))
+            except (TypeError, ValueError):
+                continue
+            if city and math.isfinite(lat) and math.isfinite(lon):
+                return {"city": city[:80], "lat": lat, "lon": lon}
+        return None
+
+    def assistant_geo(self, d):
+        """Город для погоды: по введённому названию или по IP, если поле пустое."""
+        name = str(d.get("city") or "").strip()[:80]
+        place = self._geocode_city(name) if name else self._geo_by_ip()
+        if not place:
+            raise AdbError("не удалось определить город — укажите его вручную")
+        return place
+
+    def assistant_weather_check(self, d):
+        """Проверяет запрос погоды с самой колонки и возвращает причину ошибки (TLS, DNS, прокси)."""
+        if not self.assistant_status()["installed"]:
+            raise AdbError("помощник не установлен на колонке")
+        point = ""
+        try:
+            lat, lon = float(d.get("lat")), float(d.get("lon"))
+            if math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180:
+                point = f"{lat},{lon}"
+        except (TypeError, ValueError):
+            pass
+        if not point:
+            weather = self._assist_config().get("weather") or {}
+            point = f"{weather.get('lat') or 0},{weather.get('lon') or 0}"
+        out, _, _ = self.adb.shell(f"{ASSISTD} -dir {ASSIST_DIR} -weather {shlex.quote(point)} 2>&1; true",
+                                   check=False, timeout=40)
+        text = strip_ansi(out).strip()[-600:]
+        return {"ok": text.startswith("ok:"), "text": text or "пустой ответ"}
 
     def assistant_start(self):
         self.adb.shell(f"start-stop-daemon -K -p {ASSIST_SD} 2>/dev/null; sleep 0.5; true", check=False)
@@ -3388,6 +3694,7 @@ echo @@BLUEZ
         return (data, kind) if kind else None   # SVG и прочее не берём: картинка отдаётся с адреса панели
 
     def assistant_remove(self):
+        self.assistant_microphone(False)
         self.adb.shell(f"start-stop-daemon -K -p {ASSIST_SD} 2>/dev/null; sleep 0.5; "
                        f"rm -rf {ASSIST_DIR}; rm -f {ASSIST_SD} {ASSIST_STATUS} {ASSIST_CMD}; true", check=False)
         self._drop_hook_if_unused()
@@ -5171,6 +5478,19 @@ echo @@BLUEZ
     _bt_pos = None   # (позиция, с; когда измерена; название трека)
 
     def music(self):
+        if self._music_provider() == "zvuk":
+            if self.zvuk.station_foreign():
+                # Голос Алисы или её плеер перехватили звук: возвращаем провайдер на Яндекс,
+                # чтобы панель не рисовала старый трек «Звука».
+                s = load_settings()
+                s["music_provider"] = "yandex"
+                save_settings(s)
+                self.zvuk.acknowledge_foreign()
+                JOURNAL.add("музыка: колонка переключилась на Яндекс — панель тоже")
+            else:
+                data = self.zvuk.music_info()
+                data["provider"] = "zvuk"
+                return data
         g = self.glagol.info()
         p = (g.get("state") or {}).get("playerState")
         if p and p.get("playerType") == "bluetooth":
@@ -5180,7 +5500,83 @@ echo @@BLUEZ
                 g = {**g, "state": {**g["state"], "playerState": {**p, "progress": pos[0]}}, "progress_at": pos[1]}
         if p and p.get("type") == "FmRadio":
             self._remember_fm(p)
-        return {"auth": self.auth.info(), "glagol": g}
+        return {"provider": "yandex", "auth": self.auth.info(), "glagol": g}
+
+    def _music_provider(self):
+        p = load_settings().get("music_provider")
+        return p if p in ("yandex", "zvuk") else "yandex"
+
+    def music_provider(self, provider=None):
+        if provider is None:
+            return {"provider": self._music_provider(), "yandex": bool(self.auth.music_token),
+                    "zvuk": bool(self.zvuk.auth.token)}
+        provider = str(provider)
+        if provider not in ("yandex", "zvuk"):
+            raise AdbError("неизвестный провайдер музыки")
+        s = load_settings()
+        s["music_provider"] = provider
+        save_settings(s)
+        # Не оставляем играть прошлого провайдера: переключение должно быть явным.
+        try:
+            if provider == "zvuk":
+                try:
+                    self.zvuk.reset_state()
+                except Exception:  # noqa: BLE001 — состояние могло ещё не создаться
+                    pass
+                self.glagol.send({"command": "stop"})
+            else:
+                self.zvuk.stop()
+        except Exception:  # noqa: BLE001 — переключение не должно падать из-за связи
+            pass
+        return {"provider": provider}
+
+    def zvuk_state(self):
+        return self.zvuk.state()
+
+    def zvuk_cover(self, url):
+        """Обложка Звука через панель: у CDN нет CORS, без прокси canvas не может взять цвет."""
+        u = urlparse(str(url or ""))
+        host = (u.hostname or "").lower()
+        if u.scheme != "https" or not (host == "zvuk.com" or host.endswith(".zvuk.com")) \
+                or u.username or u.password:
+            raise AdbError("недопустимый адрес обложки")
+        req = urllib.request.Request(u.geturl(), headers={
+            "Referer": "https://zvuk.com/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                final = urlparse(r.geturl())
+                fhost = (final.hostname or "").lower()
+                if not (fhost == "zvuk.com" or fhost.endswith(".zvuk.com")):
+                    raise AdbError("недопустимый адрес обложки")
+                data = r.read(4 * 1024 * 1024 + 1)
+                ctype = r.headers.get("Content-Type", "image/jpeg") or "image/jpeg"
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+            raise AdbError(f"обложка не загрузилась: {e}") from None
+        if len(data) > 4 * 1024 * 1024:
+            raise AdbError("обложка слишком большая")
+        if not ctype.startswith("image/"):
+            ctype = "image/jpeg"
+        return data, ctype
+
+    def zvuk_search(self, q):
+        try:
+            return self.zvuk.search(q)
+        except zvuk.Error as e:
+            raise AdbError(str(e)) from None
+
+    def zvuk_action(self, d):
+        try:
+            return self.zvuk.action(d)
+        except zvuk.Error as e:
+            raise AdbError(str(e)) from None
+
+    def zvuk_token(self, token):
+        try:
+            return self.zvuk.set_token(token)
+        except zvuk.Error as e:
+            raise AdbError(str(e)) from None
 
     # Логотипы станций Алисы: их отдаёт только плеер, пока станция играет, — запоминаем на будущее.
     _fm_cache = None
@@ -5230,6 +5626,14 @@ echo @@BLUEZ
             if not isinstance(text, str) or not 1 <= len(text.strip()) <= ALICE_COMMAND_LIMIT:
                 raise AdbError("Команда Алисе должна содержать от 1 до 1024 символов")
             d = {**d, "text": text.strip()}
+        if self._music_provider() == "zvuk":
+            if cmd == "sendText":
+                if "волн" in d["text"].lower():
+                    return self.zvuk.flow()
+                return self.glagol.send({"command": "sendText", "text": d["text"]})
+            if cmd == "setVolume":
+                return self.glagol.send({"command": "setVolume", "volume": d.get("volume")})
+            return self.zvuk.command(d)
         payload = {"command": cmd, **{k: d[k] for k in MUSIC_COMMANDS[cmd] if k in d}}
         res = self.glagol.send(payload)
         if cmd == "play":
@@ -5267,9 +5671,30 @@ echo @@BLUEZ
         self._need_login()
         return self.ymusic.track(tid)
 
-    def music_lyrics(self, tid):
-        self._need_login()
-        return self.ymusic.lyrics(tid)
+    def music_lyrics(self, tid, title="", artist="", album=None, duration=0):
+        # «Звук» может работать без входа в Яндекс: тогда сразу LRCLIB по названию.
+        try:
+            self._need_login()
+            res = self.ymusic.lyrics(tid)
+        except (AdbError, glagol.AuthError, OSError, ValueError):
+            res = {"sync": None, "text": None}
+        if res.get("text") or res.get("sync"):
+            return res
+        # Яндекс текст не дал — ищем в LRCLIB по названию/исполнителю. Название приходит
+        # из плеера панели, поэтому не зависим от повторного запроса карточки трека.
+        if title and artist:
+            return self.ymusic.lyrics_by_name(title, artist, album, duration)
+        try:
+            t = self.ymusic.track(tid) or {}
+            title = title or t.get("title") or ""
+            artist = artist or ", ".join(a.get("name") or "" for a in t.get("artistList") or [])
+            album = album or (t.get("album") or {}).get("title")
+            duration = duration or (t.get("durationMs") or 0) / 1000
+        except (glagol.AuthError, OSError, ValueError):
+            pass
+        if title and artist:
+            return self.ymusic.lyrics_by_name(title, artist, album, duration)
+        return res
 
     def music_queue(self):
         self._need_login()
@@ -6214,6 +6639,12 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/wakeword/proxy":
             return self._wakeword_proxy("GET", q.get("path", ""))
         p = self.panel
+        if u.path == "/api/zvuk/cover":
+            try:
+                data, ctype = p.zvuk_cover(q.get("u", ""))
+            except AdbError as e:
+                return self._send(400, {"error": str(e)})
+            return self._send(200, data, ctype, headers=[("Cache-Control", "public, max-age=3600")])
         routes = {
             "/api/status": p.status,
             "/api/model-color": lambda: p.model_color(q.get("model")),
@@ -6245,8 +6676,12 @@ class Handler(BaseHTTPRequestHandler):
             "/api/led/patterns": p.led_patterns,
             "/api/yam/status": p.yam_status,
             "/api/music": p.music,
+            "/api/music/provider": p.music_provider,
+            "/api/zvuk": p.zvuk_state,
             "/api/music/info": lambda: p.music_info(q.get("id", "")),
-            "/api/music/lyrics": lambda: p.music_lyrics(q.get("id", "")) if q.get("id") else
+            "/api/music/lyrics": lambda: p.music_lyrics(q.get("id", ""), q.get("title", ""), q.get("artist", ""),
+                                                        q.get("album"), float(q.get("duration") or 0))
+            if q.get("id") else
                 p.ymusic.lyrics_by_name(q.get("title", ""), q.get("artist", ""), q.get("album"), float(q.get("duration") or 0)),
             "/api/music/queue": p.music_queue,
             "/api/music/similar": lambda: (p._need_login(), p.ymusic.similar(q.get("id", "")))[1],
@@ -6400,6 +6835,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/display/stop": p.display_stop,
             "/api/ring/reset": p.ring_reset,
             "/api/music/cmd": lambda: p.music_cmd(d),
+            "/api/music/provider": lambda: p.music_provider(d.get("provider")),
+            "/api/zvuk/search": lambda: p.zvuk_search(d.get("q")),
+            "/api/zvuk/action": lambda: p.zvuk_action(d),
+            "/api/zvuk/token": lambda: p.zvuk_token(d.get("token")),
             "/api/music/like": lambda: p.music_like(d["id"], bool(d.get("like", True))),
             "/api/music/dislike": lambda: p.music_dislike(d["id"]),
             "/api/music/play": lambda: p.music_play(d["id"], d.get("type", "track")),
@@ -6436,6 +6875,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/privacy": lambda: p.privacy_set(bool(d.get("enabled"))),
             "/api/privacy/purge": p.privacy_purge,
             "/api/assistant": lambda: p.assistant_set(d),
+            "/api/assistant/microphone": lambda: p.assistant_microphone(bool(d.get("on"))),
             "/api/assistant/install": p.assistant_install,
             "/api/assistant/start": p.assistant_start,
             "/api/assistant/ask": lambda: p.assistant_ask(d.get("text")),
@@ -6450,6 +6890,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/assistant/remove": p.assistant_remove,
             "/api/viz": lambda: p.viz_set(bool(d.get("on"))),
             "/api/assistant/models": lambda: p.assistant_models(d),
+            "/api/assistant/geo": lambda: p.assistant_geo(d),
+            "/api/assistant/weather": lambda: p.assistant_weather_check(d),
             "/api/panel/update": lambda: self.updater.update(),
             "/api/metrics/clear": lambda: p.metrics.clear(),
             "/api/alarms/uninstall": p.alarm_uninstall,
@@ -6467,7 +6909,7 @@ class PanelUpdater:
     """Проверка новых релизов панели на GitHub и обновление — в зависимости от того, как панель установлена:
     zip (Windows-сборка, Download ZIP) — скачать релиз и заменить файлы панели; git — git pull --ff-only;
     docker — только подсказать команду (образ изнутри не обновить)."""
-    FILES = ("server.py", "access.py", "agent.py", "glagol.py", "profiles.py", "midi.py", "managed_yam.py", "model_colors.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
+    FILES = ("server.py", "access.py", "agent.py", "glagol.py", "profiles.py", "midi.py", "managed_yam.py", "model_colors.py", "zvuk.py", "zvuk_queries.py", "zvuk_player.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
     DIRS = ("static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно
@@ -6859,7 +7301,9 @@ def main():
     panel.auth = glagol.YandexAuth(AUTH_FILE)
     host = device.rpartition(":")[0] if device and ":" in device else None
     panel.glagol = glagol.Glagol(panel.auth, host, None, GLAGOL_PLATFORM)
+    panel.zvuk = zvuk_player.ZvukPlayer(panel, zvuk.Auth(ZVUK_AUTH_FILE), DATA_DIR / ".zvuk-cache")
     panel.wakeword_router_start()
+    panel.assistant_music_start()
     panel.ymusic = glagol.YandexMusic(panel.auth)
     panel.agent_attach()
     panel.conn = Connection(adb)

@@ -76,6 +76,13 @@ def test_default_initialization():
     assert cfg.remote.quasar_dir == "/system/vendor/quasar"
     assert cfg.remote.yam_port == 8099
     assert cfg.remote.wake_port == 8780
+    assert cfg.remote.wake_data_dir == "/data/wakeword"
+    assert cfg.remote.wake_bin == "/data/wakeword/wakeword"
+    assert cfg.remote.wake_negatives == "/data/wakeword/negatives.bin"
+    assert cfg.remote.wake_jar == "/data/wakeword/lib/audiocapture.jar"
+    assert cfg.remote.wake_frida_dir == "/data/wakeword/frida"
+    assert cfg.remote.wake_frida_inject == "/data/local/tmp/frida-inject"
+    assert cfg.remote.wake_bin_sha256 == ""
     assert cfg.remote.assist_bin == "/data/quasar/webpanel/assistant/assistantd"
     assert cfg.remote.assist_conf == "/data/quasar/webpanel/assistant/config.json"
     assert cfg.remote.viz_bin == "/data/quasar/webpanel/viz/vizd"

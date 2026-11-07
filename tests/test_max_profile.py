@@ -168,7 +168,8 @@ class MaxProfileTests(unittest.TestCase):
         # Verify hook users strictly excludes Buildroot daemons
         hook_users_sh = p._hook_users_script()
         self.assertNotIn("yam2", hook_users_sh)
-        self.assertNotIn("wakeword", hook_users_sh)
+        self.assertIn("wakeword", hook_users_sh)
+        self.assertIn("frida", hook_users_sh)
         self.assertNotIn("alarmd", hook_users_sh)
 
 

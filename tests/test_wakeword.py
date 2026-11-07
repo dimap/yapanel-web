@@ -52,7 +52,7 @@ class Installed(unittest.TestCase):
     def test_supported_platforms(self):
         self.assertTrue(panel("plum")._wakeword_supported()[0])
         self.assertTrue(panel("yandexmidi")._wakeword_supported()[0])
-        self.assertFalse(panel("yandexstation_2")._wakeword_supported()[0])   # Макс
+        self.assertTrue(panel("yandexstation_2")._wakeword_supported()[0])   # Макс
         self.assertEqual(panel("yandexstation_2")._wakeword_supported()[1], "yandexstation_2")
 
 

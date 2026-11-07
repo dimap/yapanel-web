@@ -11,6 +11,7 @@ Hardware:
 """
 
 import base64
+import hashlib
 import logging
 import os
 import posixpath
@@ -762,6 +763,11 @@ def install(s, profile):
 
     # Set root directory for Quasar system assets on Station Max Android
     s.QUASAR = "/data/data/com.yandex.io.sdk/files/system"
+    # Wakeword daemon lives in /data/wakeword and is managed by the panel directly
+    # (no YAM package, no maxpkg wrapper, no LAN UI).
+    s.WAKE_BIN = s.WAKE_BIN_LOCAL
+    s.WAKE_NEGATIVES = s.WAKE_NEGATIVES_LOCAL
+    s.WAKE_BIN_SHA256 = s.WAKE_BIN_SHA256 or "643c279b3327f1a110a8c65bc9e48bc70d305b4bee1efba1e491d9f94f61849f"
     s.SOUNDS_DIR = f"{s.QUASAR}/sounds"
     s.SOUND_TARGET = f"{s.SOUNDS_DIR}/common/boot.wav"
     if not isinstance(getattr(s, "PATTERNS", None), dict):
@@ -1946,44 +1952,66 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
 
     P.bt_action = max_bt_action
 
+    def max_boot_hook_script():
+        """Единственный генератор boot_hook.sh для Станции Макс.
+
+        Никаких Buildroot-механизмов и maxctl/YAM: только bind-ы панели,
+        демон слов активации и Frida-супервизор.
+        """
+        return (
+            "#!/bin/sh\n"
+            "# Webpanel boot hook for Station Max Android TV 9\n"
+            f"[ -f {s.BOOT_ALWAYS} ] && rm -f {s.NO_BOOT_SOUND}\n"
+            'bind() { [ -f "$1" ] && [ -f "$2" ] && ! grep -q " $2 " /proc/mounts && mount --bind "$1" "$2"; }\n'
+            f"bind {s.BOOT_CUSTOM} {s.BOOT_TARGET}\n"
+            f"bind {s.SOUND_CUSTOM} {s.SOUND_TARGET}\n"
+            f"bind {s.WEB_DIR}/hosts {s.HOSTS_TARGET}\n"
+            f"[ -d {s.OVR_DIR} ] && (cd {s.OVR_DIR} && find . -type f) | while read -r f; do "
+            f"bind \"{s.OVR_DIR}/${{f#./}}\" \"{s.PATTERNS['clock']}/${{f#./}}\"; done\n"
+            f"[ -d {s.OVR_DIR}/sounds ] && (cd {s.OVR_DIR}/sounds && find . -type f) | while read -r f; do "
+            f"bind \"{s.OVR_DIR}/sounds/${{f#./}}\" \"{s.SOUNDS_DIR}/${{f#./}}\"; done\n"
+            f"[ -f {s.WEB_DIR}/bt_off ] && ( svc bluetooth disable ) >/dev/null 2>&1 &\n"
+            + s.wakeword_boot_lines(android=True)
+            + s.frida_boot_lines(android=True)
+            + "exit 0\n"
+        )
+
     def max_hook_status(self):
         """Native hook status for Android TV 9 / Station Max.
-        Persistence is handled natively by /odm/bin/adbd_watchdog.sh which runs /data/quasar/webpanel/boot_hook.sh.
+
+        Persistence is handled natively by /odm/bin/adbd_watchdog.sh which runs
+        /data/quasar/webpanel/boot_hook.sh. Freshness is a real md5 check, not a
+        constant: otherwise the panel cannot notice that the generated hook was
+        replaced by an older version.
         """
-        out, _, _ = self.adb.shell(self._hook_users_script(), check=False)
-        users = [l.strip()[1:] for l in strip_ansi(out).splitlines() if l.strip().startswith("@")]
+        expected = hashlib.md5(max_boot_hook_script().encode("utf-8")).hexdigest()
+        out, _, _ = self.adb.shell(
+            f"{self._hook_users_script()}; [ -f {s.BOOT_HOOK} ] && echo hook; "
+            f"md5sum {s.BOOT_HOOK} 2>/dev/null; true", check=False)
+        out = s.strip_ansi(out)
+        flags = set(out.split())
+        users = [l.strip()[1:] for l in out.splitlines() if l.strip().startswith("@")]
+        hook = "hook" in flags
+        fresh = expected in out
         return {
-            "hook": True,
-            "fresh": True,
+            "hook": hook,
+            "fresh": hook and fresh,
             "users": users,
             "possible": True,
             "supported": True,
             "reason": "",
-            "broken": False,
+            "broken": bool(users) and not (hook and fresh),
             "rootkeeper": "/odm/bin/adbd_watchdog.sh",
-            "file": "/data/quasar/webpanel/boot_hook.sh"
+            "file": "/data/quasar/webpanel/boot_hook.sh",
         }
 
     def max_ensure_hook(self, remount=False):
-        """Write Station Max-tailored boot_hook.sh (Android TV 9).
-        Strictly excludes all Buildroot Linux mechanisms (rootkeeper, init.d, start-stop-daemon,
-        yamd, dbus-send, aplay, asound.conf).
-        """
-        hook_script = f"""#!/bin/sh
-# Webpanel boot hook for Station Max Android TV 9
-bind() {{ [ -f "$1" ] && [ -f "$2" ] && ! grep -q " $2 " /proc/mounts && mount --bind "$1" "$2"; }}
-bind {s.BOOT_CUSTOM} {s.BOOT_TARGET}
-bind {s.SOUND_CUSTOM} {s.SOUND_TARGET}
-bind {s.WEB_DIR}/hosts {s.HOSTS_TARGET}
-[ -d {s.OVR_DIR} ] && (cd {s.OVR_DIR} && find . -type f) | while read -r f; do bind "{s.OVR_DIR}/${{f#./}}" "{s.PATTERNS['clock']}/${{f#./}}"; done
-[ -d {s.OVR_DIR}/sounds ] && (cd {s.OVR_DIR}/sounds && find . -type f) | while read -r f; do bind "{s.OVR_DIR}/sounds/${{f#./}}" "{s.SOUNDS_DIR}/${{f#./}}"; done
-[ -f {s.WEB_DIR}/bt_off ] && ( svc bluetooth disable ) >/dev/null 2>&1 &
-exit 0
-"""
-        import tempfile
+        """Write the Station Max boot_hook.sh (Android TV 9, no Buildroot parts)."""
+        hook_script = max_boot_hook_script()
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "hook"
-            f.write_text(hook_script, encoding="utf-8")
+            with open(f, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(hook_script)
             self.adb.shell(f"mkdir -p {s.WEB_DIR}")
             self.adb.push(f, s.BOOT_HOOK)
         self.adb.shell(f"chmod 755 {s.BOOT_HOOK}; true")
@@ -2003,6 +2031,8 @@ exit 0
             ("звук запуска", s.SOUND_CUSTOM),
             ("выключенный bluetooth", s.BT_OFF),
             ("агент", s.AGENT_TOKENS),
+            ("слова активации", s.WAKE_AUTOSTART),
+            ("активация Алисы (Frida)", s.WAKE_FRIDA_AUTOSTART),
         ]
         cmd = "; ".join(f"[ -f {path} ] && echo {shlex.quote('@' + name)}" for name, path in users)
         cmd += f"; find {s.OVR_DIR}/sounds -type f 2>/dev/null | grep -q . && echo '@свои звуки'"
@@ -2016,12 +2046,251 @@ exit 0
             f"rm -f {s.BOOT_HOOK} /data/quasar/rootkeeper.sh*; fi; true"
         )
 
+    # ---------- слова активации на Максе: /data/wakeword + Frida ----------
+    def max_wakeword_installed(self, force=False):
+        """Файлы демона в /data/wakeword, пин sha256 и признаки процесса."""
+        now = time.time()
+        if not force and getattr(self, "_ww_info", None) and now - getattr(self, "_ww_info_at", 0.0) < 15:
+            return dict(self._ww_info)
+        out, _, _ = self.adb.shell(
+            f"[ -f {s.WAKE_BIN} ] && echo @bin; "
+            f"[ -x {s.WAKE_BIN} ] && echo @sha:$(sha256sum {s.WAKE_BIN} 2>/dev/null | cut -d' ' -f1); "
+            f"find {s.WAKE_DATA}/words -name model.json -type f 2>/dev/null | grep -q . && echo @model; "
+            f"[ -f {s.WAKE_PID} ] && kill -0 $(cat {s.WAKE_PID}) 2>/dev/null && echo @pid; "
+            f"pidof wakeword >/dev/null 2>&1 && echo @proc; "
+            f"[ -f {s.WAKE_AUTOSTART} ] && echo @auto; "
+            f"cat {s.WAKE_DATA}/VERSION 2>/dev/null; true", check=False)
+        lines = [l.strip() for l in s.strip_ansi(out).splitlines() if l.strip()]
+        version = next((l for l in lines if not l.startswith("@")), None)
+        sha = next((l[5:] for l in lines if l.startswith("@sha:")), "")
+        pin = str(getattr(s, "WAKE_BIN_SHA256", "") or "")
+        bin_ok = bool(sha) and (sha == pin if pin else True)
+        info = {"installed": bool("@bin" in lines or "@model" in lines),
+                "version": version, "bin": "@bin" in lines, "bin_ok": bin_ok,
+                "sha256": sha, "model": "@model" in lines,
+                "pid": "@pid" in lines, "process": "@proc" in lines, "auto": "@auto" in lines}
+        self._ww_info, self._ww_info_at = dict(info), now
+        return info
+
+    def max__wakeword_frida_probe(self, force=False):
+        """Состояние Frida-супервизора и heartbeat агента (кэш 5 с)."""
+        now = time.time()
+        if not force and getattr(self, "_ww_frida", None) and now - getattr(self, "_ww_frida_at", 0.0) < 5:
+            return dict(self._ww_frida)
+        out, _, _ = self.adb.shell(
+            f"[ -f {s.WAKE_FRIDA_PID} ] && kill -0 $(cat {s.WAKE_FRIDA_PID} 2>/dev/null) 2>/dev/null && echo @run; "
+            f"[ -f {s.WAKE_FRIDA_JS} ] && echo @js; "
+            f"[ -f {s.WAKE_FRIDA_SH} ] && echo @sh; "
+            f"[ -x {s.WAKE_FRIDA_INJECT} ] && echo @inject; "
+            f"pidof frida-inject >/dev/null 2>&1 && echo @injector; "
+            f"a=$(stat -c %Y {s.WAKE_HEARTBEAT} 2>/dev/null || echo 0); n=$(date +%s); echo @age:$((n-a)); true",
+            check=False)
+        lines = [l.strip() for l in s.strip_ansi(out).splitlines() if l.strip()]
+        age = next((int(l[5:]) for l in lines if l.startswith("@age:") and l[5:].isdigit()), None)
+        info = {"supported": True, "running": "@run" in lines,
+                "heartbeat_age": age, "heartbeat": age is not None and age < 20,
+                "js": "@js" in lines, "sh": "@sh" in lines,
+                "inject": "@inject" in lines, "injector": "@injector" in lines,
+                "pid": "@run" in lines}
+        self._ww_frida, self._ww_frida_at = dict(info), now
+        return info
+
+    def max_wakeword_frida_status(self):
+        return self._wakeword_frida_probe()
+
+    def max_wakeword_push_assets(self):
+        """Кладёт Frida-скрипты из device/wakeword/frida в /data/wakeword/frida."""
+        src = Path(__file__).resolve().parent / "device" / "wakeword" / "frida"
+        self.adb.shell(f"mkdir -p {s.WAKE_FRIDA_DIR}", check=False)
+        pushed = False
+        if src.is_dir():
+            for name in ("alice_trigger.js", "alice-frida-supervisor.sh"):
+                f = src / name
+                if f.is_file():
+                    self.adb.push(f, f"{s.WAKE_FRIDA_DIR}/{name}")
+                    pushed = True
+        self.adb.shell(
+            f"chmod 755 {s.WAKE_FRIDA_SH} 2>/dev/null; chmod 644 {s.WAKE_FRIDA_JS} 2>/dev/null; true",
+            check=False)
+        return pushed
+
+    def max_wakeword_frida_start(self):
+        self.max_wakeword_push_assets()
+        if self._wakeword_frida_probe(force=True)["running"]:
+            return self._wakeword_frida_probe(force=True)
+        self.adb.shell(
+            f"rm -f {s.WAKE_FRIDA_PID}; "
+            f"if [ -x /odm/bin/start-stop-daemon ]; then "
+            f"/odm/bin/start-stop-daemon -S -b -m -p {s.WAKE_FRIDA_PID} -x /bin/sh -- {s.WAKE_FRIDA_SH}; "
+            f"else nohup /bin/sh {s.WAKE_FRIDA_SH} >/dev/null 2>&1 & echo $! > {s.WAKE_FRIDA_PID}; fi; true",
+            check=False, timeout=20)
+        for _ in range(10):
+            time.sleep(0.3)
+            st = self._wakeword_frida_probe(force=True)
+            if st["running"]:
+                return st
+        return self._wakeword_frida_probe(force=True)
+
+    def max_wakeword_frida_stop(self):
+        self.adb.shell(
+            f"p=$(cat {s.WAKE_FRIDA_PID} 2>/dev/null); [ -n \"$p\" ] && kill $p 2>/dev/null; "
+            f"rm -f {s.WAKE_FRIDA_PID}; p=$(pidof frida-inject); [ -n \"$p\" ] && kill $p 2>/dev/null; true",
+            check=False, timeout=20)
+        self._ww_frida = None
+        return self._wakeword_frida_probe(force=True)
+
+    def max_wakeword_start(self):
+        info = self._wakeword_installed(force=True)
+        if not info["installed"]:
+            raise AdbError(f"нет демона {s.WAKE_BIN} и обученной модели в {s.WAKE_DATA}")
+        if not info["bin"]:
+            raise AdbError(f"нет бинарника {s.WAKE_BIN}: нажмите «Установить/починить файлы»")
+        pin = str(getattr(s, "WAKE_BIN_SHA256", "") or "")
+        if pin and not info.get("bin_ok"):
+            raise AdbError("бинарник слов активации не совпадает с проверенным build: "
+                           f"{info.get('sha256') or '?'} != {pin}")
+        try:
+            self.wakeword_frida_start()
+        except (AdbError, OSError, subprocess.TimeoutExpired) as e:
+            s.JOURNAL.add(f"слова активации: Frida-агент не запустился: {e}", "warn")
+        run = s.wakeword_run_cmd(android=True)
+        q = shlex.quote(run)
+        self.adb.shell(
+            f"p=$(cat {s.WAKE_PID} 2>/dev/null); [ -n \"$p\" ] && kill $p 2>/dev/null; rm -f {s.WAKE_PID}; "
+            f"p=$(pidof wakeword); if [ -n \"$p\" ]; then kill $p 2>/dev/null; i=0; "
+            f"while kill -0 $p 2>/dev/null && [ $i -lt 20 ]; do sleep 0.25; i=$((i+1)); done; "
+            f"kill -9 $p 2>/dev/null; fi; true", check=False, timeout=20)
+        out, err, rc = self.adb.shell(
+            f"if [ -x /odm/bin/start-stop-daemon ]; then "
+            f"/odm/bin/start-stop-daemon -S -b -m -N 10 -p {s.WAKE_PID} -x /bin/sh -- -c {q}; "
+            f"else nohup /bin/sh -c {q} >/dev/null 2>&1 & echo $! > {s.WAKE_PID}; fi; true",
+            check=False, timeout=30)
+        if rc != 0:
+            raise AdbError(s.strip_ansi(out or err).strip()[-400:] or "не удалось запустить демон слов активации")
+        self._ww_info = None
+        self._ww_port = None
+        for _ in range(25):
+            time.sleep(0.3)
+            st = self.wakeword_status()
+            if st["running"] and not st.get("error"):
+                return st
+        st = self.wakeword_status()
+        if st["running"]:
+            return st
+        raise AdbError("демон слов активации не запустился")
+
+    def max_wakeword_stop(self):
+        self.adb.shell(
+            f"p=$(cat {s.WAKE_PID} 2>/dev/null); [ -n \"$p\" ] && kill $p 2>/dev/null; rm -f {s.WAKE_PID}; "
+            f"p=$(pidof wakeword); [ -n \"$p\" ] && kill $p 2>/dev/null; "
+            f"p=$(cat {s.WAKE_FRIDA_PID} 2>/dev/null); [ -n \"$p\" ] && kill $p 2>/dev/null; rm -f {s.WAKE_FRIDA_PID}; "
+            f"p=$(pidof frida-inject); [ -n \"$p\" ] && kill $p 2>/dev/null; true",
+            check=False, timeout=20)
+        self._ww_port = None
+        self._ww_info = None
+        self._ww_frida = None
+        return self.wakeword_status()
+
+    def max_wakeword_autostart(self, on):
+        if on and not self._wakeword_installed(force=True)["installed"]:
+            raise AdbError("демон слов активации не установлен")
+        if on:
+            self.adb.shell(
+                f"mkdir -p {s.WEB_DIR} && touch {s.WAKE_AUTOSTART} {s.WAKE_FRIDA_AUTOSTART}",
+                check=False)
+            self._ensure_hook()
+            try:
+                self.wakeword_frida_start()
+            except (AdbError, OSError, subprocess.TimeoutExpired) as e:
+                s.JOURNAL.add(f"слова активации: Frida-агент не запустился: {e}", "warn")
+        else:
+            self.adb.shell(f"rm -f {s.WAKE_AUTOSTART} {s.WAKE_FRIDA_AUTOSTART}", check=False)
+            self._drop_hook_if_unused()
+        self._ww_info = None
+        return self.wakeword_status()
+
+    def max_wakeword_install(self):
+        """Проверить/починить файлы в /data/wakeword без YAM-пакета."""
+        self.max_wakeword_push_assets()
+        self.adb.shell(
+            f"mkdir -p {s.WAKE_DATA} {posixpath.dirname(s.WAKE_NEGATIVES)} {posixpath.dirname(s.WAKE_JAR)}",
+            check=False)
+        info = self._wakeword_installed(force=True)
+        if not info.get("bin_ok"):
+            local = Path(__file__).resolve().parent / "device" / "wakeword" / "build" / "wakeword"
+            if local.is_file():
+                self.adb.shell(f"rm -f {s.WAKE_BIN}.new", check=False)
+                self.adb.push(local, f"{s.WAKE_BIN}.new")
+                self.adb.shell(f"chmod 755 {s.WAKE_BIN}.new; mv -f {s.WAKE_BIN}.new {s.WAKE_BIN}", check=False)
+            else:
+                raise AdbError("бинарник не совпадает с проверенным, а локальной копии "
+                               "device/wakeword/build/wakeword нет")
+        self.adb.shell(f"[ -f {s.WAKE_DATA}/VERSION ] || echo 0.3.0-maxpkg > {s.WAKE_DATA}/VERSION; true",
+                       check=False)
+        self._ww_info = None
+        self._ww_port = None
+        return self.wakeword_status()
+
+    def max__wakeword_restart(self):
+        self.wakeword_stop()
+        return self.wakeword_start()
+
+    def max__wakeword_apply_dry_run(self):
+        """На Максе нативный триггер Алисы всегда включён: dry_run недопустим."""
+        st = self._wakeword_settings()
+        if bool(st.get("dry_run")):
+            st["dry_run"] = False
+            self._wakeword_settings_write(st)
+            self.wakeword_stop()
+            self.wakeword_start()
+        return False
+
+    def max_wakeword_actions_set(self, word, action, scene=None):
+        word = str(word or "").strip()
+        if not word:
+            raise AdbError("пустое слово")
+        if str(action or "alice") != "alice":
+            raise AdbError("На Станции Макс слово активации всегда будит Алису")
+
+        def mutate(data):
+            data.setdefault(s.WAKE_ACTIONS_KEY, {}).pop(word, None)
+            return data
+
+        s.update_settings(mutate)
+        self.max__wakeword_apply_dry_run()
+        return self.wakeword_actions()
+
+    original_wakeword_status = P.wakeword_status
+
+    def max_wakeword_status(self):
+        st = original_wakeword_status(self)
+        info = self._wakeword_installed()
+        st["dry_run"] = False
+        st["bin_ok"] = bool(info.get("bin_ok"))
+        st["bin_sha256"] = info.get("sha256") or ""
+        st["frida"] = self._wakeword_frida_probe()
+        return st
+
     P.hook_status = max_hook_status
     P._ensure_hook = max_ensure_hook
     P.hook_repair = max_hook_repair
     P._boot_route = max_boot_route
     P._hook_users_script = max_hook_users_script
     P._drop_hook_if_unused = max_drop_hook_if_unused
+    P._wakeword_installed = max_wakeword_installed
+    P.max_wakeword_push_assets = max_wakeword_push_assets
+    P._wakeword_frida_probe = max__wakeword_frida_probe
+    P.wakeword_frida_status = max_wakeword_frida_status
+    P.wakeword_frida_start = max_wakeword_frida_start
+    P.wakeword_frida_stop = max_wakeword_frida_stop
+    P.wakeword_start = max_wakeword_start
+    P.wakeword_stop = max_wakeword_stop
+    P.wakeword_autostart = max_wakeword_autostart
+    P.wakeword_install = max_wakeword_install
+    P._wakeword_restart = max__wakeword_restart
+    P._wakeword_apply_dry_run = max__wakeword_apply_dry_run
+    P.wakeword_actions_set = max_wakeword_actions_set
+    P.wakeword_status = max_wakeword_status
 
     def max_anim_paths(self, kind, name):
         if kind not in s.PATTERNS or name not in self.patterns().get(kind, []) or name.startswith("my/"):
@@ -2113,9 +2382,12 @@ exit 0
             f"[ -d {s.VIZ_DIR} ] && du -sk {s.VIZ_DIR} | cut -f1 || echo 0",
             f"[ -x {s.BOOT_HOOK} ] && grep -q 'boot_hook.sh' {s.ROOTKEEPER_CALLER} 2>/dev/null && echo 1 || echo 0",
             f"[ -e {s.AGENT_BIN} ] && echo 1 || echo 0",
+            f"{{ [ -f {s.WAKE_AUTOSTART} ] || pidof wakeword >/dev/null 2>&1; }} && echo 1 || echo 0",
+            f"{{ [ -f {s.WAKE_FRIDA_AUTOSTART} ] || {{ [ -f {s.WAKE_FRIDA_PID} ] && kill -0 $(cat {s.WAKE_FRIDA_PID} 2>/dev/null) 2>/dev/null; }}; }} && echo 1 || echo 0",
+            f"[ -d {s.WAKE_DATA} ] && du -sk {s.WAKE_DATA} | cut -f1 || echo 0",
         ])
         v = self.adb.shell(cmd, check=False)[0].split()
-        v = (v + ["0"] * 18)[:18]
+        v = (v + ["0"] * 21)[:21]
         b = [x == "1" for x in v]
         n = lambda x: int(x) if x.isdigit() else 0
 
@@ -2137,6 +2409,10 @@ exit 0
              "detail": "захват звука усилителя (ALSA/Android)"},
             {"key": "agent", "name": "Агент панели (защищённое соединение)", "on": b[17],
              "detail": f"порт {s.agentlink.PORT}, вход по токену"},
+            {"key": "wakeword", "name": "Свои слова активации", "on": b[18], "size_kb": n(v[20]),
+             "detail": "демон и обученная модель в /data/wakeword"},
+            {"key": "ww_frida", "name": "Активация Алисы (Frida)", "on": b[19],
+             "detail": "startConversation в com.yandex.io.sdk"},
             {"key": "backup", "name": "Копии оригиналов", "on": backup_on,
              "detail": "заставка, звук запуска — на случай отката"},
             {"key": "hook", "name": "Автозапуск: boot_hook.sh (adbd_watchdog)", "on": hook_on,
@@ -2167,7 +2443,8 @@ exit 0
             if path not in owned:
                 owned.append(path)
 
-        for attr in ("BOOT_CUSTOM", "SOUND_CUSTOM", "BOOT_ALWAYS", "BOOT_HOOK", "BT_OFF", "HOSTS_CUSTOM"):
+        for attr in ("BOOT_CUSTOM", "SOUND_CUSTOM", "BOOT_ALWAYS", "BOOT_HOOK", "BT_OFF", "HOSTS_CUSTOM",
+                     "WAKE_AUTOSTART", "WAKE_FRIDA_AUTOSTART"):
             _add_owned(getattr(s, attr, None))
         created = getattr(s, "ROOTKEEPER_CREATED", "")
         if created and posixpath.normpath(str(created)).startswith(web + "/"):
@@ -2222,6 +2499,11 @@ exit 0
         with self.adb.only_adb():
             out, _, _ = _shell_result(self.adb.shell(
                 f"[ -f {q(bt_off)} ] && svc bluetooth enable 2>/dev/null; "
+                f"p=$(cat {q(s.WAKE_PID)} 2>/dev/null); [ -n \"$p\" ] && kill $p 2>/dev/null; "
+                f"p=$(pidof wakeword); [ -n \"$p\" ] && kill $p 2>/dev/null; "
+                f"p=$(cat {q(s.WAKE_FRIDA_PID)} 2>/dev/null); [ -n \"$p\" ] && kill $p 2>/dev/null; "
+                f"p=$(pidof frida-inject); [ -n \"$p\" ] && kill $p 2>/dev/null; "
+                f"rm -f {q(s.WAKE_PID)} {q(s.WAKE_FRIDA_PID)}; "
                 f"killall viz 2>/dev/null; killall yapanel-agent 2>/dev/null; "
                 f"grep -q ' {boot_target} ' /proc/mounts && umount {q(boot_target)} 2>/dev/null; "
                 f"grep -q ' {sound_target} ' /proc/mounts && umount {q(sound_target)} 2>/dev/null; "

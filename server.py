@@ -323,29 +323,79 @@ VIZ_BT = "/tmp/webpanel_viz.bt"   # идёт Bluetooth-переливание: �
 # только читает состояние и шлёт команды (запись идёт микрофонами колонки), а API проксирует.
 WAKE_PKG = "/data/yam/pkgs/tangenx/wakeword"
 WAKE_SHARE = "/data/yam/share/tangenx.wakeword"
-WAKE_BIN = "/data/yam/bin/wakeword"
+WAKE_BIN = "/data/yam/bin/wakeword"                 # generic (Buildroot / YAM)
+WAKE_NEGATIVES = f"{WAKE_SHARE}/negatives.bin"      # generic (Buildroot / YAM)
+WAKE_BIN_LOCAL = _cfg.remote.wake_bin               # /data/wakeword/wakeword
+WAKE_NEGATIVES_LOCAL = _cfg.remote.wake_negatives   # /data/wakeword/negatives.bin
+WAKE_JAR = _cfg.remote.wake_jar
+WAKE_FRIDA_DIR = _cfg.remote.wake_frida_dir
+WAKE_FRIDA_JS = f"{WAKE_FRIDA_DIR}/alice_trigger.js"
+WAKE_FRIDA_SH = f"{WAKE_FRIDA_DIR}/alice-frida-supervisor.sh"
+WAKE_FRIDA_INJECT = _cfg.remote.wake_frida_inject
+WAKE_FRIDA_PID = "/tmp/alice_frida.pid"
+WAKE_FRIDA_LOG = "/tmp/alice_frida.log"
+WAKE_FRIDA_AUTOSTART = f"{WEB_DIR}/wakeword-frida.autostart"
+WAKE_TRIGGER = "/data/data/com.yandex.io.sdk/files/alice_trigger"
+WAKE_HEARTBEAT = "/data/data/com.yandex.io.sdk/files/alice_frida_alive"
+WAKE_BIN_SHA256 = _cfg.remote.wake_bin_sha256
 WAKE_DATA = _cfg.remote.wake_data_dir
 WAKE_PID = "/tmp/wakeword.pid"
 WAKE_LOG = "/tmp/wakeword.log"
 WAKE_AUTOSTART = f"{WEB_DIR}/wakeword.autostart"   # маркер: поднимать демон хуком панели после загрузки
 WAKE_PORT = _cfg.remote.wake_port
-# targets из yam.yaml пакета: Макс (yandexstation_2), Стрит и Android-Станция не поддерживаются.
-# что известно про пакет: README плагина + живая проверка на Лайт 2
+# targets из yam.yaml пакета: Стрит и Android-Станция не поддерживаются.
 WAKE_SUPPORT = {
     "tab": "Активация",
     "note": "Интеграция с панелью",
-    "tested": ["plum", "pickle", "yandexmidi", "yandexmini_2", "bergamot"],
+    "tested": ["plum", "pickle", "yandexmidi", "yandexmini_2", "bergamot", "yandexstation_2"],
     "untested": ["yandexmicro", "yandexmini", "cucumber"],
     "unsupported": ["yandexstation", "orion"],
     "names": {"plum": "Лайт 2", "pickle": "Станция 2", "yandexmidi": "Станция 2",
               "yandexmini_2": "Мини 2", "bergamot": "Мини 3", "yandexmicro": "Микро",
               "yandexmini": "Мини", "cucumber": "Миди", "yandexstation": "Станция 1",
-              "orion": "Макс"},
+              "yandexstation_2": "Макс", "orion": "Станция 3"},
 }
 WAKE_TARGETS = ("yandexmicro", "plum", "yandexmini", "yandexmini_2", "bergamot", "pickle",
-                "cucumber", "yandexmidi", "yandexstation", "orion")
+                "cucumber", "yandexmidi", "yandexstation", "yandexstation_2", "orion")
 WAKE_SETTINGS = f"{WAKE_DATA}/settings.json"
 WAKE_ACTIONS_KEY = "wakeword_actions"
+
+
+def wakeword_run_cmd(android=False):
+    """Команда запуска демона. Android-ветка добавляет явные платформенные флаги."""
+    flags = " -platform android -audio-source vqe" if android else ""
+    return (f"exec {WAKE_BIN} run -data {WAKE_DATA} -negatives {WAKE_NEGATIVES}{flags} "
+            f"-listen 127.0.0.1:{WAKE_PORT} >> {WAKE_LOG} 2>&1")
+
+
+def wakeword_boot_lines(android=False):
+    """Строки boot-хука для демона слов активации (Android: /odm/bin + fallback nohup)."""
+    q = shlex.quote(wakeword_run_cmd(android))
+    if android:
+        ssd = "/odm/bin/start-stop-daemon"
+        launch = (f'if [ -x {ssd} ]; then {ssd} -S -b -m -N 10 -p {WAKE_PID} -x /bin/sh -- -c {q}; '
+                  f'else nohup /bin/sh -c {q} >/dev/null 2>&1 & echo $! > {WAKE_PID}; fi')
+    else:
+        launch = f'start-stop-daemon -S -b -m -N 10 -p {WAKE_PID} -x /bin/sh -- -c {q}'
+    return (f"[ -f {WAKE_AUTOSTART} ] && {{\n"
+            f"  if ! pidof wakeword >/dev/null 2>&1; then\n"
+            f"    rm -f {WAKE_PID}\n"
+            f"    {launch}\n"
+            f"  fi\n"
+            f"}}\n")
+
+
+def frida_boot_lines(android=True):
+    """Строки boot-хука для Frida-супервизора (только Android/Макс)."""
+    if android:
+        ssd = "/odm/bin/start-stop-daemon"
+        launch = (f'if [ -x {ssd} ]; then {ssd} -S -b -m -p {WAKE_FRIDA_PID} -x /bin/sh -- {WAKE_FRIDA_SH}; '
+                  f'else nohup /bin/sh {WAKE_FRIDA_SH} >/dev/null 2>&1 & echo $! > {WAKE_FRIDA_PID}; fi')
+    else:
+        launch = f"start-stop-daemon -S -b -m -p {WAKE_FRIDA_PID} -x /bin/sh -- {WAKE_FRIDA_SH}"
+    return (f"[ -f {WAKE_FRIDA_AUTOSTART} ] && {{ "
+            f"if [ ! -f {WAKE_FRIDA_PID} ] || ! kill -0 \"$(cat {WAKE_FRIDA_PID} 2>/dev/null)\" 2>/dev/null; then "
+            f"rm -f {WAKE_FRIDA_PID}; {launch}; fi; }}\n")
 
 # ---------- эквалайзер для Bluetooth-выхода ----------
 # Пресеты в виде полос (тип, частота, усиление дБ, добротность): tap на колонке получает готовые
@@ -549,8 +599,7 @@ BOOT_HOOK_SCRIPT = (
     f"[ -f {ASSIST_CONF} ] && [ -x {ASSISTD} ] && start-stop-daemon -S -b -m -p {ASSIST_SD} -x /bin/sh -- -c {shlex.quote(ASSIST_RUN)}\n"
     f"[ -f {BTOUT_MAC} ] && [ -f {BTOUT_SH} ] && start-stop-daemon -S -b -m -p {BTOUT_SD} -x /bin/sh -- {BTOUT_SH}\n"
     # свои слова активации: демон из yam-пакета, стартуем из /data (rootfs-init после OTA пропадает)
-    f"[ -f {WAKE_AUTOSTART} ] && [ -x {WAKE_BIN} ] && start-stop-daemon -S -b -m -N 10 -p {WAKE_PID} -x /bin/sh -- -c "
-    f"{shlex.quote(f'exec {WAKE_BIN} run -data {WAKE_DATA} -negatives {WAKE_SHARE}/negatives.bin -listen 127.0.0.1:{WAKE_PORT} >> {WAKE_LOG} 2>&1')}\n"
+    + wakeword_boot_lines(android=False) +
     f"{BT_OFF_BOOT}\n"
     f"[ -f {AGENT_TOKENS} ] && [ -x {AGENT_BIN} ] && start-stop-daemon -S -b -m -p {AGENT_SD} -x /bin/sh -- -c {shlex.quote(AGENT_RUN)}\n"
     # службы пакетов yam 2, отмеченные «при загрузке»
@@ -4080,6 +4129,17 @@ echo @@BLUEZ
         self._ww_info = None
         return self.wakeword_status()
 
+    # Frida-активация Алисы есть только на Android-станциях (Макс); на Buildroot — заглушки.
+    def wakeword_frida_status(self):
+        return {"supported": False, "running": False, "heartbeat_age": None,
+                "js": False, "inject": False}
+
+    def wakeword_frida_start(self):
+        raise AdbError("Frida-активация Алисы поддерживается только на Станции Макс")
+
+    def wakeword_frida_stop(self):
+        raise AdbError("Frida-активация Алисы поддерживается только на Станции Макс")
+
     def wakeword_autostart(self, on):
         """Включить/выключить запуск демона хуком панели после перезагрузки."""
         if on and not self._wakeword_installed(force=True)["installed"]:
@@ -7240,6 +7300,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/status": p.status,
             "/api/wakeword/status": p.wakeword_status,
             "/api/wakeword/actions": p.wakeword_actions,
+            "/api/wakeword/frida": p.wakeword_frida_status,
             "/api/mute": lambda: {"muted": bool(load_settings().get("mute_before")), "volume": p._volume_level()},
             "/api/sounds": p.sounds,
             "/api/sounds/custom": p.sounds_custom,
@@ -7358,6 +7419,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/wakeword/install": p.wakeword_install,
             "/api/wakeword/start": p.wakeword_start,
             "/api/wakeword/stop": p.wakeword_stop,
+            "/api/wakeword/frida/start": p.wakeword_frida_start,
+            "/api/wakeword/frida/stop": p.wakeword_frida_stop,
             "/api/wakeword/actions": lambda: p.wakeword_actions_set(d.get("word"), d.get("action"), d.get("scene")),
             "/api/wakeword/autostart": lambda: p.wakeword_autostart(bool(d.get("on"))),
             "/api/play": lambda: p.play_system(d["name"]),

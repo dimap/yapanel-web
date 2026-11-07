@@ -18,9 +18,9 @@
 Для пользователей Windows подготовлен полностью автоматический установщик, не требующий установки Python на компьютер, ручного ввода команд или настройки зависимостей:
 
 1. **Скачайте архив установщика** из раздела [Релизы (Releases)](https://github.com/Timobzdecc/yapanel-web_max/releases/latest):
-   * **[yapanel-web-0.3.2-windows-x64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.2/yapanel-web-0.3.2-windows-x64.zip)** (всё включено: установщик, ADB, все компоненты, пошаговая инструкция `README_WINDOWS.txt` и шаблон `bulbs.example.json` для быстрой настройки умных ламп светомузыки).
-   * Для ARM-ноутбуков: **[yapanel-web-0.3.2-windows-arm64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.2/yapanel-web-0.3.2-windows-arm64.zip)**.
-   * Либо скачайте скрипт **[`install_to_max.bat`](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.2/install_to_max.bat)** (он сам загрузит установщик `install_to_max.ps1`).
+   * **[yapanel-web-0.3.3-windows-x64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.3/yapanel-web-0.3.3-windows-x64.zip)** (всё включено: установщик, ADB, все компоненты, пошаговая инструкция `README_WINDOWS.txt` и шаблон `bulbs.example.json` для быстрой настройки умных ламп светомузыки).
+   * Для ARM-ноутбуков: **[yapanel-web-0.3.3-windows-arm64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.3/yapanel-web-0.3.3-windows-arm64.zip)**.
+   * Либо скачайте скрипт **[`install_to_max.bat`](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.3/install_to_max.bat)** (он сам загрузит установщик `install_to_max.ps1`).
 2. Распакуйте архив и запустите **`install_to_max.bat`** (двойным кликом).
 3. При запросе введите IP-адрес вашей Станции Макс (например `192.168.1.100`).
 
@@ -229,7 +229,7 @@ services:
    ```bash
    adb push bulbs.json /data/yapanel/bulbs.json
    ```
-   *(В сборке для Windows `yapanel-web-0.3.2-windows-x64.zip` также приложена отдельная пошаговая текстовая инструкция `README_WINDOWS.txt`).*
+   *(В сборке для Windows `yapanel-web-0.3.3-windows-x64.zip` также приложена отдельная пошаговая текстовая инструкция `README_WINDOWS.txt`).*
 
 
 ### 🤖 Нативный голосовой ассистент (`assistant_max`)
@@ -240,6 +240,12 @@ services:
   * Голосом самой Алисы через команду `sendText: "Повтори за мной..."`;
   * Либо внешним синтезатором речи (Google TTS, Piper, ElevenLabs) с выводом в аудио-тракт Станции через аппаратную утилиту `/odm/bin/playaudio`.
 * **Режимы работы**: разовые триггеры либо непрерывный диалоговый режим («включи ассистента» / «верни Алису»). Сохранение контекста переписки и системный промпт.
+
+### 🎙 Свои слова активации
+* **Обучение прямо на станции**: запишите фон и 6–15 дублей слова («Алёша», «Джарвис» и т. п.) с микрофонов колонки; модель и записи хранятся в `/data/wakeword`.
+* **Активация Алисы через штатный SDK**: Frida-агент внутри `com.yandex.io.sdk` вызывает `startConversation()`, поэтому микрофон остаётся у SDK и второй `AudioRecord` не создаётся.
+* **Без отдельного пакета и панели**: демон, Frida-супервизор и автозапуск управляются вкладкой «Активация»; API демона слушает только `127.0.0.1:8780`.
+* **Прогресс обучения**: отдельная карточка со стадиями `загрузка → обработка записей → обучение → проверка`, проценты и сообщение о завершении.
 
 ### 💡 LED-матрица 25×16 и 24 RGB кольцо
 * **Монохромная матрица (400 светодиодов)**: отображение текущего времени, таймеров, погоды, произвольного текста и кастомных анимаций.

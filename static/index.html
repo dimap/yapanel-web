@@ -2733,8 +2733,11 @@
         <span class="meta" id="ww-audio-text">—</span>
         <button class="btn sm" id="ww-listen">Проверить: «слушаю»</button>
       </div>
-      <label class="ww-auto" id="ww-autostart-row" hidden><span><b>Запускать при загрузке</b><small>Хук панели поднимет демон после перезагрузки; «Убрать всё» выключит</small></span>
+      <label class="ww-auto" id="ww-autostart-row" hidden><span><b>Запускать при загрузке</b><small id="ww-autostart-note">Хук панели поднимет демон после перезагрузки; «Убрать всё» выключит</small></span>
         <input type="checkbox" class="switch" id="ww-autostart"></label>
+      <div class="ww-auto" id="ww-frida-row" hidden>
+        <span><b>Активация Алисы (Frida)</b><small id="ww-frida-state">—</small></span>
+      </div>
     </section>
     <section class="card" id="ww-words-card" hidden>
       <div class="card-head"><h2>Слова</h2><div class="actions"><button class="btn sm primary" id="ww-add">Добавить слово</button></div></div>
@@ -2754,11 +2757,16 @@
           <p>20 секунд прочитайте вслух текст ниже — чтобы слово не путалось с вашей речью.</p>
           <div class="ww-reading">Сегодня обещали тёплую погоду, поэтому мы решили погулять в парке. Вечером нужно купить хлеб, молоко и что-нибудь к чаю. Позвоню маме и спрошу, как у неё дела. Завтра рано вставать, так что лягу пораньше и почитаю книгу.</div>
           <button class="btn sm" id="ww-speech">Читать 20 секунд</button></div>
-        <div class="ww-step"><div class="ww-step-head"><b>4. Обучение</b><span class="meta" id="ww-train-state"></span></div>
+        <div class="ww-step"><div class="ww-step-head"><b>4. Обучение</b><span class="meta">2–3 минуты</span></div>
           <p>2–3 минуты на колонке. Сначала нужен фон и минимум 6 записей слова.</p>
-          <button class="btn sm primary" id="ww-train" disabled title="Сначала запишите фон и минимум 6 дублей слова">Обучить</button>
-          <div class="ww-progress"><span id="ww-train-bar"></span></div></div>
+          <button class="btn sm primary" id="ww-train" disabled title="Сначала запишите фон и минимум 6 дублей слова">Обучить</button></div>
       </div>
+    </section>
+    <section class="card" id="ww-train-card" hidden>
+      <div class="card-head"><h2>Обучение: <span id="ww-train-word"></span></h2></div>
+      <div class="ww-step-head"><b id="ww-train-state">—</b><span class="meta" id="ww-train-pct"></span></div>
+      <div class="ww-progress"><span id="ww-train-bar"></span></div>
+      <p class="hint" id="ww-train-hint">Идёт обучение на колонке. Это может занять 2–3 минуты — не выключайте станцию.</p>
     </section>
     <section class="card" id="ww-hits-card" hidden>
       <div class="card-head"><h2>Последние срабатывания</h2></div>
@@ -3207,7 +3215,7 @@ voiceInput = bindVoiceInput(document, { store, ready: () => !!(online && mu.info
 </script>
 <script>
 // ---------- слова активации: тонкий клиент к API демона tangenx/wakeword ----------
-let ww = null, wwTimer = 0, wwSig = '', wwBusy = '', wwActions = null;
+let ww = null, wwTimer = 0, wwSig = '', wwBusy = '', wwActions = null, wwTrainWasActive = false;
 const wwOn = () => !!(ww && ww.installed && ww.supported);
 const wwPct = x => Math.round(Math.max(0, Math.min(1, +x || 0)) * 100) + '%';
 
@@ -3241,23 +3249,39 @@ function wwRender() {
   if (nav) nav.hidden = !(ww && ww.installed && ww.supported);
   if (!ww) return;
   const on = wwOn(), running = !!ww.running;
+  const isMax = ww.platform === 'yandexstation_2';
+  const fr = ww.frida || {};
   const stateEl = $('#ww-state'), dot = $('#ww-dot');
   stateEl.textContent = !ww.installed ? 'не установлен' : !ww.supported ? 'не поддерживается'
     : running ? (ww.error ? 'процесс запущен, API недоступен' : 'работает') : 'остановлен';
   dot.className = 'ww-dot' + (on && running && !ww.error ? ' on' : on ? ' warn' : ' off');
-  $('#ww-hint').textContent = !ww.installed
-    ? 'Пакет tangenx/wakeword не установлен. Установите его в «Приложения» → YAM 2, затем вернитесь сюда.'
+  let hint = !ww.installed
+    ? (isMax ? 'Файлы демона не установлены. Нажмите «Установить/починить файлы».'
+             : 'Пакет tangenx/wakeword не установлен. Установите его в «Приложения» → YAM 2, затем вернитесь сюда.')
     : !ww.supported ? `Плагин не поддерживает эту модель (${ww.platform || '?'}).`
     : ww.error ? `Демон не отвечает: ${ww.error}`
     : running ? (ww.dry_run
         ? 'Демон работает, маршрутизация включена: по слову панель сама решает — Алиса, ассистент или сценарий.'
         : 'Демон работает. Запись и обучение идут с микрофонов колонки — говорите рядом с ней.')
     : 'Демон установлен, но не запущен — нажмите «Запустить демон».';
+  if (isMax && running && !fr.running) hint += ' Frida-агент не запущен — Алиса не откроется по слову.';
+  $('#ww-hint').textContent = hint;
   $('#ww-install').hidden = ww.installed;
+  $('#ww-install').textContent = isMax ? 'Установить/починить файлы' : 'Установить пакет';
   $('#ww-start').hidden = !on || running;
   $('#ww-stop').hidden = !on || !running;
   $('#ww-autostart-row').hidden = !on;
   $('#ww-autostart').checked = !!ww.autostart;
+  $('#ww-autostart-note').textContent = isMax
+    ? 'Хук панели поднимет демон и Frida-агент после перезагрузки'
+    : 'Хук панели поднимет демон после перезагрузки; «Убрать всё» выключит';
+  $('#ww-frida-row').hidden = !on || !isMax;
+  if (isMax) {
+    $('#ww-frida-state').textContent = fr.running
+      ? (fr.heartbeat ? `работает · heartbeat ${fr.heartbeat_age} с`
+                      : 'супервизор запущен, агент SDK не отвечает')
+      : 'не запущен — Алиса не проснётся по слову';
+  }
   $('#ww-words-card').hidden = !on || !running;
 
   const sup = ww.support || {};
@@ -3301,7 +3325,8 @@ function wwRender() {
         <div class="ww-conf" title="Уверенность сейчас; отметка — порог срабатывания"><span data-ww-meter="${id}" style="width:${wwPct(w.score)}"></span><b style="left:${thr}%"></b></div>
         <div class="ww-word-meta"><span class="meta">${w.takes || 0} записей · узнаёт ${wwPct(w.recall)} · ложных ≈ ${(+w.false_per_h || 0).toFixed(1)}/ч${w.false_clips ? ` · отмечено: ${w.false_clips}` : ''} · сейчас <span data-ww-score="${id}">${wwPct(w.score)}</span></span></div>
         ${(w.notes || []).length ? `<div class="meta">${w.notes.map(esc).join('<br>')}</div>` : ''}
-        <div class="ww-word-act"><label class="meta">действие</label>
+        ${isMax ? `<div class="meta" style="margin-top:8px">Действие: Алиса (нативно, через SDK)</div>`
+        : `<div class="ww-word-act"><label class="meta">действие</label>
           <select class="field" data-ww-act="${id}">
             <option value="alice" ${a.type === 'alice' ? 'selected' : ''}>Алиса</option>
             <option value="assistant" ${a.type === 'assistant' ? 'selected' : ''}>Ассистент</option>
@@ -3309,7 +3334,7 @@ function wwRender() {
             <option value="none" ${a.type === 'none' ? 'selected' : ''}>Ничего</option>
           </select>
           ${a.type === 'scene' ? `<select class="field" data-ww-scene="${id}">${scenes.map(x => `<option value="${x.id}" ${x.id === a.scene ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : ''}
-        </div>
+        </div>`}
         <div class="ww-word-foot">
           <label class="ww-sens"><span>реже</span><input type="range" min="-30" max="30" step="5" value="${Math.max(-30, Math.min(30, sens))}" data-ww-sens="${id}"><span>чаще</span></label>
           <div class="ww-word-actions"><button class="btn sm" data-ww-retrain="${id}">Переобучить</button><button class="btn sm danger" data-ww-del="${id}">Удалить</button></div>
@@ -3346,9 +3371,27 @@ function wwRender() {
       || !!(ww.train && ww.train.active);
   }
   const tr = ww.train || {};
-  $('#ww-train-state').textContent = tr.active ? `${tr.stage || 'обучение'} · ${Math.round((+tr.frac || 0) * 100)}%`
-    : tr.error ? tr.error : tr.done ? 'готово' : '';
-  $('#ww-train-bar').style.width = tr.active ? Math.round((+tr.frac || 0) * 100) + '%' : '0';
+  const trActive = !!tr.active, trError = !!tr.error;
+  const trStage = tr.stage || 'load';
+  const trRanges = { load: [0, 0.02], embed: [0.02, 0.45], train: [0.45, 0.95], calibrate: [0.95, 1] };
+  const [trA, trB] = trRanges[trStage] || [0, 1];
+  const trFrac = Math.max(0, Math.min(1, trA + (trB - trA) * (+tr.frac || 0)));
+  const trNames = { load: 'загрузка', embed: 'обработка записей', train: 'обучение', calibrate: 'проверка' };
+  const trShow = !!(on && (trActive || trError));
+  $('#ww-train-card').hidden = !trShow;
+  if (trShow) {
+    $('#ww-train-word').textContent = tr.name || tr.word || '';
+    $('#ww-train-state').textContent = trError ? `Ошибка: ${tr.error}` : `${trNames[trStage] || trStage}…`;
+    $('#ww-train-pct').textContent = trActive ? `${Math.round(trFrac * 100)}%` : '';
+    $('#ww-train-bar').style.width = trActive ? `${Math.round(trFrac * 100)}%` : '0';
+    $('#ww-train-hint').textContent = trError
+      ? 'Обучение не удалось. Проверьте записи и попробуйте снова.'
+      : 'Идёт обучение на колонке. Это может занять 2–3 минуты — не выключайте станцию.';
+  } else {
+    $('#ww-train-bar').style.width = '0';
+  }
+  if (trActive) wwTrainWasActive = true;
+  else if (wwTrainWasActive && !trError) { wwTrainWasActive = false; toast('Обучение завершено'); }
 
   const hits = ww.hits || [];
   $('#ww-hits-card').hidden = !on || !running || !hits.length;
@@ -3384,7 +3427,7 @@ $('#ww-install').onclick = e => act(e.currentTarget, async () => {
   await api('/api/wakeword/install', {});
   await wwLoad();
   await wwActionsLoad();
-}, 'Пакет установлен');
+}, (ww && ww.platform === 'yandexstation_2') ? 'Файлы установлены' : 'Пакет установлен');
 $('#ww-start').onclick = e => act(e.currentTarget, async () => { ww = await api('/api/wakeword/start', {}); wwRender(); wwLoad(); }, 'Демон запущен');
 $('#ww-stop').onclick = e => act(e.currentTarget, async () => { ww = await api('/api/wakeword/stop', {}); wwRender(); wwLoad(); }, 'Демон остановлен');
 $('#ww-autostart').onchange = e => {

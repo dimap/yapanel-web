@@ -234,6 +234,12 @@ class RemotePathsConfig:
     viz_dir: str = "/data/quasar/webpanel/viz"
     btout_dir: str = "/data/quasar/webpanel/btout"
     wake_data_dir: str = "/data/wakeword"
+    wake_bin: str = "/data/wakeword/wakeword"
+    wake_negatives: str = "/data/wakeword/negatives.bin"
+    wake_jar: str = "/data/wakeword/lib/audiocapture.jar"
+    wake_frida_dir: str = "/data/wakeword/frida"
+    wake_frida_inject: str = "/data/local/tmp/frida-inject"
+    wake_bin_sha256: str = ""
     rootkeeper_path: str = "/data/quasar/rootkeeper.sh"
     initd_hook_path: str = "/etc/init.d/S99zwebpanel"
     online_check_ips: Tuple[str, ...] = ("77.88.8.8", "8.8.8.8")
@@ -380,6 +386,12 @@ _ENV_MAP: List[Tuple[str, str, str, Callable[[Any], Any]]] = [
     ("YASTATION_REMOTE_VIZ_DIR", "remote", "viz_dir", str),
     ("YASTATION_REMOTE_BTOUT_DIR", "remote", "btout_dir", str),
     ("YASTATION_REMOTE_WAKE_DIR", "remote", "wake_data_dir", str),
+    ("YASTATION_WAKE_BIN", "remote", "wake_bin", str),
+    ("YASTATION_WAKE_NEGATIVES", "remote", "wake_negatives", str),
+    ("YASTATION_WAKE_JAR", "remote", "wake_jar", str),
+    ("YASTATION_WAKE_FRIDA_DIR", "remote", "wake_frida_dir", str),
+    ("YASTATION_WAKE_FRIDA_INJECT", "remote", "wake_frida_inject", str),
+    ("YASTATION_WAKE_BIN_SHA256", "remote", "wake_bin_sha256", str),
     ("YASTATION_ROOTKEEPER_PATH", "remote", "rootkeeper_path", str),
     ("YASTATION_INITD_HOOK_PATH", "remote", "initd_hook_path", str),
     ("ONLINE_CHECK_IPS", "remote", "online_check_ips", _cast_tuple_str),

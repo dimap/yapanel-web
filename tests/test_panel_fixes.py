@@ -21,6 +21,18 @@ class AdbListing(unittest.TestCase):
             self.assertEqual([e[3] for e in s.Adb('adb', 'device').ls('/tmp')], ['a\x0cb'])
 
 
+class RebootCommand(unittest.TestCase):
+    def test_reboot_falls_back_to_sysrq_when_android_reboot_is_a_noop(self):
+        panel = object.__new__(server.Panel)
+        panel.detach = Mock()
+        panel.system("reboot")
+        tag, script = panel.detach.call_args.args
+        self.assertEqual(tag, "reboot")
+        self.assertIn("/system/bin/reboot", script)
+        self.assertIn("/proc/sysrq-trigger", script)
+        self.assertIn("sync", script)
+
+
 class UpdateLifecycle(unittest.TestCase):
     def test_multi_stops_children_before_replacing_process(self):
         events = Mock(); workers = Mock()

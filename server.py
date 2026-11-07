@@ -2194,8 +2194,12 @@ class Panel:
         self._ww_router_stop = threading.Event()
         self.party = None
         self._party_lock = threading.Lock()
+        # auto_start больше не включает свет безусловно. Восстанавливаем
+        # только явно включённое пользователем состояние.
         if self.config and getattr(getattr(self.config, "party", None), "auto_start", False):
-            self.enable_party()
+            pm = self.get_party(start=False)
+            if pm and pm.settings.get("running") and pm.settings.get("master_enabled", True):
+                pm.start()
 
     def _configure_glagol(self, device_id):
         # Glagol использует тип устройства из прошивки, а не профиль LED/часов панели.
@@ -3415,6 +3419,127 @@ echo @@BLUEZ
         self.detach("say", script)
         return {"ok": True, "method": "tts"}
 
+    # ---------- свои фразы ----------
+    # Пресеты карточки «Сказать на колонке» и приветствие при старте панели.
+    PHRASES_KEY = "phrases"
+    GREETING_KEY = "greeting"
+    PHRASES_LIMIT = 20
+    PHRASE_MAX = 300
+
+    @staticmethod
+    def _phrase_text(text):
+        """Текст фразы: без управляющих символов, по краям обрезан."""
+        return re.sub(r"[\x00-\x1f]", " ", str(text or "")).strip()
+
+    def phrases_list(self):
+        """Сохранённые фразы и настройка приветствия."""
+        items = load_settings().get(self.PHRASES_KEY)
+        phrases = []
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("id"):
+                    phrases.append({"id": str(item["id"]), "name": str(item.get("name") or ""),
+                                    "text": str(item.get("text") or "")})
+        return {"phrases": phrases, "greeting": self.greeting_get(), "limit": self.PHRASES_LIMIT}
+
+    def phrases_save(self, data):
+        """Заменяет список фраз целиком (как scenes_save): валидация до записи."""
+        items = data.get("phrases") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            raise AdbError("нужен список фраз")
+        if len(items) > self.PHRASES_LIMIT:
+            raise AdbError(f"не больше {self.PHRASES_LIMIT} фраз")
+        clean, ids = [], set()
+        for item in items:
+            if not isinstance(item, dict):
+                raise AdbError("фраза должна быть объектом")
+            pid = re.sub(r"[^a-z0-9]", "", str(item.get("id") or "").lower())[:12]
+            if not pid:
+                pid = secrets.token_hex(6)
+            name = re.sub(r'[\x00-\x1f|"]', " ", str(item.get("name") or "")).strip()[:40] or "Фраза"
+            name = re.sub(r"\s+", " ", name)
+            text = self._phrase_text(item.get("text"))
+            if not 1 <= len(text) <= self.PHRASE_MAX:
+                raise AdbError(f"«{name}»: текст — от 1 до {self.PHRASE_MAX} символов")
+            if pid in ids:
+                raise AdbError("дублирующийся id фразы")
+            ids.add(pid)
+            clean.append({"id": pid, "name": name, "text": text})
+        if not update_settings_section(self.PHRASES_KEY, clean):
+            raise AdbError("не удалось сохранить фразы")
+        return {"ok": True, "phrases": clean, "limit": self.PHRASES_LIMIT}
+
+    def phrases_say(self, pid):
+        """Произнести сохранённую фразу тем же путём, что и «Сказать на колонке»."""
+        pid = str(pid or "").strip()
+        for item in self.phrases_list()["phrases"]:
+            if item["id"] == pid:
+                result = self.say(item["text"])
+                if isinstance(result, dict):
+                    result = dict(result, phrase=item["name"])
+                return result
+        raise AdbError("нет такой фразы")
+
+    def greeting_get(self):
+        """Настройка приветствия при старте панели (по умолчанию выключено)."""
+        g = load_settings().get(self.GREETING_KEY)
+        if not isinstance(g, dict):
+            g = {}
+        try:
+            delay = int(g.get("delay", 45))
+        except (TypeError, ValueError):
+            delay = 45
+        return {"on": bool(g.get("on")), "text": self._phrase_text(g.get("text"))[:self.PHRASE_MAX],
+                "delay": max(5, min(600, delay))}
+
+    def greeting_save(self, data):
+        if not isinstance(data, dict):
+            raise AdbError("нужен объект приветствия")
+        text = self._phrase_text(data.get("text"))
+        if len(text) > self.PHRASE_MAX:
+            raise AdbError(f"текст — не больше {self.PHRASE_MAX} символов")
+        if data.get("on") and not text:
+            raise AdbError("для приветствия нужен текст")
+        try:
+            delay = int(data.get("delay", 45))
+        except (TypeError, ValueError):
+            delay = 45
+        greeting = {"on": bool(data.get("on")), "text": text, "delay": max(5, min(600, delay))}
+        if not update_settings_section(self.GREETING_KEY, greeting):
+            raise AdbError("не удалось сохранить приветствие")
+        return {"ok": True, "greeting": greeting}
+
+    def greeting_say(self):
+        """Произнести приветствие сейчас (кнопка «Проверить»)."""
+        text = self.greeting_get()["text"]
+        if not text:
+            raise AdbError("приветствие не задано")
+        return self.say(text)
+
+    def greeting_start(self):
+        """Фоновое приветствие при старте: ждёт Glagol, но не дольше delay секунд."""
+        greeting = self.greeting_get()
+        if not greeting["on"] or not greeting["text"]:
+            return False
+        text, delay = greeting["text"], greeting["delay"]
+
+        def run():
+            deadline = time.time() + delay
+            while time.time() < deadline:
+                gl = getattr(self, "glagol", None)
+                if gl is not None and getattr(gl, "ws", None):
+                    break
+                time.sleep(2)
+            try:
+                result = self.say(text)
+                method = result.get("method") if isinstance(result, dict) else "?"
+                JOURNAL.add(f"приветствие: произнесено ({method})")
+            except Exception as e:   # приветствие не должно мешать работе панели
+                JOURNAL.add(f"приветствие не удалось: {e}", "warn")
+
+        threading.Thread(target=run, daemon=True, name="greeting").start()
+        return True
+
     def assistant_ask(self, text):
         text = str(text or "").strip()
         if not 1 <= len(text) <= 1000:
@@ -4002,11 +4127,11 @@ echo @@BLUEZ
         """Explicitly instantiates and starts PartyManager."""
         return self.get_party(start=True)
 
-    def stop_party(self):
+    def stop_party(self, persist=True):
         """Cleanly stops PartyManager and terminates all worker threads."""
         if self.party:
             try:
-                self.party.stop()
+                self.party.stop(persist=persist)
             except Exception as e:
                 JOURNAL.add(f"party stop error: {e}", "warn")
 
@@ -6481,7 +6606,11 @@ echo @@BLUEZ
         if action == "quasar_restart":
             self.detach("quasar", f"{QUASAR}/q restart >/dev/null 2>&1")
         elif action == "reboot":
-            self.detach("reboot", "sleep 1; reboot")
+            # На этой прошивке /system/bin/reboot возвращает "Success", но
+            # фактически не перезагружает колонку. После него оставляем
+            # аварийный sysrq-ребут; при рабочем reboot до fallback не дойдёт.
+            self.detach("reboot", "sync; /system/bin/reboot >/dev/null 2>&1; "
+                                  "sleep 2; echo b > /proc/sysrq-trigger")
         else:
             raise AdbError("неизвестное действие")
         return {"ok": True}
@@ -7834,6 +7963,7 @@ def main():
     panel.wakeword_router_start()
     panel.ymusic = glagol.YandexMusic(panel.auth)
     panel.agent_attach()
+    panel.greeting_start()
     panel.conn = Connection(adb)
     panel.leds = LedStream(adb)
     panel.metrics = Metrics(adb, panel.conn)
@@ -7904,7 +8034,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        panel.stop_party()
+        # При остановке самого процесса не перетираем последнее явное
+        # состояние: после обычного рестарта панель восстановит его.
+        panel.stop_party(persist=False)
         panel.metrics._save()
 
 

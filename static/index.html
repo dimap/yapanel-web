@@ -1376,6 +1376,23 @@
             <button class="btn sm primary" style="min-height:42px">Сказать</button>
           </form>
           <p class="hint" id="say-hint">Колонка произнесёт текст голосом Алисы — без входа в Яндекс, но нужен интернет: Алиса озвучивает через своё облако.</p>
+          <div class="chips" id="say-presets" style="margin-top:10px"></div>
+          <details style="margin-top:8px">
+            <summary class="hint" style="cursor:pointer">Мои фразы и приветствие</summary>
+            <div class="row" style="gap:8px;align-items:stretch;margin-top:8px">
+              <input type="text" class="field" id="preset-name" maxlength="40" placeholder="Название" aria-label="Название фразы" style="flex:0 1 160px">
+              <input type="text" class="field" id="preset-text" maxlength="300" placeholder="Текст фразы" aria-label="Текст фразы" style="flex:1;min-width:180px">
+              <button class="btn sm" type="button" id="preset-add">Сохранить</button>
+            </div>
+            <div class="row" style="gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+              <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="greet-on"> <span>Приветствие при старте</span></label>
+              <input type="text" class="field" id="greet-text" maxlength="300" placeholder="Доброе утро!" aria-label="Текст приветствия" style="flex:1;min-width:160px">
+              <input type="number" class="field" id="greet-delay" min="5" max="600" step="5" value="45" aria-label="Задержка перед приветствием, секунд" title="Сколько ждать Glagol, секунд" style="width:90px">
+              <button class="btn sm" type="button" id="greet-save">Сохранить</button>
+              <button class="btn sm" type="button" id="greet-say">Проверить</button>
+            </div>
+            <p class="hint">Клик по чипу произносит фразу, × — удаляет. До 20 фраз. Приветствие звучит при каждом старте панели.</p>
+          </details>
         </section>
 
         <!-- громкость -->

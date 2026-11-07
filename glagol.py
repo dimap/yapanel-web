@@ -469,9 +469,11 @@ class Glagol:
             raise AuthError(f"quasar.yandex.net: HTTP {e.code}")
         except urllib.error.URLError as e:
             reason = getattr(e, "reason", e)
-            if isinstance(reason, ssl.SSLError):
+            if isinstance(reason, ssl.SSLCertVerificationError):
                 raise AuthError("контейнер не доверяет сертификату quasar.yandex.net — проверьте сертификаты "
                                 "и прокси (SSL_CERT_FILE, HTTPS_PROXY)") from None
+            if isinstance(reason, ssl.SSLError):
+                raise AuthError(f"quasar.yandex.net: TLS-соединение не установлено ({reason})") from None
             raise AuthError(f"quasar.yandex.net: {reason}") from None
         if resp.get("status") != "ok":
             raise AuthError(f"quasar.yandex.net: {resp}")

@@ -157,6 +157,12 @@ def test_normalize_settings_unknown_enums_fall_back_to_defaults(field):
         assert result[field] == DEFAULT_SETTINGS[field]
 
 
+def test_normalize_settings_running_state_defaults_off_and_roundtrips():
+    assert party_store.normalize_settings({})["running"] is False
+    assert party_store.normalize_settings({"running": True})["running"] is True
+    assert party_store.normalize_settings({"running": "false"})["running"] is False
+
+
 def test_normalize_settings_bool_fields_are_python_truthiness():
     # Missing keys keep the (True) defaults.
     assert party_store.normalize_settings({})["master_enabled"] is True

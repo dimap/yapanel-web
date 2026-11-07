@@ -444,12 +444,63 @@ async function loadSay() {
   if ($('#say-voice').hidden) $('#say-voice').value = 'alice';
   else $('#say-voice').value = store.get('say.voice') || 'alice';
   $('#say-hint').textContent = SAY_HINT[$('#say-voice').value];
+  await loadPhrases();
 }
+// ---------- свои фразы ----------
+let phrases = [];
+const SAY_METHODS = { glagol: 'голос Алисы', tts: 'TTS (Google)', maind: 'maind', assistant: 'ассистент' };
+function renderPresets() {
+  const box = $('#say-presets');
+  box.innerHTML = phrases.map(p =>
+    `<span style="display:inline-flex;align-items:center;gap:4px">` +
+    `<button class="pill" data-phrase="${esc(p.id)}" title="${esc(p.text)}">${esc(p.name)}</button>` +
+    `<button class="pill" data-phrase-del="${esc(p.id)}" title="Удалить" aria-label="Удалить ${esc(p.name)}">×</button></span>`).join('');
+  $$('#say-presets [data-phrase]').forEach(b => b.onclick = () => act(b, async () => {
+    const r = await api('/api/phrases/say', { id: b.dataset.phrase });
+    toast('🗣 ' + (SAY_METHODS[r.method] || r.method || 'сказано'));
+  }));
+  $$('#say-presets [data-phrase-del]').forEach(b => b.onclick = () => act(b, async () => {
+    setPhrases(await api('/api/phrases', { phrases: phrases.filter(p => p.id !== b.dataset.phraseDel) }));
+  }, 'Фраза удалена'));
+}
+function setPhrases(r) { phrases = r.phrases || []; renderPresets(); }
+function applyGreeting(g) {
+  g = g || {};
+  $('#greet-on').checked = !!g.on;
+  $('#greet-text').value = g.text || '';
+  $('#greet-delay').value = g.delay || 45;
+}
+async function loadPhrases() {
+  const r = await api('/api/phrases').catch(() => null);
+  if (!r) return;
+  setPhrases(r);
+  applyGreeting(r.greeting);
+}
+$('#preset-add').onclick = () => act($('#preset-add'), async () => {
+  const text = $('#preset-text').value.trim(); if (!text) return toast('Введите текст фразы', true);
+  const name = $('#preset-name').value.trim() || 'Фраза';
+  setPhrases(await api('/api/phrases', { phrases: phrases.concat([{ name, text }]) }));
+  $('#preset-name').value = ''; $('#preset-text').value = '';
+}, 'Фраза сохранена');
+$('#greet-save').onclick = () => act($('#greet-save'), async () => {
+  const r = await api('/api/phrases/greeting', {
+    on: $('#greet-on').checked, text: $('#greet-text').value.trim(), delay: +$('#greet-delay').value || 45,
+  });
+  applyGreeting(r.greeting);
+}, 'Приветствие сохранено');
+$('#greet-say').onclick = () => act($('#greet-say'), async () => {
+  const r = await api('/api/phrases/greeting/say');
+  toast('🗣 ' + (SAY_METHODS[r.method] || r.method || 'сказано'));
+}, null);
 $('#say-voice').onchange = e => { store.set('say.voice', e.target.value); $('#say-hint').textContent = SAY_HINT[e.target.value]; };
 $('#say-form').onsubmit = e => {
   e.preventDefault();
   const text = $('#say-text').value.trim(); if (!text) return;
-  act(e.submitter, async () => { await api('/api/say', { text, voice: $('#say-voice').value }); $('#say-text').select(); }, '🗣 ' + text);
+  act(e.submitter, async () => {
+    const r = await api('/api/say', { text, voice: $('#say-voice').value });
+    $('#say-text').select();
+    toast('🗣 ' + text + ' · ' + (SAY_METHODS[r.method] || r.method || ''));
+  });
 };
 $('#snd-replace-file').onchange = async e => {
   const f = e.target.files[0], name = sndTarget;

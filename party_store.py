@@ -16,6 +16,9 @@ import time
 from pathlib import Path
 
 DEFAULT_SETTINGS = {
+    # running — последнее явное состояние движка. Нужно, чтобы перезапуск
+    # панели не включал свет, если пользователь его выключал.
+    "running": False,
     "master_enabled": True,
     "active_mode": "cinema",
     "speed": 1.0,
@@ -72,6 +75,7 @@ def as_bool(value, default=False):
 def normalize_settings(raw):
     source = raw if isinstance(raw, dict) else {}
     out = dict(DEFAULT_SETTINGS)
+    out["running"] = as_bool(source.get("running", out["running"]), out["running"])
     out["master_enabled"] = as_bool(source.get("master_enabled", out["master_enabled"]), out["master_enabled"])
     active = str(source.get("active_mode", out["active_mode"])).strip().lower()
     out["active_mode"] = active if active in MODES else out["active_mode"]

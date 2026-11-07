@@ -104,6 +104,28 @@ def test_corrupt_bulbs_are_backed_up_and_engine_starts(tmp_path):
         pm.stop()
 
 
+def test_start_and_stop_persist_running_state(tmp_path):
+    settings = tmp_path / "settings.json"
+    pm = manager(tmp_path)
+    pm.start()
+    try:
+        assert json.loads(settings.read_text(encoding="utf-8"))["running"] is True
+    finally:
+        pm.stop()
+    assert json.loads(settings.read_text(encoding="utf-8"))["running"] is False
+
+
+def test_panel_shutdown_does_not_overwrite_running_state(tmp_path):
+    settings = tmp_path / "settings.json"
+    pm = manager(tmp_path)
+    pm.start()
+    try:
+        pm.stop(persist=False)
+        assert json.loads(settings.read_text(encoding="utf-8"))["running"] is True
+    finally:
+        pm.stop()
+
+
 def test_restart_selects_effect_from_reloaded_settings(tmp_path):
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"active_mode": "police"}), encoding="utf-8")

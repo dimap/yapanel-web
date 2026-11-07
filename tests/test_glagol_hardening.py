@@ -25,6 +25,37 @@ class _TempDirCase(unittest.TestCase):
         self._tmp.cleanup()
 
 
+class ConversationTokenErrorTests(unittest.TestCase):
+    def _glagol(self):
+        value = object.__new__(glagol.Glagol)
+        value.device_id = "device"
+        value.platform = "yandexstation_2"
+        value.auth = SimpleNamespace(music_token="token")
+        value.config = None
+        return value
+
+    def test_tls_eof_is_reported_as_network_not_certificate(self):
+        with patch.object(
+            glagol.urllib.request,
+            "urlopen",
+            side_effect=glagol.urllib.error.URLError(ssl.SSLEOFError("eof")),
+        ):
+            with self.assertRaises(glagol.AuthError) as error:
+                self._glagol()._conversation_token()
+        self.assertIn("TLS", str(error.exception))
+        self.assertNotIn("сертификат", str(error.exception))
+
+    def test_certificate_verification_error_still_mentions_certificates(self):
+        with patch.object(
+            glagol.urllib.request,
+            "urlopen",
+            side_effect=glagol.urllib.error.URLError(ssl.SSLCertVerificationError("bad cert")),
+        ):
+            with self.assertRaises(glagol.AuthError) as error:
+                self._glagol()._conversation_token()
+        self.assertIn("сертификат", str(error.exception))
+
+
 class YandexAuthFailSafeTests(_TempDirCase):
     def test_corrupt_json_does_not_break_panel_and_is_backed_up(self):
         broken = '{"music_token": "secret", '

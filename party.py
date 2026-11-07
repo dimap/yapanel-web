@@ -2234,6 +2234,13 @@ class PartyManager:
                     self._audio_thread.start()
                 else:
                     print("[Party] Not running on Android; audio capture disabled.")
+                # Запоминаем явный запуск: после рестарта панели свет
+                # восстановится только если пользователь его не выключал.
+                try:
+                    self.settings["running"] = True
+                    self.save_settings()
+                except Exception as error:
+                    print(f"[Party] State save error: {error}")
             except Exception:
                 self.running = False
                 self._stop_event.set()
@@ -2254,7 +2261,7 @@ class PartyManager:
                 self.workers.clear()
                 raise
 
-    def stop(self):
+    def stop(self, persist=True):
         with self._lifecycle_lock:
             was_running = self.running
             print("[Party] Stopping Engine...")
@@ -2320,9 +2327,16 @@ class PartyManager:
                 except Exception:
                     pass
                 self.broadcast_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="PartyBcast")
+            if persist:
+                try:
+                    self.settings["running"] = False
+                    self.save_settings()
+                except Exception as error:
+                    print(f"[Party] State save error: {error}")
 
     def restart(self):
-        self.stop()
+        # Не перетираем внешние изменения настроек остановкой старого движка.
+        self.stop(persist=False)
         time.sleep(1.0)
         self.load_settings()
         self.start()

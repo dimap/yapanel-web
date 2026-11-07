@@ -5007,7 +5007,9 @@ echo @@BLUEZ
         # каталоги etc/var/run пакета создавала панель — пустые убираем, с данными оставляем (вдруг поставят снова)
         ns, pkg = name.split("/")
         _, paths = self._yam2_paths()
+        # и вложенные (старая схема панели), и плоские (0.2.22+) — rmdir снимает только пустые
         self.adb.shell("; ".join(f"rmdir {shlex.quote(paths[k] + '/' + ns + '/' + pkg)} {shlex.quote(paths[k] + '/' + ns)}"
+                                 f" {shlex.quote(paths[k] + '/' + pkg)}"
                                  for k in ("etc", "var", "run")) + " 2>/dev/null; true", check=False)
         self._drop_hook_if_unused()
         return {"text": out}
@@ -5058,8 +5060,13 @@ echo @@BLUEZ
         ns, pkg, name = svc["id"].split("~")
         plat, paths = self._yam2_paths()
         pkg_dir = f"{YAM2_ROOT}/pkgs/{ns}/{pkg}/current"
+        # yam 0.2.22+ шаблоны манифестов ждут YAM_ETC/YAM_VAR как КОРНИ
+        # (luna: --data-dir ${YAM_VAR}/luna/data => /data/yam/var/luna/data — как в её же S99luna),
+        # а не root/<ns>/<pkg>, как раньше. YAM_RUN — run/<ns>/<pkg>: luna в env-режиме кладёт
+        # lock в $YAM_RUN/yam.lock, при флаге --yam-run <root> — в <root>/<ns>/<pkg>/yam.lock;
+        # оба пути совпадают с запуском из S99luna.
         env = {"YAM_ROOT": YAM2_ROOT, "YAM_PKG": pkg_dir, "YAM_PLATFORM": plat,
-               "YAM_ETC": f"{paths['etc']}/{ns}/{pkg}", "YAM_VAR": f"{paths['var']}/{ns}/{pkg}",
+               "YAM_ETC": f"{paths['etc']}", "YAM_VAR": f"{paths['var']}",
                "YAM_RUN": f"{paths['run']}/{ns}/{pkg}"}
         argv = [re.sub(r"\$\{(YAM_[A-Z]+)\}", lambda m: env.get(m.group(1), m.group(0)), a) for a in svc["exec"]]
         exe = argv[0]

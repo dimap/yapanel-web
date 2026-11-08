@@ -40,6 +40,39 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
+
+def _recover_legacy_update_modules():
+    """Complete upgrades made by old ZIP updaters before importing new modules."""
+    root = Path(__file__).resolve().parent
+    modules = ("zvuk.py", "zvuk_player.py", "zvuk_queries.py")
+    missing = [name for name in modules if not (root / name).is_file()]
+    if not missing or (root / ".git").exists():
+        return
+    version = (root / "VERSION").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9.-]+)?", version):
+        raise RuntimeError("Неверная версия панели; восстановите файлы из архива релиза")
+    url = f"https://github.com/dimap/yapanel-web/archive/refs/tags/v{version}.zip"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "webpanel"}), timeout=120) as response:
+            blob = response.read(64 * 1024 * 1024 + 1)
+        if len(blob) > 64 * 1024 * 1024:
+            raise ValueError("архив слишком велик")
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            prefix = f"yapanel-web-{version}/"
+            for name in missing:
+                info = archive.getinfo(prefix + name)
+                if info.file_size > 4 * 1024 * 1024:
+                    raise ValueError("модуль слишком велик")
+                data = archive.read(info)
+                tmp = root / (name + ".recover")
+                tmp.write_bytes(data)
+                os.replace(tmp, root / name)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+        raise RuntimeError("Не удалось восстановить файлы панели из архива релиза; см. README: " + str(exc)) from exc
+
+
+_recover_legacy_update_modules()
+
 import access
 import agent as agentlink
 import glagol
@@ -5707,6 +5740,18 @@ echo @@BLUEZ
         self._need_login()
         return self.ymusic.like(tid, on)
 
+    def music_liked(self):
+        self._need_login()
+        return self.ymusic.liked_tracks()
+
+    def music_album(self, aid):
+        self._need_login()
+        return self.ymusic.album_tracks(aid)
+
+    def music_playlists(self):
+        self._need_login()
+        return self.ymusic.playlists()
+
     def music_dislike(self, tid):
         self._need_login()
         r = self.ymusic.dislike(tid)
@@ -5714,10 +5759,19 @@ echo @@BLUEZ
             self.glagol.send({"command": "next"})
         return r
 
-    def music_play(self, item_id, kind):
+    def music_play(self, item_id, kind, index=None, extra=None):
+        if kind == "likes":
+            return self.glagol.send({"command": "sendText", "text": "Играй любимое"})
         if kind not in ("track", "album", "playlist", "artist"):
             raise AdbError("неизвестный тип")
-        return self.glagol.send({"command": "playMusic", "id": str(item_id), "type": kind})
+        payload = {"command": "playMusic", "id": str(item_id), "type": kind}
+        if index is not None:
+            payload["index"] = int(index)
+        if isinstance(extra, dict):
+            for k in ("playlistId", "startIndex", "startTrackId", "trackId", "context"):
+                if k in extra:
+                    payload[k] = extra[k]
+        return self.glagol.send(payload)
 
     def auth_qr_start(self):
         return self.auth.qr_start()
@@ -6684,6 +6738,9 @@ class Handler(BaseHTTPRequestHandler):
             if q.get("id") else
                 p.ymusic.lyrics_by_name(q.get("title", ""), q.get("artist", ""), q.get("album"), float(q.get("duration") or 0)),
             "/api/music/queue": p.music_queue,
+            "/api/music/liked": p.music_liked,
+            "/api/music/album": lambda: p.music_album(q.get("id", "")),
+            "/api/music/playlists": p.music_playlists,
             "/api/music/similar": lambda: (p._need_login(), p.ymusic.similar(q.get("id", "")))[1],
             "/api/music/artist": lambda: (p._need_login(), p.ymusic.artist(q.get("id", "")))[1],
             "/api/auth": lambda: {**p.auth.info(), "oauth_url": glagol.OAUTH_URL},
@@ -6841,7 +6898,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/zvuk/token": lambda: p.zvuk_token(d.get("token")),
             "/api/music/like": lambda: p.music_like(d["id"], bool(d.get("like", True))),
             "/api/music/dislike": lambda: p.music_dislike(d["id"]),
-            "/api/music/play": lambda: p.music_play(d["id"], d.get("type", "track")),
+            "/api/music/play": lambda: p.music_play(d["id"], d.get("type", "track"), d.get("index"), d),
             "/api/auth/qr": p.auth_qr_start,
             "/api/auth/oauth": lambda: p.auth_oauth(d["url"]),
             "/api/auth/logout": p.auth_logout,
@@ -7008,11 +7065,14 @@ class PanelUpdater:
             if not any(n == prefix + "server.py" for n in names):
                 raise AdbError("в архиве релиза нет server.py")
             for n in names:
+                if not n.startswith(prefix):
+                    continue
                 rel = n[len(prefix):]
                 top = rel.split("/", 1)[0]
-                if rel not in self.FILES and top not in self.DIRS:
+                # The running (old) version cannot know future top-level modules.
+                if rel not in self.FILES and top not in self.DIRS and not ("/" not in rel and rel.endswith(".py")):
                     continue
-                if ".." in Path(rel).parts:
+                if "\\" in rel or ".." in Path(rel).parts:
                     continue
                 dst = ROOT / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)

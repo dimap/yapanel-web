@@ -430,6 +430,57 @@ class YandexMusic:
             self._likes = (time.time(), ids)
         return ids
 
+    def liked_tracks(self, limit=300):
+        """Избранные треки целиком — для вкладки «Избранное»."""
+        lib = (self._req(f"/users/{self.uid()}/likes/tracks") or {}).get("library") or {}
+        out = []
+        for t in (lib.get("tracks") or [])[:limit]:
+            t = t.get("track") if isinstance(t.get("track"), dict) else t
+            s = self._short(t)
+            if not s.get("title"):
+                try:
+                    s = self._short(self._raw(s["id"]))
+                except AuthError:
+                    continue
+            out.append(s)
+        return out
+
+    def album_tracks(self, aid):
+        a = self._req(f"/albums/{aid}/with-tracks") or {}
+        return {"title": a.get("title"), "type": "Album",
+                "tracks": [self._short(t) for vol in a.get("volumes", []) for t in vol]}
+
+    def playlists(self, limit=100):
+        out = []
+        # личные подборки Яндекса: «Плейлист дня», «Премьера», «Дежавю» и т.п.
+        try:
+            r = self._req("/landing3", {"blocks": "personalPlaylists"}) or {}
+            for b in (r.get("blocks") or []):
+                if b.get("type") != "personal-playlists":
+                    continue
+                for e in (b.get("entities") or []):
+                    d = (e.get("data") or {}).get("data") or {}
+                    if d.get("uid") is None or d.get("kind") is None:
+                        continue
+                    cover = d.get("cover")
+                    out.append({"id": f"{d['uid']}:{d['kind']}", "title": d.get("title") or "Плейлист",
+                                "cover": self.cover(cover.get("uri"), 200) if isinstance(cover, dict) else None,
+                                "tracks": d.get("trackCount") or 0, "yandex": True})
+        except AuthError:
+            pass
+        # собственные плейлисты пользователя (эндпоинт бывает недоступен — не ломаем подборки)
+        try:
+            raw = self._req(f"/users/{self.uid()}/playlists") or []
+        except AuthError:
+            raw = []
+        for p in raw[:limit]:
+            if p.get("kind") is None:
+                continue
+            out.append({"id": f"{self.uid()}:{p.get('kind')}", "title": p.get("title") or "Плейлист",
+                        "cover": self.cover((p.get("cover") or {}).get("uri"), 200),
+                        "tracks": p.get("trackCount") or 0})
+        return out[:limit]
+
     def track(self, tid):
         tid = str(tid)
         if tid not in self.cache:

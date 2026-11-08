@@ -57,12 +57,35 @@ assert(html.includes('data-zv-add="${i}"'), 'кнопка «в очередь» 
 assert(html.includes('const ZVUK_LIST_LIMIT = 10'), 'длинный плейлист — окно из 10 строк');
 assert(html.includes('data-zv-more'), 'кнопка открыть/свернуть плейлист');
 assert(html.includes('id="zvuk-genre-btn"') && html.includes('id="zvuk-genre-menu"'), 'жанры: компактный селектор с галочками');
-assert(html.includes('<option value="foreign">Зарубежное</option>')
-  && html.includes('<option value="instrumental">Без слов</option>'), 'язык: любой/русское/зарубежное/без слов');
+assert(html.includes('data-value="foreign"') && html.includes('data-value="instrumental"'), 'язык: любой/русское/зарубежное/без слов');
 assert(html.includes("vocal: instr ? 0 : 1"), '«Без слов» — vocal: 0');
-assert(html.includes('<option value="">Средняя</option>') && html.includes('zvukPopularOption'), 'популярность: три положения, средняя — NULL');
+assert(html.includes('data-value=""') && html.includes('zvukPopularOption'), 'популярность: три положения, средняя — NULL');
 assert(html.includes('...zvukWaveOptions()'), 'жанр и язык уходят в поток');
 assert(html.includes("walk(zvukData || {}, 'zvuk.')") && html.includes("walk(mu.track, 'track.')"), 'в «всё о треке» — полные данные Звука и Яндекса');
+assert(html.includes('data-pl-open="zvuk-tracks"') && html.includes('data-pl-open="zvuk-mood"'), 'у Звука — вкладки треков и настроения');
+assert(html.includes('body[data-provider="zvuk"] .pl-mtabs .pl-ya-only') && html.includes('body:not([data-provider="zvuk"]) .pl-mtabs .pl-zv-only'), 'вкладки провайдеров не смешиваются');
+assert(html.includes('id="zvuk-mood-card" data-pl-sec="zvuk-mood"') && html.includes('id="zvuk-tracks-card" data-pl-sec="zvuk-tracks"'), 'блоки Звука — мобильные листы');
+assert(html.includes('body[data-provider="zvuk"] #pl-zvuk #zvuk-main:not([hidden])'), 'мобильный Звук показывает свои блоки');
+assert(html.includes('pl-start-btn') && html.includes('plStartBtn'), 'пустой плеер — круглая кнопка play');
+assert(html.includes('Нажмите play в центре'), 'мини-плеер подсказывает, что нажимать');
+assert(html.includes("e.target.closest('.zv-mood-pad, input[type=range], textarea')"), 'жест настроения не закрывает лист');
+assert(html.includes('id="pl-provider-menu"') && html.includes('pl-provider-menu [data-provider]'), 'мобильный переключатель провайдера в источнике');
+assert(html.includes('.zv-lang-filter { position: relative; }'), 'меню языка позиционируется под селектором');
+assert(html.includes('overflow-y: auto; overflow-x: hidden'), 'в листах нет горизонтального скролла');
+assert(html.includes('#pl-msrc::after') && html.includes('border-top: 5px solid currentColor'), 'у селектора провайдера есть указатель');
+assert(html.includes('MU_PRESS') && html.includes('@keyframes mu-like'), 'у кнопок плеера есть анимации нажатия');
+assert(html.includes('id="pl-tracks-card"') && html.includes('data-ya-list="favorites"'), 'у Яндекса — единый виджет с вкладками');
+assert(html.includes("api('/api/music/liked')"), 'избранное Яндекса');
+assert(html.includes("['Album', 'Playlist', 'Artist']"), 'shuffle/repeat только для конечных плейлистов');
+assert(html.includes('id="pl-playall"') && html.includes('Включаю'), 'у Яндекса есть «Играть всё» для контекста');
+assert(html.includes('trackRow(t, k === cur, tagOf(k), ctx, k, true)') && html.includes('trow info'), 'треки Яндекса — только для информации');
+assert(html.includes("type: 'likes'"), 'избранное запускается через «Играй любимое»');
+assert(html.includes('id="zvuk-artist-card" data-pl-sec="zvuk-artist"') && html.includes("plSheet('zvuk-artist')"), 'артист Звука открывается листом на телефоне');
+assert(html.includes('#zvuk-artist-card .zv-artist-img { display: block; width: calc(100% + 40px)'), 'фото артиста Звука — во всю ширину на телефоне');
+assert(html.includes('id="zvuk-artist-title"') && html.includes('id="zvuk-artist-popular-title"'), 'под фото — имя артиста, ниже — «Популярное»');
+assert(html.includes('data-pl-open="ya-playlists"') && html.includes('/api/music/playlists'), 'плейлисты Яндекса — четвёртый виджет');
+assert(html.includes("if (musicProvider !== 'zvuk') loadYaPlaylists();"), 'плейлисты грузятся и на десктопе');
+assert(!html.includes('Нажмите ▶ — включится'), 'треугольник в подсказке убран');
 
 // 5. У режимов свои раскладки, старый вид не перезаписывается.
 assert(html.includes("const layoutKey = () => navMode() === 'rail' ? 'ov.layout.rail' : 'ov.layout';"));

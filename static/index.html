@@ -1037,6 +1037,19 @@
   .cbtn.big:hover { filter: brightness(1.08); background: var(--accent); }
   .cbtn.pulse { animation: cbtn-pulse .35s ease; }
   @keyframes cbtn-pulse { 0% { transform: scale(1); background: var(--accent-soft); } 40% { transform: scale(.86); background: var(--accent-soft); } 100% { transform: scale(1); } }
+  .cbtn.mu-prev { animation: mu-prev .22s ease; }
+  .cbtn.mu-next { animation: mu-next .22s ease; }
+  .cbtn.mu-like { animation: mu-like .32s ease; }
+  .cbtn.mu-dislike { animation: mu-dislike .3s ease; }
+  .cbtn.mu-spin { animation: mu-spin .32s ease; }
+  .cbtn.mu-play { animation: mu-play .2s ease; }
+  @keyframes mu-prev { 45% { transform: translateX(-4px); } }
+  @keyframes mu-next { 45% { transform: translateX(4px); } }
+  @keyframes mu-like { 30% { transform: scale(1.22); } 60% { transform: scale(.96); } }
+  @keyframes mu-dislike { 20%, 60% { transform: translateX(-3px); } 40%, 80% { transform: translateX(3px); } }
+  @keyframes mu-spin { to { transform: rotate(180deg); } }
+  @keyframes mu-play { 45% { transform: scale(.84); } }
+  @media (prefers-reduced-motion: reduce) { .cbtn.mu-prev, .cbtn.mu-next, .cbtn.mu-like, .cbtn.mu-dislike, .cbtn.mu-spin, .cbtn.mu-play { animation: none !important; } }
   .cbtn { position: relative; }
   .cbtn .one { position: absolute; right: 4px; bottom: 3px; font-size: 10px; font-weight: 800; line-height: 1; }
 
@@ -1097,6 +1110,16 @@
   @keyframes pl-mq { 0%, 18% { transform: translateX(0); } 82%, 100% { transform: translateX(var(--mq, 0)); } }
   @media (prefers-reduced-motion: reduce) { .mq-line.run .mq { animation: none; } }
   .pl-artist { font-size: 20px; color: var(--text-2); font-weight: 600; }
+  .pl-start-btn { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; padding: 0; border: 0;
+    background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .pl-start-btn .pl-start-ico { display: grid; place-items: center; flex: none; width: 34px; height: 34px;
+    border-radius: 50%; background: var(--accent); color: var(--on-accent);
+    box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--accent) 70%, transparent);
+    transition: transform .15s ease, filter .15s ease; }
+  .pl-start-btn .pl-start-ico svg { margin-left: 2px; }
+  .pl-start-btn:hover .pl-start-ico { transform: scale(1.06); filter: brightness(1.05); }
+  .pl-start-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 999px; }
+  .pl-start-btn span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pl-meta { display: flex; flex-wrap: wrap; gap: 6px; }
   /* теги альбома — одной строкой (не переносятся и не двигают плеер), лишнее гаснет справа; пока не пришли
      подробности нового трека, строка пуста — место держим */
@@ -1167,9 +1190,19 @@
     body.pl-in #pl-body { animation: pl-up .38s cubic-bezier(.2, .8, .2, 1); }
     body.from-player main:not([hidden]), body.from-player aside { animation: tab-fade .4s ease; }
     body.from-player .mbar, body.from-player #minibar { animation: bar-up .4s cubic-bezier(.2, .8, .2, 1); }
-    .pl-mtop { display: flex; align-items: center; gap: 6px; flex: none; touch-action: none; }
-    .pl-mtop #pl-msrc { flex: 1; min-width: 0; text-align: center; font-size: 12.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-                        color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pl-mtop { display: flex; align-items: center; gap: 6px; flex: none; touch-action: none; position: relative; }
+    .pl-mtop #pl-msrc { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+                        text-align: center; font-size: 12.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+                        color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                        border: 0; background: transparent; padding: 0; font-family: inherit; cursor: pointer; }
+    .pl-mtop #pl-msrc::after { content: ''; flex: none; width: 0; height: 0; opacity: .7;
+                               border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; }
+    .pl-provider-menu { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 45; padding: 6px;
+                        background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+    .pl-provider-menu button { display: block; width: 100%; padding: 10px; border: 0; border-radius: 8px;
+                               background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+    .pl-provider-menu button:hover { background: var(--field); }
+    .pl-provider-menu button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); }
     #tab-player .pl-hero { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 0; background: none; border: 0;
                            box-shadow: none; }
     /* обложка — квадрат по свободному месту: коробка занимает остаток высоты, обложка — меньшая из её сторон */
@@ -1191,6 +1224,17 @@
     #pl-artist-card .artist-grid > img + .col > div:first-child { position: relative; margin-top: -56px; }
     #pl-artist-card .artist-grid > .col > div:first-child { text-align: center; font-size: 30px !important; line-height: 1.1; }
     #pl-artist-card .artist-grid .pl-meta { justify-content: center; }
+    /* артист Звука на телефоне — так же: фото во всю ширину, подпись поверх затухания */
+    #zvuk-artist-card { padding-top: 0; }
+    #zvuk-artist-card > .card-head { display: none; }
+    #zvuk-artist-card .zv-artist-head { display: block; }
+    #zvuk-artist-card .zv-artist-img { display: block; width: calc(100% + 40px); height: auto; aspect-ratio: 1; margin: 0 -20px;
+      border-radius: 0; object-fit: cover; -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent);
+      mask-image: linear-gradient(to bottom, #000 45%, transparent); }
+    #zvuk-artist-card .zv-artist-head .col { position: relative; margin-top: -56px; text-align: center; align-items: center; }
+    #zvuk-artist-card .zv-artist-head .col b { font-size: 30px; }
+    #zvuk-artist-card .zv-artist-head .col .meta { display: none; }
+    #zvuk-artist-card .zv-artist-popular-title { display: block; margin-top: 18px; font-size: 20px; }
     #tab-player .pl-main { flex: none; gap: 8px !important; align-self: stretch; min-width: 0; }
     #tab-player .pl-kicker, #tab-player .pl-meta { display: none; }
     #tab-player .card .pl-title { font-size: 44px; letter-spacing: -0.03em; line-height: 1.2; cursor: pointer; }
@@ -1213,7 +1257,7 @@
                       padding: 4px 2px; font-size: 12px; border-radius: 14px; }
     .pl-mtabs .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: transparent; color: var(--accent-ink); }
     #tab-player .pl-body-cols, #tab-player .pl-body-cols > .col { display: contents; }
-    #tab-player [data-pl-sec] { position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; max-height: 78dvh; overflow-y: auto; margin: 0;
+    #tab-player [data-pl-sec] { position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; max-height: 78dvh; overflow-y: auto; overflow-x: hidden; margin: 0;
       overscroll-behavior: contain; border-radius: 22px 22px 0 0; box-shadow: 0 -12px 40px rgba(0,0,0,.25);
       padding-bottom: calc(18px + var(--sa-bottom)); transform: translateY(105%); visibility: hidden;
       transition: transform .25s ease, visibility 0s .25s; }
@@ -1240,7 +1284,8 @@
   body[data-provider="zvuk"] #mu-logout,
   body[data-provider="zvuk"] [data-mu="shuffle"],
   body[data-provider="zvuk"] [data-mu="repeat"] { display: none !important; }
-  body[data-provider="zvuk"] .pl-mtabs .chip:not([data-pl-open="ask"]) { display: none !important; }
+  body[data-provider="zvuk"] .pl-mtabs .pl-ya-only { display: none !important; }
+  body:not([data-provider="zvuk"]) .pl-mtabs .pl-zv-only { display: none !important; }
   body:not([data-provider="zvuk"]) #zvuk-artist-card { display: none !important; }
   @media (min-width: 1400px) {
     body[data-provider="zvuk"] #tab-player #pl-body #pl-zvuk { grid-column: 1 / -1; grid-row: 2; }
@@ -1265,11 +1310,18 @@
   }
   .zvuk-grid { display: flex; flex-direction: column; gap: 14px; }
   .zv-popular-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13.5px; color: var(--muted); }
+  .zv-seg { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+  .zv-seg button { min-height: 28px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+  .zv-seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+  .zv-genre-menu > button { display: block; width: 100%; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+  .zv-genre-menu > button:hover { background: var(--field); }
+  .zv-genre-menu > button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); }
   .zv-popular-row .field { min-height: 34px; padding: 0 8px; width: auto; min-width: 120px; }
   .zv-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
   .zv-filter { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
   .zv-filter .field { min-height: 34px; padding: 0 8px; }
   .zv-genre-filter { position: relative; }
+  .zv-lang-filter { position: relative; }
   .zv-genre-btn { text-align: left; cursor: pointer; }
   .zv-genre-menu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 8px; max-height: 260px; overflow: auto; }
   .zv-genre-menu label { display: flex; align-items: center; gap: 8px; padding: 6px 4px; font-size: 13.5px; color: var(--text); cursor: pointer; border-radius: 8px; }
@@ -1300,12 +1352,20 @@
   .zv-t span { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .zv-actions { display: flex; gap: 4px; flex: none; }
   .zv-empty { padding: 10px 4px; color: var(--muted); font-size: 13px; }
-  @media (max-width: 760px) { #pl-zvuk, #zvuk-artist-card { display: none !important; } }
+  @media (max-width: 760px) {
+    body[data-provider="zvuk"] #pl-zvuk,
+    body[data-provider="zvuk"] #pl-zvuk #zvuk-main:not([hidden]),
+    body[data-provider="zvuk"] #pl-zvuk .zvuk-grid { display: contents !important; }
+    body[data-provider="zvuk"] #pl-zvuk #zvuk-token-card { display: none !important; }
+  }
   .tlist { display: flex; flex-direction: column; max-height: 420px; overflow: auto; }
   .trow { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; text-align: left; width: 100%; }
   .trow:hover { background: var(--field); }
   a.trow { color: inherit; text-decoration: none; }
   .trow.cur { background: var(--accent-soft); }
+  .trow.info { cursor: default; }
+  .trow.info:hover { background: transparent; }
+  .trow.info.cur:hover { background: var(--accent-soft); }
   .trow img, .trow .ph { flex: none; width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--field); }
   .trow .tt { flex: 1; min-width: 0; }
   .trow .tt b, .trow .tt span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2009,7 +2069,11 @@
     <div id="pl-body" class="col" style="gap:14px">
       <div class="pl-mtop">
         <button type="button" class="cbtn" id="pl-back" aria-label="Назад"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg></button>
-        <span id="pl-msrc"></span>
+        <button type="button" id="pl-msrc" aria-haspopup="true" aria-expanded="false" aria-label="Провайдер музыки"></button>
+        <div class="pl-provider-menu" id="pl-provider-menu" hidden>
+          <button type="button" data-provider="yandex">Яндекс Музыка</button>
+          <button type="button" data-provider="zvuk">Сбер Звук</button>
+        </div>
         <button type="button" class="cbtn" id="pl-vol-btn" aria-label="Громкость и колонки"><svg width="20" height="20" aria-hidden="true"><use href="#i-vol"/></svg></button>
       </div>
       <section class="card pl-hero">
@@ -2036,8 +2100,10 @@
       </section>
       <div class="pl-mtabs" role="group" aria-label="Подробнее">
         <button type="button" class="chip" data-pl-open="lyrics"><svg width="18" height="18" aria-hidden="true"><use href="#i-file"/></svg>Текст</button>
-        <button type="button" class="chip pl-ya-only" data-pl-open="queue"><svg width="18" height="18" aria-hidden="true"><use href="#i-log"/></svg>Очередь</button>
-        <button type="button" class="chip pl-ya-only" data-pl-open="similar"><svg width="18" height="18" aria-hidden="true"><use href="#i-shuffle"/></svg>Похожие</button>
+        <button type="button" class="chip pl-ya-only" data-pl-open="ya-tracks"><svg width="18" height="18" aria-hidden="true"><use href="#i-log"/></svg>Треки</button>
+        <button type="button" class="chip pl-ya-only" data-pl-open="ya-playlists"><svg width="18" height="18" aria-hidden="true"><use href="#i-folder"/></svg>Плейлисты</button>
+        <button type="button" class="chip pl-zv-only" data-pl-open="zvuk-tracks"><svg width="18" height="18" aria-hidden="true"><use href="#i-music"/></svg>Треки</button>
+        <button type="button" class="chip pl-zv-only" data-pl-open="zvuk-mood"><svg width="18" height="18" aria-hidden="true"><use href="#i-wave"/></svg>Настроение</button>
         <button type="button" class="chip" data-pl-open="ask"><svg width="18" height="18" aria-hidden="true"><use href="#i-mic"/></svg>Алисе</button>
       </div>
       <div class="pl-sheet-bg" id="pl-sheet-bg"></div>
@@ -2048,13 +2114,19 @@
           <p class="hint" id="pl-ly-src" hidden></p>
         </section>
         <div class="col pl-ya-only">
-          <section class="card" data-pl-sec="queue">
+          <section class="card" id="pl-tracks-card" data-pl-sec="ya-tracks">
             <div class="card-head"><h2 id="pl-q-title">Очередь</h2><span class="meta" id="pl-q-count"></span></div>
-            <div class="tlist" id="pl-queue"><div class="empty">—</div></div>
+            <div class="seg" id="pl-list-tabs" role="group" aria-label="Что показать">
+              <button data-ya-list="queue" class="active">Очередь</button>
+              <button data-ya-list="album">Альбом</button>
+              <button data-ya-list="similar">Похожие</button>
+              <button data-ya-list="favorites">Избранное</button>
+            </div>
+            <div class="tlist" id="pl-tracks-list"><div class="empty">—</div></div>
           </section>
-          <section class="card" data-pl-sec="similar">
-            <h2>Похожие треки</h2>
-            <div class="tlist" id="pl-similar"><div class="empty">—</div></div>
+          <section class="card" id="pl-playlists-card" data-pl-sec="ya-playlists">
+            <h2>Плейлисты</h2>
+            <div id="pl-playlists" class="tlist"><div class="empty">—</div></div>
           </section>
         </div>
       </div>
@@ -2078,7 +2150,7 @@
         </section>
         <div id="zvuk-main" class="col" style="gap:14px" hidden>
           <div class="zvuk-grid">
-            <section class="card" id="zvuk-mood-card">
+            <section class="card" id="zvuk-mood-card" data-pl-sec="zvuk-mood">
               <div class="card-head"><h2>Настроение</h2><span class="meta" id="zvuk-mood-v">энергия 50 · веселье 50</span></div>
               <div class="zv-mood-pad" id="zvuk-mood-pad" role="group" aria-label="Настроение «Моего потока»">
                 <span class="zv-mood-l tl">Энергичное</span><span class="zv-mood-l tr">Весёлое</span>
@@ -2086,11 +2158,11 @@
                 <i class="zv-mood-dot" id="zvuk-mood-dot"></i>
               </div>
               <div class="zv-popular-row"><span>Популярность</span>
-                <select class="field" id="zvuk-popular" aria-label="Популярность «Моего потока»">
-                  <option value="0">Низкая</option>
-                  <option value="">Средняя</option>
-                  <option value="1">Высокая</option>
-                </select></div>
+                <div class="zv-seg" id="zvuk-popular" role="group" aria-label="Популярность «Моего потока»">
+                  <button type="button" data-value="0">Низкая</button>
+                  <button type="button" data-value="">Средняя</button>
+                  <button type="button" data-value="1">Высокая</button>
+                </div></div>
               <div class="zv-filters">
                 <div class="zv-filter zv-genre-filter">
                   <span>Жанры</span>
@@ -2113,19 +2185,22 @@
                     </div>
                   </div>
                 </div>
-                <label class="zv-filter"><span>Язык</span>
-                  <select class="field" id="zvuk-language" aria-label="Язык «Моего потока»">
-                    <option value="any">Любой</option>
-                    <option value="russian">Русское</option>
-                    <option value="foreign">Зарубежное</option>
-                    <option value="instrumental">Без слов</option>
-                  </select></label>
+                <div class="zv-filter zv-lang-filter">
+                  <span>Язык</span>
+                  <button type="button" class="field zv-genre-btn" id="zvuk-language-btn" aria-haspopup="true" aria-expanded="false">Любой</button>
+                  <div class="zv-genre-menu" id="zvuk-language-menu" hidden>
+                    <button type="button" data-value="any">Любой</button>
+                    <button type="button" data-value="russian">Русское</button>
+                    <button type="button" data-value="foreign">Зарубежное</button>
+                    <button type="button" data-value="instrumental">Без слов</button>
+                  </div>
+                </div>
               </div>
               <div class="row" style="gap:8px"><button class="btn primary" id="zvuk-flow">Запустить поток</button>
                 <button class="btn" id="zvuk-mood-reset">Сбросить</button></div>
               <p class="hint">Точка — энергия и веселье, ползунок — популярность, ниже — жанр и язык «Моего потока».</p>
             </section>
-            <section class="card" id="zvuk-tracks-card">
+            <section class="card" id="zvuk-tracks-card" data-pl-sec="zvuk-tracks">
               <div class="card-head"><h2>Треки</h2>
                 <button class="btn sm ghost" id="zvuk-clear" title="Очистить очередь" hidden>Очистить</button></div>
               <form class="row" id="zvuk-search-form" style="gap:8px;align-items:stretch">
@@ -2147,10 +2222,11 @@
           </div>
         </div>
       </div>
-      <section class="card" id="zvuk-artist-card" hidden>
+      <section class="card" id="zvuk-artist-card" data-pl-sec="zvuk-artist" hidden>
         <div class="card-head"><h2 id="zvuk-artist-name">Исполнитель</h2></div>
         <div class="zv-artist-head"><img id="zvuk-artist-img" class="zv-artist-img" alt="" loading="lazy" hidden>
-          <div class="col" style="gap:2px"><b>Популярные треки</b><span class="meta" id="zvuk-artist-meta"></span></div></div>
+          <div class="col" style="gap:2px"><b id="zvuk-artist-title">Популярные треки</b><span class="meta" id="zvuk-artist-meta"></span></div></div>
+        <b class="zv-artist-popular-title" id="zvuk-artist-popular-title">Популярное</b>
         <div id="zvuk-artist-popular" class="col" style="gap:2px"></div>
       </section>
       <section class="card pl-msheet-only" data-pl-sec="vol">
@@ -3209,6 +3285,7 @@ const $ = s => document.querySelector(s);
 let online = false;   // есть ли связь с колонкой (см. «подключение» внизу)
 const $$ = s => [...document.querySelectorAll(s)];
 const icon = (id, size = 16) => `<svg width="${size}" height="${size}" aria-hidden="true"><use href="#${id}"/></svg>`;
+const plStartBtn = wave => `<button type="button" class="pl-start-btn" aria-label="Включить «${esc(wave)}»"><span class="pl-start-ico">${icon('i-play', 18)}</span><span>Включить «${esc(wave)}»</span></button>`;
 
 function toast(msg, err = false) {
   const t = $('#toast');
@@ -4898,6 +4975,12 @@ function muPulse(btn) {
   if (!btn) return;
   btn.classList.remove('pulse'); void btn.offsetWidth; btn.classList.add('pulse');
 }
+const MU_PRESS = { prev: 'mu-prev', next: 'mu-next', like: 'mu-like', dislike: 'mu-dislike', shuffle: 'mu-spin', repeat: 'mu-spin', play: 'mu-play' };
+function muPress(btn) {
+  const name = MU_PRESS[btn?.dataset.mu];
+  if (!name) return;
+  btn.classList.remove(name); void btn.offsetWidth; btn.classList.add(name);
+}
 const muCmd = (btn, payload, msg) => act(btn, async () => {
   const r = await api('/api/music/cmd', payload);
   if (r.status && r.status !== 'SUCCESS' && r.status !== 'timeout') throw new Error('Колонка ответила: ' + r.status);
@@ -4923,7 +5006,10 @@ let voiceInput = null;
 let musicProvider = 'yandex';
 function applyMusicProvider() {
   document.body.dataset.provider = musicProvider;
-  $$('#music-provider [data-provider]').forEach(b => b.classList.toggle('active', b.dataset.provider === musicProvider));
+  $$('#music-provider [data-provider], #pl-provider-menu [data-provider]').forEach(b => {
+    b.classList.toggle('active', b.dataset.provider === musicProvider);
+    b.setAttribute('aria-pressed', String(b.dataset.provider === musicProvider));
+  });
   const sel = $('#mu-provider');
   if (sel) sel.value = musicProvider;
 }
@@ -5013,7 +5099,7 @@ function renderMusic() {
   $('#mu-err').textContent = g.connected ? '' : (g.error || 'Подключаемся к колонке…');
   const title = has ? p.title : 'Ничего не играет';
   const wave = musicProvider === 'zvuk' ? 'Мой поток' : 'Моя волна';
-  const artist = has ? (p.subtitle || '') + (isBt && p.extra?.album ? ' — ' + p.extra.album : '') : (g.connected ? `Нажмите ▶ — включится «${wave}»` : '');
+  const artist = has ? (p.subtitle || '') + (isBt && p.extra?.album ? ' — ' + p.extra.album : '') : (g.connected ? `Нажмите — включится «${wave}»` : '');
   // В виджете и на вкладке «Плеер» название и исполнители — ссылки на Яндекс Музыку (нижний плеер ведёт во вкладку).
   const t = !isBt && mu.track && mu.track.id === String(p?.id) ? mu.track : null;
   const links = !plMobile();   // на телефоне ссылок наружу нет: исполнитель открывает «Об исполнителе»
@@ -5024,7 +5110,11 @@ function renderMusic() {
   });
   const artists = t?.artistList?.length ? t.artistList.map(a => a.name).join(', ') : artist;
   $$('.mu-artist').forEach(e => {
-    if (t?.artistList?.length && links && e.closest('#music-card, #tab-player')) swapText(e, t.artistList.map(a => ymA(`/artist/${a.id}`, a.name)).join(', '), artists);
+    if (!has && g.connected) {
+      if (e.closest('#minibar')) { const text = `Нажмите play в центре — включится «${wave}»`; swapText(e, esc(text), text); }
+      else swapText(e, plStartBtn(wave), `Включить «${wave}»`);
+    }
+    else if (t?.artistList?.length && links && e.closest('#music-card, #tab-player')) swapText(e, t.artistList.map(a => ymA(`/artist/${a.id}`, a.name)).join(', '), artists);
     else swapText(e, esc(artists), artists);
   });
   const cover = has && !isBt ? coverUrl(p.extra?.coverURI, 400) : '';
@@ -5055,7 +5145,9 @@ function renderMusic() {
   });
   $$('[data-mu="shuffle"]').forEach(b => b.classList.toggle('on', !!p?.entityInfo?.shuffled));
   $$('[data-mu="like"]').forEach(b => { b.classList.toggle('liked', !!mu.track?.liked); b.setAttribute('aria-label', mu.track?.liked ? 'Убрать лайк' : 'Лайк'); });
-  $$('[data-mu="shuffle"], [data-mu="repeat"], [data-mu="like"], [data-mu="dislike"]').forEach(b => b.disabled = !has);
+  $$('[data-mu="like"], [data-mu="dislike"]').forEach(b => b.disabled = !has);
+  const finite = !!p && p.playlistId !== 'user:onyourwave' && ['Album', 'Playlist', 'Artist'].includes(p.playlistType);
+  $$('[data-mu="shuffle"], [data-mu="repeat"]').forEach(b => b.disabled = !has || !finite);
   const pos = musicPos();
   $$('input.mu-seek').forEach(r => {
     // по Bluetooth позиция приходит верная, но перематывать колонка не умеет — только на телефоне
@@ -5075,7 +5167,7 @@ function renderMusic() {
     if (!isBt) api('/api/music/info?id=' + encodeURIComponent(p.id)).then(t => { if (mu.trackId === p.id) { mu.track = t; renderMusic(); } }).catch(() => {});
     if (!$('#tab-player').hidden) loadPlayerExtras();
   }
-  if (!$('#tab-player').hidden) renderPlayerTab();
+  if (!$('#tab-player').hidden) { renderPlayerTab(); if (musicProvider !== 'zvuk') loadYaPlaylists(); }
 }
 setInterval(() => muState()?.playing && !mu.seeking && renderMusic(), 250);   // плавный прогресс
 
@@ -5089,7 +5181,7 @@ function renderPlayerTab() {
   const srcPath = !isBt && muHas() ? ymSourcePath(p) : null;
   setHtml($('#pl-source'), isBt ? 'Bluetooth · звук с телефона или компьютера'
     : muHas() ? esc(PL_TYPES[p.playlistType] || p.playlistType || '') + (src ? ' · ' + (srcPath ? ymA(srcPath, src) : esc(src)) : '') : 'Ничего не играет');
-  $('#pl-msrc').textContent = isBt ? 'Bluetooth' : muHas() ? (src || PL_TYPES[p.playlistType] || p.playlistType || '') : '';
+  $('#pl-msrc').textContent = isBt ? 'Bluetooth' : muHas() ? (src || PL_TYPES[p.playlistType] || p.playlistType || '') : (musicProvider === 'zvuk' ? 'Сбер Звук' : 'Яндекс Музыка');
   $('#pl-kind').textContent = p ? (isBt ? 'Bluetooth' : PL_TYPES[p.type] || p.type || 'Трек') + (s?.playing ? ' · играет' : ' · пауза') : '—';
   const meta = [];
   if (t) {
@@ -5172,7 +5264,7 @@ function sheetDrag(el, isOpen, close) {
     if (!atTop || !isOpen()) return;
     dy = e.touches[0].clientY - y0;
     if (dy <= 0 && !dragging) { atTop = false; return; }   // повели вверх — это прокрутка, не закрытие
-    if (e.target.closest('input[type=range], textarea')) return;
+    if (e.target.closest('.zv-mood-pad, input[type=range], textarea')) return;
     e.preventDefault(); dragging = true;
     el.style.transition = 'none'; el.style.transform = `translateY(${Math.max(0, dy)}px)`;
   }, { passive: false });
@@ -5275,12 +5367,21 @@ function plSheet(name) {
   $('#pl-sheet-bg').classList.toggle('open', !!name);
   $$('.pl-mtabs [data-pl-open]').forEach(b => b.setAttribute('aria-pressed', b.dataset.plOpen === name));
   if (name === 'ask') setTimeout(() => $('#pl-command textarea')?.focus(), 60);
+  if (name === 'ya-playlists') loadYaPlaylists();
 }
 $$('.pl-mtabs [data-pl-open]').forEach(b => b.onclick = () => plSheet(plOpen === b.dataset.plOpen ? '' : b.dataset.plOpen));
+document.addEventListener('click', e => {
+  const b = e.target.closest?.('.pl-start-btn');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  musicAction('play', b);
+});
 $('#pl-sheet-bg').onclick = () => plSheet('');
 // исполнитель — по нажатию и на его имя, и на название трека
 ['.pl-artist', '.pl-title'].forEach(sel => $('#tab-player ' + sel).addEventListener('click', () => {
-  if (plMobile() && !document.body.classList.contains('mu-bt') && muHas()) plSheet('artist');
+  if (!plMobile() || document.body.classList.contains('mu-bt') || !muHas()) return;
+  if (musicProvider === 'zvuk') { loadZvukArtist(zvukData?.track); plSheet('zvuk-artist'); }
+  else plSheet('artist');
 }));
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && plOpen) plSheet(''); });
 const plBack = () => { location.hash = prevTab && prevTab !== 'player' ? prevTab : 'overview'; };
@@ -5416,15 +5517,54 @@ plPlaceholder();
 matchMedia('(max-width: 760px)').addEventListener('change', () => { plSheet(''); plPlaceholder(); plTintApply(plTintHsl); renderMusic(); });
 // ручная прокрутка текста (колесо, тач, перетаскивание полосы) — ставит автопрокрутку на паузу
 ['wheel', 'touchmove', 'pointerdown'].forEach(ev => $('#pl-lyrics').addEventListener(ev, () => { $('#pl-lyrics')._userScroll = Date.now(); }, { passive: true }));
-const trackRow = (t, cur, tag) => `<button class="trow${cur ? ' cur' : ''}" data-play="${esc(t.id)}" ${t.available === false ? 'disabled' : ''}>
+const trackRow = (t, cur, tag, ctx, index, infoOnly) => infoOnly
+  ? `<div class="trow info${cur ? ' cur' : ''}">
+  ${t.cover ? `<img src="${esc(t.cover)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
+  <span class="tt"><b>${esc(t.title)}</b><span>${esc(t.artists)}</span></span>
+  ${tag ? `<span class="badge${cur ? ' ok' : ''}">${tag}</span>` : ''}<span class="td">${t.durationMs ? fmtDur(t.durationMs / 1000) : ''}</span></div>`
+  : `<button class="trow${cur ? ' cur' : ''}" data-play="${esc(t.id)}" data-track-title="${esc(t.title)}" data-track-artist="${esc(t.artists)}" ${index != null ? `data-play-index="${index}"` : ''} ${ctx ? `data-ctx-type="${ctx.type}" data-ctx-id="${esc(ctx.id)}"` : ''} ${t.available === false ? 'disabled' : ''}>
   ${t.cover ? `<img src="${esc(t.cover)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
   <span class="tt"><b>${esc(t.title)}</b><span>${esc(t.artists)}</span></span>
   ${tag ? `<span class="badge${cur ? ' ok' : ''}">${tag}</span>` : ''}<span class="td">${t.durationMs ? fmtDur(t.durationMs / 1000) : ''}</span></button>`;
+const YA_LIST_TITLES = { queue: 'Очередь', album: 'Альбом', similar: 'Похожие', favorites: 'Избранное' };
+let yaListMode = 'queue';
+function renderYaList() {
+  const list = mu.extras?.yaList || {}, d = list[yaListMode];
+  $$('#pl-list-tabs [data-ya-list]').forEach(b => b.classList.toggle('active', b.dataset.yaList === yaListMode));
+  $('#pl-q-title').textContent = d?.title || YA_LIST_TITLES[yaListMode];
+  $('#pl-q-count').textContent = d?.tracks?.length ? `${d.tracks.length} треков` : '';
+  const cur = d?.current, tagOf = k => cur == null ? '' : k === cur ? 'сейчас' : k === cur + 1 ? 'далее' : k === cur - 1 ? 'было' : '';
+  const p = muPlayer();
+  const ctx = yaListMode === 'album' && mu.track?.album?.id ? { type: 'album', id: mu.track.album.id }
+    : yaListMode === 'queue' && p?.playlistId && ['Album', 'Playlist', 'Artist'].includes(p.playlistType)
+      ? { type: p.playlistType.toLowerCase(), id: p.playlistId }
+      : yaListMode === 'favorites' ? { type: 'likes', id: '' } : null;
+  $('#pl-tracks-list').innerHTML = (ctx ? `<button class="btn sm primary zv-playall" id="pl-playall">Играть всё</button>` : '')
+    + (d?.tracks?.length ? d.tracks.map((t, k) => trackRow(t, k === cur, tagOf(k), ctx, k, true)).join('') : '<div class="empty">Пусто</div>');
+  const all = $('#pl-playall');
+  if (all && ctx) all.onclick = () => act(all, () => api('/api/music/play', ctx), 'Включаю');
+}
+$('#pl-list-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-ya-list]'); if (!b) return;
+  yaListMode = b.dataset.yaList; renderYaList();
+});
+async function loadYaPlaylists() {
+  const el = $('#pl-playlists'); if (!el || el.dataset.loaded) return;
+  el.innerHTML = '<div class="empty">Загрузка…</div>';
+  try {
+    const list = await api('/api/music/playlists');
+    el.dataset.loaded = '1';
+    el.innerHTML = list.length ? list.map(p => `<button class="trow" data-play="${esc(p.id)}" data-ctx-type="playlist" data-ctx-id="${esc(p.id)}">
+      ${p.cover ? `<img src="${esc(p.cover)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
+      <span class="tt"><b>${esc(p.title)}</b><span>${p.tracks} треков</span></span></button>`).join('') : '<div class="empty">Плейлистов нет</div>';
+  } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
 async function loadPlayerExtras() {
   const id = mu.trackId;
   if (!id || mu.extras.for === id) return;
-  mu.extras = { for: id };
-  $('#pl-lyrics').innerHTML = $('#pl-queue').innerHTML = $('#pl-similar').innerHTML = '<div class="empty">Загрузка…</div>';
+  mu.extras = { for: id, yaList: {} };
+  $('#pl-lyrics').innerHTML = '<div class="empty">Загрузка…</div>';
+  renderYaList();
   const p = muPlayer(), isBt = p?.playerType === 'bluetooth';
   // По Bluetooth у трека нет id Яндекса: текст ищем в LRCLIB по названию, очередь и похожие не нужны.
   const lyParams = { title: p?.title || '', artist: p?.subtitle || '', album: p?.extra?.album || '', duration: p?.duration || 0 };
@@ -5449,22 +5589,19 @@ async function loadPlayerExtras() {
   const SRC = { 'Яндекс Музыка': 'Текст: Яндекс Музыка', 'LRCLIB': 'Текст: <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a> — открытая база текстов песен' };
   $('#pl-ly-src').hidden = !L.source;
   $('#pl-ly-src').innerHTML = SRC[L.source] || '';
-  if (q.status === 'fulfilled') {
-    mu.extras.queue = q.value;
-    $('#pl-q-title').textContent = q.value.title ? `Очередь · ${q.value.title}` : 'Очередь';
-    $('#pl-q-count').textContent = q.value.tracks.length > 3 ? `${q.value.tracks.length} треков` : '';
-    const cur = q.value.current, tagOf = k => cur == null ? '' : k === cur ? 'сейчас' : k === cur + 1 ? 'далее' : k === cur - 1 ? 'было' : '';
-    $('#pl-queue').innerHTML = q.value.tracks.map((t, k) => trackRow(t, k === cur, tagOf(k))).join('') || '<div class="empty">Пусто</div>';
-    // только сам список: scrollIntoView прокрутил бы и родителей — на телефоне закреплённую страницу плеера,
-    // и он при открытии улетал вверх и тут же возвращался
-    const row = $('#pl-queue .trow.cur'), list = $('#pl-queue');
-    if (row) list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - (list.clientHeight - row.offsetHeight) / 2;
-  } else $('#pl-queue').innerHTML = `<div class="empty">${esc(q.reason?.message || 'Не удалось')}</div>`;
-  $('#pl-similar').innerHTML = sim.status === 'fulfilled' && sim.value.length ? sim.value.map(t => trackRow(t)).join('') : '<div class="empty">Нет</div>';
+  if (q.status === 'fulfilled') mu.extras.yaList.queue = q.value;
+  if (sim.status === 'fulfilled' && sim.value?.length) mu.extras.yaList.similar = { title: 'Похожие', tracks: sim.value };
+  renderYaList();
+  // избранное не зависит от карточки трека — грузим сразу, не дожидаясь waitTrack
+  try { mu.extras.yaList.favorites = { title: 'Избранное', tracks: await api('/api/music/liked') }; renderYaList(); } catch {}
   if (isBt) return;
   // исполнитель — когда приедут подробности о треке
   const waitTrack = async () => { for (let k = 0; k < 20 && !mu.track && mu.trackId === id; k++) await new Promise(r => setTimeout(r, 300)); };
   await waitTrack();
+  if (mu.trackId !== id) return;
+  if (mu.track?.album?.id) {
+    try { mu.extras.yaList.album = await api('/api/music/album?id=' + encodeURIComponent(mu.track.album.id)); renderYaList(); } catch {}
+  }
   const aid = mu.track?.artistList?.[0]?.id;
   if (!aid) { $('#pl-artist').innerHTML = '<div class="empty">—</div>'; return; }
   try {
@@ -5537,8 +5674,12 @@ function musicAction(a, btn, noAnim) {
     if (plSwapping && !noAnim) return;   // идёт смена трека — ждём новый
     muPulse(btn); return muCmd(null, { command: a });
   }
-  if (a === 'shuffle') return muCmd(btn, { command: 'shuffle', enable: !p?.entityInfo?.shuffled });
-  if (a === 'repeat') return muCmd(btn, { command: 'repeat', mode: { None: 'All', All: 'One', One: 'None' }[p?.entityInfo?.repeatMode || 'None'] });
+  if (a === 'shuffle' || a === 'repeat') {
+    const finite = !!p && p.playlistId !== 'user:onyourwave' && ['Album', 'Playlist', 'Artist'].includes(p.playlistType);
+    if (!finite) return;
+    if (a === 'shuffle') return muCmd(btn, { command: 'shuffle', enable: !p?.entityInfo?.shuffled });
+    return muCmd(btn, { command: 'repeat', mode: { None: 'All', All: 'One', One: 'None' }[p?.entityInfo?.repeatMode || 'None'] });
+  }
   if (!p?.id) return;
   if (a === 'like') return act(btn, async () => {
     const r = await api('/api/music/like', { id: p.id, like: !mu.track?.liked });
@@ -5699,6 +5840,7 @@ async function loadZvukArtist(track) {
   if (!zvukArtist) { $('#zvuk-artist-card').hidden = true; return; }
   $('#zvuk-artist-card').hidden = false;
   $('#zvuk-artist-name').textContent = zvukArtist.name || 'Исполнитель';
+  $('#zvuk-artist-title').textContent = zvukArtist.name || 'Исполнитель';
   const img = $('#zvuk-artist-img');
   img.hidden = !zvukArtist.cover; if (zvukArtist.cover) img.src = zvukArtist.cover;
   $('#zvuk-artist-meta').textContent = `${(zvukArtist.popular || []).length} треков`;
@@ -5710,7 +5852,7 @@ function renderZvukMood() {
   dot.style.top = ((1 - zvukMood.energy) * 100) + '%';
   $('#zvuk-mood-v').textContent = `энергия ${Math.round(zvukMood.energy * 100)} · веселье ${Math.round(zvukMood.fun * 100)}`;
   const pop = $('#zvuk-popular');
-  if (pop) pop.value = zvukMood.popular === '' ? '' : String(zvukMood.popular);
+  if (pop) pop.querySelectorAll('[data-value]').forEach(b => b.setAttribute('aria-pressed', String(zvukMood.popular) === b.dataset.value));
   const genreBtn = $('#zvuk-genre-btn');
   if (genreBtn) {
     $$('#zvuk-genre-menu input').forEach(i => { i.checked = zvukMood.genre.includes(i.value); });
@@ -5718,12 +5860,11 @@ function renderZvukMood() {
     genreBtn.textContent = names.length === 0 ? 'Все жанры' : (names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`);
     genreBtn.title = names.length ? names.join(', ') : 'Все жанры';
   }
-  const lang = $('#zvuk-language');
+  const lang = $('#zvuk-language-btn'), langMenu = $('#zvuk-language-menu');
   if (lang) {
-    if (zvukMood.language && ![...lang.options].some(o => o.value === zvukMood.language)) {
-      const o = document.createElement('option'); o.value = zvukMood.language; o.textContent = zvukMood.language; lang.append(o);
-    }
-    lang.value = zvukMood.language || '';
+    const names = { any: 'Любой', russian: 'Русское', foreign: 'Зарубежное', instrumental: 'Без слов' };
+    lang.textContent = names[zvukMood.language] || 'Любой';
+    langMenu.querySelectorAll('[data-value]').forEach(b => b.setAttribute('aria-pressed', b.dataset.value === (zvukMood.language || 'any')));
   }
 }
 function zvukMoodString() { return `energy:${zvukMood.energy.toFixed(2)},fun:${zvukMood.fun.toFixed(2)}`; }
@@ -5779,6 +5920,19 @@ async function switchProvider(provider) {
   } catch (e) { applyMusicProvider(); toast(e.message, true); }
 }
 $$('#music-provider [data-provider]').forEach(b => b.onclick = () => switchProvider(b.dataset.provider));
+const providerBtn = $('#pl-msrc'), providerMenu = $('#pl-provider-menu');
+const closeProviderMenu = () => { providerMenu.hidden = true; providerBtn.setAttribute('aria-expanded', 'false'); };
+providerBtn.onclick = e => {
+  e.stopPropagation();
+  const open = providerMenu.hidden;
+  providerMenu.hidden = !open; providerBtn.setAttribute('aria-expanded', String(open));
+};
+providerMenu.addEventListener('click', e => {
+  const b = e.target.closest('[data-provider]'); if (!b) return;
+  e.stopPropagation(); closeProviderMenu();
+  if (b.dataset.provider !== musicProvider) switchProvider(b.dataset.provider);
+});
+document.addEventListener('click', () => closeProviderMenu());
 $('#mu-provider').onchange = e => switchProvider(e.target.value);
 $('#zvuk-token-paste').onclick = async () => {
   try {
@@ -5798,7 +5952,10 @@ $('#zvuk-token-save').onclick = e => act(e.currentTarget, async () => {
 }, 'Токен «Звука» сохранён');
 $('#zvuk-flow').onclick = e => act(e.currentTarget, () => zvukFlow(), 'Включаю «Мой поток»');
 $('#zvuk-mood-reset').onclick = () => { zvukMood = { energy: .5, fun: .5, popular: '', genre: [], language: 'any' }; syncZvukMood(); };
-$('#zvuk-popular').onchange = e => { zvukMood.popular = e.target.value === '' ? '' : Number(e.target.value); syncZvukMood(); };
+$('#zvuk-popular').addEventListener('click', e => {
+  const b = e.target.closest('[data-value]'); if (!b) return;
+  zvukMood.popular = b.dataset.value === '' ? '' : Number(b.dataset.value); syncZvukMood();
+});
 const genreBtn = $('#zvuk-genre-btn'), genreMenu = $('#zvuk-genre-menu');
 const closeGenreMenu = () => { genreMenu.hidden = true; genreBtn.setAttribute('aria-expanded', 'false'); };
 genreBtn.onclick = e => {
@@ -5819,7 +5976,19 @@ $('#zvuk-genre-clear').onclick = () => {
   renderZvukMood(); syncZvukMood();
 };
 $('#zvuk-genre-done').onclick = () => closeGenreMenu();
-$('#zvuk-language').onchange = e => { zvukMood.language = e.target.value; syncZvukMood(); };
+const langBtn = $('#zvuk-language-btn'), langMenu = $('#zvuk-language-menu');
+const closeLangMenu = () => { langMenu.hidden = true; langBtn.setAttribute('aria-expanded', 'false'); };
+langBtn.onclick = e => {
+  e.stopPropagation();
+  const open = langMenu.hidden;
+  langMenu.hidden = !open; langBtn.setAttribute('aria-expanded', String(open));
+};
+langMenu.addEventListener('click', e => {
+  const b = e.target.closest('[data-value]'); if (!b) return;
+  e.stopPropagation();
+  zvukMood.language = b.dataset.value; closeLangMenu(); syncZvukMood();
+});
+document.addEventListener('click', () => closeLangMenu());
 const moodPad = $('#zvuk-mood-pad');
 function setZvukMood(e) {
   const r = moodPad.getBoundingClientRect();
@@ -5882,9 +6051,11 @@ applyMusicProvider();
 renderZvukMood();
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-mu]');
-  if (b) return musicAction(b.dataset.mu, b);
+  if (b) { muPress(b); return musicAction(b.dataset.mu, b); }
   const r = e.target.closest('[data-play]');
-  if (r) act(r, () => api('/api/music/play', { id: r.dataset.play, type: 'track' }), 'Включаю');
+  if (r) act(r, () => api('/api/music/play', r.dataset.ctxType
+    ? { id: r.dataset.ctxId, type: r.dataset.ctxType, index: r.dataset.playIndex == null ? null : +r.dataset.playIndex }
+    : { id: r.dataset.play, type: 'track' }), 'Включаю');
 });
 document.addEventListener('input', e => {
   if (e.target.matches('input.mu-seek')) { mu.seeking = true; $$('.mu-pos').forEach(x => x.textContent = fmtDur(+e.target.value)); }

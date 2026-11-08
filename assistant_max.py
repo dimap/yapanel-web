@@ -480,6 +480,21 @@ def match_trigger(phrase: str, triggers: list) -> tuple:
     return "", False
 
 
+def phrase_from_log_line(line: str) -> str:
+    """Распознанная фраза из строки logcat, если это событие речи Алисы на Максе.
+
+    Android SDK на Станции Макс пишет распознанный текст в
+    `onAliceStateChanged: BUSY, recognizedPhrase='…'`; в некоторых сборках
+    встречается и `onRequestStateChanged: LISTENING, recognizedPhrase='…'`.
+    """
+    if "recognizedPhrase='" not in line:
+        return ""
+    if "onAliceStateChanged: BUSY" not in line and "onRequestStateChanged: LISTENING" not in line:
+        return ""
+    m = re.search(r"recognizedPhrase='([^']*)'", line)
+    return m.group(1).strip() if m else ""
+
+
 def for_speech(text: str, limit: int = 900) -> str:
     """Подготовка ответа модели для озвучки 'Повтори за мной': удаление разметки и сокращение."""
     s = re.sub(r"[*_#`«»\"'>\[\]\(\)]", " ", text or "")
@@ -655,6 +670,8 @@ class AssistantDaemon:
         self.route = False
         self.ours = False
         self.say_at = 0
+        self.last_phrase = ""
+        self.last_phrase_at = 0.0
         self.lock = threading.Lock()
         self.running = True
 
@@ -1054,12 +1071,21 @@ class AssistantDaemon:
                     line = line.strip()
                     if not line:
                         continue
-                    if "onRequestStateChanged: LISTENING, recognizedPhrase='" in line:
-                        m = re.search(r"recognizedPhrase='([^']*)'", line)
-                        if m:
-                            phrase = m.group(1).strip()
-                            if phrase:
-                                self.handle_phrase(phrase)
+                    phrase = phrase_from_log_line(line)
+                    if phrase:
+                        with self.lock:
+                            ours = self.ours
+                        if ours:
+                            if time.time() - self.say_at < 20:
+                                continue
+                            with self.lock:
+                                self.ours = False
+                        now = time.time()
+                        # одно и то же событие может прийти из двух состояний SDK
+                        if phrase == self.last_phrase and now - self.last_phrase_at < 2.0:
+                            continue
+                        self.last_phrase, self.last_phrase_at = phrase, now
+                        self.handle_phrase(phrase)
                     elif "onAliceStateChanged: IDLE" in line:
                         with self.lock:
                             self.ours = False

@@ -3236,6 +3236,7 @@ echo @@BLUEZ
             return {}
 
     _assist_md5 = (0, None)
+    _assist_py_md5 = (0, None)
 
     def _assist_local_md5(self):
         """md5 сборки на компьютере — понять, что на колонке старая программа. Без Go и сборки — None."""
@@ -3248,9 +3249,20 @@ echo @@BLUEZ
             self._assist_md5 = (mtime, hashlib.md5(out.read_bytes()).hexdigest())
         return self._assist_md5[1]
 
+    def _assist_py_local_md5(self):
+        """md5 assistant_max.py на компьютере: панель должна замечать старую версию на колонке."""
+        for path in (Path(__file__).resolve().parent / "assistant_max.py", ASSIST_SRC / "assistant_max.py"):
+            if path.is_file():
+                mtime = path.stat().st_mtime
+                if self._assist_py_md5[0] != mtime:
+                    self._assist_py_md5 = (mtime, hashlib.md5(path.read_bytes()).hexdigest())
+                return self._assist_py_md5[1]
+        return None
+
     def assistant_status(self):
         out, _, _ = self.adb.shell(
             f"[ -x {ASSISTD} ] && echo @installed && md5sum {ASSISTD}; "
+            f"[ -f {ASSIST_DIR}/assistant_max.py ] && echo @pymd5 && md5sum {ASSIST_DIR}/assistant_max.py; "
             f"[ -f {ASSIST_SD} ] && kill -0 $(cat {ASSIST_SD}) 2>/dev/null "
             f"&& echo @running; echo @status; cat {ASSIST_STATUS} 2>/dev/null; echo; true", check=False)
         out = strip_ansi(out)
@@ -3268,8 +3280,14 @@ echo @@BLUEZ
             sec["key"] = cfg["keys"].get(self._key_id(sec.get("base_url", "")), "")
         running = "running" in flags
         local = self._assist_local_md5() if "installed" in flags else None
+        local_py = self._assist_py_local_md5() if "installed" in flags else None
+        py_match = re.search(r"@pymd5\s+([0-9a-f]{32})", out)
+        py_md5 = py_match.group(1) if py_match else ""
+        outdated = bool(local) and local not in out
+        if local_py:
+            outdated = outdated or not py_md5 or py_md5 != local_py
         return {"supported": True, "installed": "installed" in flags, "running": running, "config": cfg,
-                "outdated": bool(local) and local not in out,
+                "outdated": outdated,
                 "state": state if running else {}}
 
     def assistant_install(self):

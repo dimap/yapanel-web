@@ -129,6 +129,8 @@ def test_boot_hook_has_panel_binds_and_both_autostarts():
     assert s.WAKE_AUTOSTART in content
     assert s.WAKE_FRIDA_AUTOSTART in content
     assert s.WAKE_FRIDA_SH in content
+    assert s.ASSIST_CONF in content
+    assert s.ASSISTD in content
     assert "-platform android -audio-source vqe" in content
     assert "127.0.0.1:%d" % s.WAKE_PORT in content
     assert "maxctl" not in content

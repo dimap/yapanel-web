@@ -15,6 +15,17 @@ class TestAssistantMaxUtils(unittest.TestCase):
         self.assertEqual(assistant_max.normalize("Алиса, СПРОСИ GPT, что такое ёж?"), "алиса спроси gpt что такое еж")
         self.assertEqual(assistant_max.normalize(""), "")
 
+    def test_phrase_from_real_max_log_lines(self):
+        max_line = ("11-08 12:00:00.000  4406  4814 I quark-native: "
+                    "[sdk] [info] [alice_state_machine.cpp:423] "
+                    "onAliceStateChanged: BUSY, recognizedPhrase='Сколько времени?'")
+        self.assertEqual(assistant_max.phrase_from_log_line(max_line), "Сколько времени?")
+        request_line = ("11-08 12:00:00.000  4406  4814 I quark-native: "
+                        "[sdk] [info] onRequestStateChanged: LISTENING, recognizedPhrase='спроси gpt про погоду'")
+        self.assertEqual(assistant_max.phrase_from_log_line(request_line), "спроси gpt про погоду")
+        self.assertEqual(assistant_max.phrase_from_log_line("onAliceStateChanged: LISTENING"), "")
+        self.assertEqual(assistant_max.phrase_from_log_line("onAliceStateChanged: IDLE"), "")
+
     def test_match_trigger_simple(self):
         triggers = ["спроси gpt", "спроси модель"]
         q, matched = assistant_max.match_trigger("Алиса, спроси gpt, какая погода?", triggers)

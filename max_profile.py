@@ -747,19 +747,21 @@ def install(s, profile):
     s.GLAGOL_PLATFORM = "yandexstation_2"
     s.LED_PREFIX = "max"
 
-    # Explicitly disable unsupported Buildroot/Linux features on Station Max Android TV (alarms, scenes, assistantd)
+    # Alarms and scenes are Buildroot/Linux features; the voice assistant has a
+    # native Max implementation (assistant_max.py) and works on Android TV 9.
     profile["alarms"] = False
     profile["scenes"] = False
-    profile["assistant"] = False
+    profile["assistant"] = True
     profile["apps"] = True
     if "tested" in profile and isinstance(profile["tested"], (list, tuple)):
-        profile["tested"] = [x for x in profile["tested"] if x not in ("assistant", "scenes", "alarm", "btout", "btpower")]
+        profile["tested"] = [x for x in profile["tested"] if x not in ("scenes", "alarm", "btout", "btpower")]
+        if "assistant" not in profile["tested"]:
+            profile["tested"].append("assistant")
         if "dsp" not in profile["tested"]:
             profile["tested"].append("dsp")
 
     P.alarms = lambda self: {"alarms": [], "supported": False, "installed": False, "running": False, "reason": "Будильники не поддерживаются на Станции Макс"}
     P.scenes = lambda self: {"scenes": [], "supported": False, "running": [], "log": [], "daemon": False, "reason": "Сценарии не поддерживаются на Станции Макс"}
-    P.assistant = lambda self: {"supported": False, "installed": False, "running": False, "reason": "Ассистент не поддерживается на Станции Макс"}
 
     # Set root directory for Quasar system assets on Station Max Android
     s.QUASAR = "/data/data/com.yandex.io.sdk/files/system"
@@ -1971,6 +1973,11 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             f"[ -d {s.OVR_DIR}/sounds ] && (cd {s.OVR_DIR}/sounds && find . -type f) | while read -r f; do "
             f"bind \"{s.OVR_DIR}/sounds/${{f#./}}\" \"{s.SOUNDS_DIR}/${{f#./}}\"; done\n"
             f"[ -f {s.WEB_DIR}/bt_off ] && ( svc bluetooth disable ) >/dev/null 2>&1 &\n"
+            f"[ -f {s.ASSIST_CONF} ] && [ -x {s.ASSISTD} ] && {{ "
+            f"if [ ! -f {s.ASSIST_SD} ] || ! kill -0 \"$(cat {s.ASSIST_SD} 2>/dev/null)\" 2>/dev/null; then "
+            f"rm -f {s.ASSIST_SD}; "
+            f"/odm/bin/start-stop-daemon -S -b -m -p {s.ASSIST_SD} -x /bin/sh -- -c {shlex.quote(s.ASSIST_RUN)}; "
+            f"fi; }}\n"
             + s.wakeword_boot_lines(android=True)
             + s.frida_boot_lines(android=True)
             + "exit 0\n"
@@ -2031,6 +2038,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             ("звук запуска", s.SOUND_CUSTOM),
             ("выключенный bluetooth", s.BT_OFF),
             ("агент", s.AGENT_TOKENS),
+            ("ассистент", s.ASSIST_CONF),
             ("слова активации", s.WAKE_AUTOSTART),
             ("активация Алисы (Frida)", s.WAKE_FRIDA_AUTOSTART),
         ]

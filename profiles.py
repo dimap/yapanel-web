@@ -11,7 +11,7 @@ PROFILES = {
         boot=True,
         alarms=False,
         scenes=False,
-        assistant=False,
+        assistant=True,
         apps=True,
         light=True,
         privacy=True,
@@ -19,7 +19,7 @@ PROFILES = {
         matrix_cols=25,
         matrix_rows=16,
         ring_leds=24,
-        tested=('anims', 'sounds', 'say', 'viz', 'privacy', 'yam2'),
+        tested=('anims', 'sounds', 'say', 'viz', 'privacy', 'yam2', 'assistant'),
     ),
 }
 

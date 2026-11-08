@@ -38,7 +38,7 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(prof["apps"])
         self.assertFalse(prof["alarms"])
         self.assertFalse(prof["scenes"])
-        self.assertFalse(prof["assistant"])
+        self.assertTrue(prof["assistant"])
 
     def test_install_configures_station_max(self):
         """install() binds Station Max platform, routes and delegates to max_profile."""

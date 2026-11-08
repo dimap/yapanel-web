@@ -28,7 +28,7 @@ class MaxProfileTests(unittest.TestCase):
         self.assertTrue(prof["boot"])
         self.assertFalse(prof["alarms"])
         self.assertFalse(prof["scenes"])
-        self.assertFalse(prof["assistant"])
+        self.assertTrue(prof["assistant"])
         self.assertTrue(prof["apps"])
 
     def test_max_detection(self):

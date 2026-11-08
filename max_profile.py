@@ -21,6 +21,7 @@ import shutil
 import struct
 import time
 import threading
+import urllib.parse
 from pathlib import Path
 
 try:

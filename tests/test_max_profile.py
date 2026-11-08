@@ -2,6 +2,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import quote
 from unittest.mock import Mock, patch
 
 import profiles
@@ -52,6 +53,21 @@ class MaxProfileTests(unittest.TestCase):
         ver = p.version()
         self.assertEqual(ver["model"], "max")
         self.assertEqual(ver["quasar_version"], "yandexstation_2_tv/132")
+
+    def test_max_say_falls_back_to_tts_when_glagol_is_offline(self):
+        s = fresh_server()
+        profiles.install(s, "max")
+        p = s.Panel(Mock())
+        p.glagol = SimpleNamespace(ws=None)
+        p.detach = Mock()
+
+        result = p.say("Привет мир")
+
+        self.assertEqual(result, {"ok": True, "method": "tts"})
+        p.detach.assert_called_once()
+        tag, script = p.detach.call_args.args
+        self.assertEqual(tag, "say")
+        self.assertIn(quote("Привет мир"), script)
 
     def test_max_render_matrix_text(self):
         buf = max_profile.render_matrix_text("12:34", 180)

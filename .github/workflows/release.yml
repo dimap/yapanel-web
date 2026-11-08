@@ -43,6 +43,10 @@ jobs:
             -ldflags "-s -w -X main.version=$VER" -o "$PWD/dist/vizd-linux-arm64" .
           cp device/mic-tap/build/mic-tap.so dist/mic-tap-linux-armhf.so
           (cd dist && sha256sum assistantd-linux-arm64 yapanel-agent-linux-arm64 vizd-linux-arm64 mic-tap-linux-armhf.so > SHA256SUMS)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            curl -sSL "https://github.com/${{ github.repository }}/archive/refs/tags/${{ github.ref_name }}.zip" -o "dist/yapanel-web-${VER}.zip"
+            (cd dist && sha256sum "yapanel-web-${VER}.zip" >> SHA256SUMS)
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: windows

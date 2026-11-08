@@ -29,6 +29,40 @@ class UpdateCompleteness(unittest.TestCase):
             self.assertEqual((root / '.yandex_auth.json').read_text(), 'keep')
             self.assertFalse((root.parent / 'outside.py').exists())
 
+    def test_legacy_update_rejects_bad_hash(self):
+        source = Path(server.__file__).parent
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for f in source.glob('*.py'):
+                if f.name not in ('zvuk.py', 'zvuk_player.py', 'zvuk_queries.py'):
+                    shutil.copy2(f, root / f.name)
+            (root / 'VERSION').write_text('0.3.0')
+            with zipfile.ZipFile(root / 'release.zip', 'w') as z:
+                for name in ('zvuk.py', 'zvuk_player.py', 'zvuk_queries.py'):
+                    z.write(source / name, 'yapanel-web-0.3.0/' + name)
+            code = '''
+import io, urllib.request
+blob = open("release.zip", "rb").read()
+sums = b"0" * 64 + b"  yapanel-web-0.3.0.zip\\n"
+calls = 0
+def fake(*a, **kw):
+    global calls
+    calls += 1
+    return io.BytesIO(blob if calls == 1 else sums)
+urllib.request.urlopen = fake
+try:
+    import server
+except RuntimeError as e:
+    print("rejected", e)
+else:
+    raise SystemExit("recovery accepted a bad hash")
+'''
+            env = os.environ.copy(); env['PYTHONPATH'] = str(root)
+            p = subprocess.run([sys.executable, '-c', code], cwd=root, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn('rejected', p.stdout)
+            self.assertFalse((root / 'zvuk_queries.py').exists())
+
     def test_legacy_update_recovers_modules_before_import(self):
         source = Path(server.__file__).parent
         with tempfile.TemporaryDirectory() as d:
@@ -43,9 +77,19 @@ class UpdateCompleteness(unittest.TestCase):
             with zipfile.ZipFile(archive, 'w') as z:
                 for name in ('zvuk.py', 'zvuk_player.py', 'zvuk_queries.py', 'model_colors.py'):
                     z.write(source / name, 'yapanel-web-0.3.0/' + name)
-            code = ('import urllib.request; '
-                    'urllib.request.urlopen=lambda *a,**kw: open("release.zip","rb"); '
-                    'import server; print("started")')
+            code = '''
+import io, hashlib, urllib.request
+blob = open("release.zip", "rb").read()
+sums = hashlib.sha256(blob).hexdigest() + "  yapanel-web-0.3.0.zip\\n"
+calls = 0
+def fake(*a, **kw):
+    global calls
+    calls += 1
+    return io.BytesIO(blob if calls == 1 else sums.encode())
+urllib.request.urlopen = fake
+import server
+print("started")
+'''
             env = os.environ.copy(); env['PYTHONPATH'] = str(root)
             p = subprocess.run([sys.executable, '-c', code], cwd=root, env=env, capture_output=True, text=True, timeout=30)
             self.assertEqual(p.returncode, 0, p.stderr)

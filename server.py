@@ -52,11 +52,21 @@ def _recover_legacy_update_modules():
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9.-]+)?", version):
         raise RuntimeError("Неверная версия панели; восстановите файлы из архива релиза")
     url = f"https://github.com/dimap/yapanel-web/archive/refs/tags/v{version}.zip"
+    sums_url = f"https://github.com/dimap/yapanel-web/releases/download/v{version}/SHA256SUMS"
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "webpanel"}), timeout=120) as response:
             blob = response.read(64 * 1024 * 1024 + 1)
         if len(blob) > 64 * 1024 * 1024:
             raise ValueError("архив слишком велик")
+        with urllib.request.urlopen(urllib.request.Request(sums_url, headers={"User-Agent": "webpanel"}), timeout=30) as response:
+            sums = response.read(1024 * 1024).decode("utf-8", "replace")
+        names = {f"yapanel-web-{version}.zip", f"v{version}.zip"}
+        expected = next((line.split()[0].lower() for line in sums.splitlines()
+                         if len(line.split()) >= 2 and line.split()[-1] in names), "")
+        if not expected:
+            raise ValueError(f"в SHA256SUMS нет хеша архива yapanel-web-{version}.zip")
+        if hashlib.sha256(blob).hexdigest() != expected:
+            raise ValueError("хеш архива не совпал с SHA256SUMS")
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
             prefix = f"yapanel-web-{version}/"
             for name in missing:

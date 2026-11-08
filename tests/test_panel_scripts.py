@@ -19,7 +19,7 @@ def classic_scripts():
             continue
         src = re.search(r"""src\s*=\s*["']([^"']+)["']""", attrs, re.I)
         if src:
-            path = (ROOT / src.group(1)).resolve()
+            path = (ROOT / src.group(1).split("?", 1)[0]).resolve()
             if path.is_file():
                 scripts.append(path.read_text(encoding="utf-8"))
         elif body.strip():
@@ -44,7 +44,7 @@ class PanelScripts(unittest.TestCase):
     def test_main_script_lives_in_app_js(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         app = ROOT / "static" / "app.js"
-        self.assertIn('<script src="static/app.js"></script>', html)
+        self.assertRegex(html, r'<script src="static/app\.js(?:\?[^"]*)?"></script>')
         self.assertTrue(app.is_file())
         self.assertIn("const $ = s => document.querySelector(s);", app.read_text(encoding="utf-8"))
 

@@ -17,9 +17,16 @@ jobs:
         python: ['3.9', '3.11', '3.14']
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
+        id: setup-python
+        continue-on-error: true
         with:
           python-version: ${{ matrix.python }}
+      - uses: actions/setup-python@v7
+        if: steps.setup-python.outcome == 'failure'
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python --version
       - run: python -m compileall -q server.py profiles.py max_profile.py assistant_max.py config.py access.py glagol.py multi.py pyadb.py dsp_max.py party.py party_store.py party_audio.py api
       - run: pip install pytest pytest-asyncio
       - run: pytest

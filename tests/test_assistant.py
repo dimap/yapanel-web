@@ -68,6 +68,21 @@ class AssistantKeys(unittest.TestCase):
         panel.adb.push.assert_not_called()
 
 
+class AssistantDaemonStop(unittest.TestCase):
+    """Остановка демона: процессу уходит SIGTERM, затем pid-файл убирается."""
+
+    def test_stop_terminates_process_and_cleans_pidfile(self):
+        panel = server.Panel(Mock())
+        panel.adb.shell.return_value = ("", "", 0)
+        st = panel.assistant_daemon_stop()
+        cmd = panel.adb.shell.call_args_list[0].args[0]
+        self.assertIn(f"cat {server.ASSIST_SD}", cmd)
+        self.assertIn('kill "$pid"', cmd)
+        self.assertIn("kill -9", cmd)
+        self.assertIn(f"rm -f {server.ASSIST_SD}", cmd)
+        self.assertFalse(st["running"])
+
+
 class AssistantHook(unittest.TestCase):
     def test_boot_hook_starts_assistant_only_when_configured(self):
         line = next(l for l in server.BOOT_HOOK_SCRIPT.splitlines() if "assistant" in l)

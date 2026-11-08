@@ -4773,6 +4773,8 @@ async function loadAssistant(fill) {
   $('#as-missing').hidden = st.installed;
   $('#as-on').hidden = !st.installed;
   $('#as-update').hidden = !st.outdated;
+  $('#as-daemon-stop').disabled = !st.running;
+  $('#as-restart').textContent = st.running ? 'Перезапустить' : 'Запустить';
   const s = st.state || {}, c = st.config || {};
   const [label, cls] = !st.installed ? ['Не установлен', ''] : !st.running ? ['Остановлен', 'bad']
     : !c.enabled ? ['Выключен', ''] : AS_STATE[s.state] || ['—', ''];
@@ -4906,6 +4908,8 @@ $('#as-mode-btn').onclick = e => {
 };
 $('#as-mode-follow').onchange = e => act(null, async () => asFill((await api('/api/assistant', { mode: { follow_up: e.target.checked } })).config));
 $('#as-restart').onclick = e => act(e.currentTarget, async () => { await api('/api/assistant/start', {}); await loadAssistant(); }, 'Перезапущен');
+$('#as-daemon-stop').onclick = e => act(e.currentTarget, async () => { await api('/api/assistant/daemon/stop', {}); }, 'Демон остановлен')
+  .then(() => loadAssistant());
 $('#as-enabled').onchange = e => act(null, async () => { await api('/api/assistant', { enabled: e.target.checked }); await loadAssistant(); },
   e.target.checked ? 'Помощник отвечает на фразу' : 'Помощник выключен');
 $('#as-save').onclick = e => act(e.currentTarget, async () => {

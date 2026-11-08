@@ -3427,6 +3427,17 @@ echo @@BLUEZ
         out, _, _ = self.adb.shell(f"tail -5 {ASSIST_DIR}/assistant.log", check=False)
         raise AdbError("помощник не запустился: " + strip_ansi(out).strip()[-400:])
 
+    def assistant_daemon_stop(self):
+        """Останавливает демон помощника. Автозапуск при следующей загрузке остаётся."""
+        self.adb.shell(
+            f"pid=$(cat {ASSIST_SD} 2>/dev/null); "
+            f"if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then "
+            f"kill \"$pid\" 2>/dev/null; "
+            f"for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do kill -0 \"$pid\" 2>/dev/null || break; sleep 0.2; done; "
+            f"kill -0 \"$pid\" 2>/dev/null && kill -9 \"$pid\" 2>/dev/null; fi; "
+            f"rm -f {ASSIST_SD}; true", check=False)
+        return self.assistant_status()
+
     def assistant_command(self, cmd):
         if not self.assistant_status()["running"]:
             raise AdbError("помощник не запущен")
@@ -7480,6 +7491,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/assistant": lambda: p.assistant_set(d),
             "/api/assistant/install": p.assistant_install,
             "/api/assistant/start": p.assistant_start,
+            "/api/assistant/daemon/stop": p.assistant_daemon_stop,
             "/api/assistant/ask": lambda: p.assistant_ask(d.get("text")),
             "/api/assistant/stop": lambda: p.assistant_command({"stop": True}),
             "/api/assistant/mode": lambda: p.assistant_command({"mode": bool(d.get("on"))}),

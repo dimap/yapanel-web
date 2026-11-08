@@ -73,8 +73,8 @@ def calc_hpf_stage(f0: float, q: float, fs: float = FS) -> str:
     return calc_biquad_coeffs(b0, b1, b2, a0, a1, a2)
 
 
-def calc_notch(f0: float, q: float, gain_db: float, fs: float = FS) -> str:
-    """Peaking / Notch EQ biquad filter."""
+def peaking_stage(f0: float, q: float, gain_db: float, fs: float = FS) -> Tuple[float, float, float, float, float, float]:
+    """Peaking / Notch EQ stage without normalization: (b0, b1, b2, a0, a1, a2)."""
     A = 10.0 ** (gain_db / 40.0)
     w0 = 2.0 * math.pi * f0 / fs
     alpha = math.sin(w0) / (2.0 * q)
@@ -85,7 +85,12 @@ def calc_notch(f0: float, q: float, gain_db: float, fs: float = FS) -> str:
     a0 = 1.0 + alpha / A
     a1 = -2.0 * cos_w0
     a2 = 1.0 - alpha / A
-    return calc_biquad_coeffs(b0, b1, b2, a0, a1, a2)
+    return b0, b1, b2, a0, a1, a2
+
+
+def calc_notch(f0: float, q: float, gain_db: float, fs: float = FS) -> str:
+    """Peaking / Notch EQ biquad filter."""
+    return calc_biquad_coeffs(*peaking_stage(f0, q, gain_db, fs))
 
 
 def calc_apf2(f0: float, q: float, fs: float = FS) -> str:
@@ -182,6 +187,28 @@ GOLDEN_HIFI = {
 }
 
 
+# Свободные биквады SY6045S после golden-калибровки.
+# Вуфер: 3E/3F/40 (3D занят полкой баса), твитер: 39/3A/3B/3D/3E/3F/40
+# (38 — APF, 3C — полка ВЧ). Частоты примерно через октаву; Q=1.41 даёт
+# мягкое перекрытие соседних полос, как у графического эквалайзера.
+EQ_BANDS = [
+    {"id": "40", "freq": 40.0, "q": 1.41, "channel": "woofer", "reg": "3E", "label": "40 Гц"},
+    {"id": "80", "freq": 80.0, "q": 1.41, "channel": "woofer", "reg": "3F", "label": "80 Гц"},
+    {"id": "160", "freq": 160.0, "q": 1.41, "channel": "woofer", "reg": "40", "label": "160 Гц"},
+    {"id": "400", "freq": 400.0, "q": 1.41, "channel": "tweeter", "reg": "39", "label": "400 Гц"},
+    {"id": "800", "freq": 800.0, "q": 1.41, "channel": "tweeter", "reg": "3A", "label": "800 Гц"},
+    {"id": "1600", "freq": 1600.0, "q": 1.41, "channel": "tweeter", "reg": "3B", "label": "1.6 кГц"},
+    {"id": "3150", "freq": 3150.0, "q": 1.41, "channel": "tweeter", "reg": "3D", "label": "3.2 кГц"},
+    {"id": "6300", "freq": 6300.0, "q": 1.41, "channel": "tweeter", "reg": "3E", "label": "6.3 кГц"},
+    {"id": "12500", "freq": 12500.0, "q": 1.41, "channel": "tweeter", "reg": "3F", "label": "12.5 кГц"},
+    {"id": "16000", "freq": 16000.0, "q": 1.41, "channel": "tweeter", "reg": "40", "label": "16 кГц"},
+]
+EQ_DEFAULT = [0.0] * len(EQ_BANDS)
+# Подъём ограничен +9 дБ: полка ВЧ и другие фильтры добавляют ещё немного,
+# а большой буст низов легко перегружает маленький динамик.
+EQ_MIN, EQ_MAX = -12.0, 9.0
+
+
 def _serialized_hardware(method):
     """Run a method under the shared RLock used by every MaxDSP instance.
 
@@ -265,6 +292,7 @@ class MaxDSP:
             "bass_gain": 0.0,
             "treble_gain": 3.0,
             "subsonic_freq": 48,
+            "eq": list(EQ_DEFAULT),
         }
         self._load_saved_state()
         if self.is_supported():
@@ -296,6 +324,7 @@ class MaxDSP:
                     self.filters.update(dsp_conf["filters"])
                 if "params" in dsp_conf and isinstance(dsp_conf["params"], dict):
                     self.params.update(dsp_conf["params"])
+                self.params["eq"] = self._eq_values()
         except Exception as e:
             logger.warning(f"Error loading DSP settings: {e}")
 
@@ -304,7 +333,9 @@ class MaxDSP:
         """Restore saved DSP configuration to hardware on panel boot/startup."""
         if not self.is_supported():
             return {"ok": False, "error": "Hardware not supported"}
-        self._load_saved_state()
+        # Не перечитываем настройки с диска: сюда повторно заходят из
+        # maybe_restore после сбоя шины, и старая копия файла затирала бы
+        # только что выбранный пользователем эквалайзер.
         logger.info(f"[DSP] Restoring hardware: profile={self.active_profile}, params={self.params}, filters={self.filters}")
         if self.active_profile == "custom":
             res = self._apply_custom_state(save=False)
@@ -515,6 +546,46 @@ class MaxDSP:
             logger.error("[DSP] Error saving DSP settings: %s", e, exc_info=True)
             return False
 
+    @staticmethod
+    def _parse_eq(raw):
+        """Проверяет список полос эквалайзера. Возвращает (значения, ошибка)."""
+        if not isinstance(raw, (list, tuple)):
+            return None, "Эквалайзер должен быть списком полос"
+        if len(raw) != len(EQ_BANDS):
+            return None, f"Нужно ровно {len(EQ_BANDS)} полос"
+        values = []
+        for index, item in enumerate(raw):
+            if isinstance(item, bool):
+                return None, f"Некорректное значение полосы {index + 1}"
+            try:
+                value = float(item)
+            except (TypeError, ValueError, OverflowError):
+                return None, f"Некорректное значение полосы {index + 1}"
+            if not math.isfinite(value):
+                return None, f"Некорректное значение полосы {index + 1}"
+            values.append(round(max(EQ_MIN, min(EQ_MAX, value)), 1))
+        return values, ""
+
+    def _eq_values(self):
+        """Текущие полосы в безопасном виде: 10 чисел в диапазоне -12…+9 дБ."""
+        values, _error = self._parse_eq(self.params.get("eq"))
+        return values if values is not None else list(EQ_DEFAULT)
+
+    @_serialized_hardware
+    def set_eq(self, bands, save: bool = True) -> Dict[str, Any]:
+        """Задаёт 10-полосный эквалайзер (дБ) и применяет его к железу."""
+        values, error = self._parse_eq(bands)
+        if error:
+            return {"ok": False, "error": error}
+        old_profile = self.active_profile
+        old_params = copy.deepcopy(self.params)
+        self.params["eq"] = values
+        self.active_profile = "custom"
+        res = self._apply_custom_state(save=save)
+        if not res.get("ok"):
+            self.active_profile, self.params = old_profile, old_params
+        return res
+
     def is_supported(self) -> bool:
         """Check if Silergy SY6045S dual amp hardware is present."""
         if os.path.exists(WOOFER_SYS) and os.path.exists(TWEETER_SYS):
@@ -667,6 +738,7 @@ class MaxDSP:
         old_profile = self.active_profile
         old_filters = copy.deepcopy(self.filters)
         old_params = copy.deepcopy(self.params)
+        self.params["eq"] = list(EQ_DEFAULT)
         cmds: List[Tuple[str, str, str]] = []
         cmds.extend(self._build_mute_cmds())
 
@@ -785,6 +857,13 @@ class MaxDSP:
             self.params["treble_gain"] = 2.5
             self.params["subsonic_freq"] = 40
 
+        # Любой пресет сбрасывает пользовательский эквалайзер: свободные слоты — bypass.
+        for band in EQ_BANDS:
+            if band["channel"] == "woofer":
+                cmds.append((WOOFER_SYS, ADDR_WOOFER, f"{band['reg']} {BYPASS_HEX}"))
+            else:
+                cmds.append((TWEETER_SYS, ADDR_TWEETER, f"{band['reg']} {BYPASS_HEX}"))
+
         # 6. Hardware DRC Compressor (Register 0x60: 00 00 08 00 = Bypass, 00 00 08 01 = Stock protection)
         drc_val = "00 00 08 00" if self.filters.get("drc_bypass") else "00 00 08 01"
         cmds.append((WOOFER_SYS, ADDR_WOOFER, f"60 {drc_val}"))
@@ -865,6 +944,12 @@ class MaxDSP:
                 return {"ok": False, "error": "Некорректное значение subsonic_freq"}
             updates["subsonic_freq"] = int(max(30, min(80, val)))
 
+        if "eq" in params:
+            values, error = self._parse_eq(params["eq"])
+            if error:
+                return {"ok": False, "error": error}
+            updates["eq"] = values
+
         if not updates:
             return {"ok": False, "error": "Не заданы параметры DSP"}
 
@@ -911,6 +996,14 @@ class MaxDSP:
         else:
             bass_biquad = BYPASS_HEX
         cmds.append((WOOFER_SYS, ADDR_WOOFER, f"3D {bass_biquad}"))
+
+        # 3b. 10-полосный эквалайзер в свободных слотах усилителей.
+        for band, gain in zip(EQ_BANDS, self._eq_values()):
+            payload = BYPASS_HEX if abs(gain) < 0.1 else calc_notch(band["freq"], band["q"], gain)
+            if band["channel"] == "woofer":
+                cmds.append((WOOFER_SYS, ADDR_WOOFER, f"{band['reg']} {payload}"))
+            else:
+                cmds.append((TWEETER_SYS, ADDR_TWEETER, f"{band['reg']} {payload}"))
 
         # 4. Tweeter Phase APF-2
         if self.filters.get("phase"):
@@ -1045,6 +1138,13 @@ class MaxDSP:
                 (A + 1.0) - (A - 1.0) * cos_w0 - beta
             ))
 
+        # 10-полосный эквалайзер: те же биквады, что уходят в свободные слоты.
+        for band, gain in zip(EQ_BANDS, self._eq_values()):
+            if abs(gain) < 0.1:
+                continue
+            stage = peaking_stage(band["freq"], band["q"], gain)
+            (w_filters if band["channel"] == "woofer" else t_filters).append(stage)
+
         for f in freqs:
             # Woofer acoustic passband (acoustic roll-off below 40Hz and above 350Hz)
             w_base = 0.0
@@ -1062,11 +1162,16 @@ class MaxDSP:
             t_tot = round(max(-40.0, min(12.0, t_base + t_dsp)), 1)
             tweeter_db.append(t_tot)
 
-            # Combined system curve
-            sys_db = w_dsp if f < 300.0 else (t_dsp if f > 3000.0 else (w_dsp + t_dsp) / 2.0)
-            if self.filters.get("phase", True) and 200.0 <= f <= 350.0:
-                sys_db += 2.5  # Phase alignment restoration in crossover region
-            system_db.append(round(max(-35.0, min(10.0, sys_db)), 1))
+            # Combined system curve: вуфер ведёт низы, твитер — середину и верх;
+            # между 150 и 350 Гц плавный переход, как у реального кроссовера.
+            if f <= 150.0:
+                sys_db = w_dsp
+            elif f >= 350.0:
+                sys_db = t_dsp
+            else:
+                mix = math.log10(f / 150.0) / math.log10(350.0 / 150.0)
+                sys_db = w_dsp * (1.0 - mix) + t_dsp * mix
+            system_db.append(round(max(-35.0, min(12.0, sys_db)), 1))
 
         return {
             "freqs": freqs,
@@ -1086,6 +1191,8 @@ class MaxDSP:
             "profiles": self.PROFILES,
             "filters": self.filters,
             "params": self.params,
+            "eq": self._eq_values(),
+            "eq_bands": EQ_BANDS,
             "response": self.calculate_response() if supported else None,
         }
 
@@ -1110,6 +1217,8 @@ class MaxDSP:
 
         if act == "set_filter":
             res = self.set_filter(d.get("filter"), d.get("enabled", True))
+        elif act == "set_eq":
+            res = self.set_eq(d.get("bands", d.get("eq")))
         elif act == "set_params":
             res = self.set_params(d.get("params", d))
         elif act == "profile":
@@ -1118,6 +1227,8 @@ class MaxDSP:
             res = self.apply_profile(d["profile"])
         elif act is None and "filter" in d:
             res = self.set_filter(d.get("filter"), d.get("enabled", True))
+        elif act is None and "eq" in d:
+            res = self.set_eq(d.get("eq"))
         elif act is None and "params" in d:
             res = self.set_params(d.get("params"))
         else:

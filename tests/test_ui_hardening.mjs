@@ -120,6 +120,8 @@ assert(html.includes('id="toast" role="status" aria-live="polite"'), 'toast must
 assert(html.includes('id="alarm-bar" role="alert"'), 'alarm bar must be announced');
 assert(html.includes('id="al-sound-play" title="Послушать" aria-label="Послушать выбранный звук"'), 'sound play button needs aria-label');
 assert(html.includes('id="al-sound-up" title="Загрузить свой" aria-label="Загрузить свой звук"'), 'sound upload button needs aria-label');
+assert(html.includes('id="dsp-eq-dialog"') && html.includes('id="dsp-open-eq"'), 'full frequency-response dialog must exist');
+assert(app.includes("action: 'set_eq'"), 'EQ dialog must save bands through /api/dsp');
 assert(html.includes('id="party-bulb-cancel-x" title="Закрыть" aria-label="Закрыть редактор лампы"'), 'bulb editor close needs aria-label');
 assert(html.includes('id="party-scan-close-btn" title="Закрыть" aria-label="Закрыть поиск ламп"'), 'scan close needs aria-label');
 assert(html.includes('id="party-import-close-btn" title="Закрыть" aria-label="Закрыть импорт ламп"'), 'import close needs aria-label');

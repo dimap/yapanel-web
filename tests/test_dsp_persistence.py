@@ -58,6 +58,22 @@ def test_restore_does_not_mark_success_when_write_fails(dsp, monkeypatch):
     assert dsp._restore_attempts == 1
 
 
+def test_restore_does_not_reload_stale_settings(dsp, monkeypatch):
+    """maybe_restore не должен затирать только что выбранный эквалайзер файлом."""
+    dsp.is_supported = lambda: True
+    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 0.0]
+    dsp.active_profile = "custom"
+    dsp.params["eq"] = values
+    dsp.panel.settings = {"dsp": {"profile": "hifi", "params": {"eq": [0.0] * 10}}}
+    monkeypatch.setattr(dsp, "_write_i2c_batch", lambda commands: True)
+
+    result = dsp.restore_hardware_state()
+
+    assert result["ok"] is True
+    assert dsp.active_profile == "custom"
+    assert dsp.params["eq"] == values
+
+
 def test_maybe_restore_retries_with_backoff(dsp, monkeypatch):
     dsp._restored = False
     dsp._restore_attempts = 0

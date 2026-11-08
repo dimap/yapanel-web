@@ -1590,6 +1590,13 @@ function renderBtOut() {
 }
 // ---- Аппаратный DSP Станции Макс (Silergy SY6045S) ----
 let dspState = null;
+let dspEqOpen = false;
+let dspEqValues = null;
+let dspEqSaved = null;
+let dspEqRev = 0;
+let dspEqTimer = 0;
+let dspEqBusy = false;
+let dspEqDragging = null;
 async function loadDSP() {
   if (document.hidden || $('#tab-overview').hidden) return;
   try {
@@ -1652,6 +1659,7 @@ function renderDSP() {
   if (dspState.response && dspState.response.freqs) {
     renderDSPCurve(dspState.response);
   }
+  if (dspEqOpen) renderDSPEq();
 }
 
 let dspCurveCurrent = null;
@@ -1799,6 +1807,345 @@ function initDSPInspector(freqs, toX, toY) {
   svg.addEventListener('touchend', handleLeave);
 }
 
+// ---- Полная настройка АЧХ: 10 аппаратных полос ----
+const DSP_EQ_TOP = 16, DSP_EQ_BOTTOM = 268, DSP_EQ_LEFT = 56, DSP_EQ_RIGHT = 784;
+const DSP_EQ_DB_TOP = 12, DSP_EQ_DB_BOTTOM = -18;
+const dspEqX = f => DSP_EQ_LEFT + (Math.log10(Math.max(f, 20) / 20) / 3) * (DSP_EQ_RIGHT - DSP_EQ_LEFT);
+const dspEqY = db => {
+  const clamped = Math.max(DSP_EQ_DB_BOTTOM, Math.min(DSP_EQ_DB_TOP, db));
+  return DSP_EQ_TOP + ((DSP_EQ_DB_TOP - clamped) / (DSP_EQ_DB_TOP - DSP_EQ_DB_BOTTOM)) * (DSP_EQ_BOTTOM - DSP_EQ_TOP);
+};
+
+function dspEqStatus(text) {
+  const el = $('#dsp-eq-status');
+  if (el) el.textContent = text;
+}
+
+function dspPeakingDb(f, f0, q, gain) {
+  if (!gain || Math.abs(gain) < 0.05) return 0;
+  const A = Math.pow(10, gain / 40);
+  const w0 = 2 * Math.PI * f0 / 48000;
+  const alpha = Math.sin(w0) / (2 * q);
+  const c = Math.cos(w0);
+  const b0 = 1 + alpha * A, b1 = -2 * c, b2 = 1 - alpha * A;
+  const a0 = 1 + alpha / A, a1 = -2 * c, a2 = 1 - alpha / A;
+  const w = 2 * Math.PI * f / 48000;
+  const cw = Math.cos(w), sw = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+  const nr = b0 + b1 * cw + b2 * c2, ni = -b1 * sw - b2 * s2;
+  const dr = a0 + a1 * cw + a2 * c2, di = -a1 * sw - a2 * s2;
+  const mag = Math.sqrt((nr * nr + ni * ni) / Math.max(dr * dr + di * di, 1e-18));
+  return 20 * Math.log10(Math.max(mag, 1e-6));
+}
+
+function dspEqCurveDelta(freqs, before, after) {
+  const bands = dspState?.eq_bands || [];
+  return freqs.map(f => {
+    let delta = 0;
+    for (let i = 0; i < bands.length; i++) {
+      const band = bands[i];
+      const q = Number(band.q) || 1.41;
+      delta += dspPeakingDb(f, band.freq, q, Number(after[i]) || 0)
+        - dspPeakingDb(f, band.freq, q, Number(before[i]) || 0);
+    }
+    return delta;
+  });
+}
+
+function dspEqInterp(freqs, values, f) {
+  if (!freqs?.length || !values?.length) return 0;
+  if (f <= freqs[0]) return values[0];
+  if (f >= freqs[freqs.length - 1]) return values[values.length - 1];
+  const pos = Math.log10(f / freqs[0]) / Math.log10(freqs[freqs.length - 1] / freqs[0]) * (freqs.length - 1);
+  const i = Math.floor(pos), t = pos - i;
+  return (values[i] || 0) * (1 - t) + (values[Math.min(i + 1, values.length - 1)] || 0) * t;
+}
+
+function dspEqTotalAt(f, values) {
+  const resp = dspState?.response;
+  const bands = dspState?.eq_bands || [];
+  if (!resp?.freqs || !resp.system_db || !bands.length) return 0;
+  const current = values || dspEqValuesNow();
+  const saved = dspEqSaved || [];
+  let total = dspEqInterp(resp.freqs, resp.system_db, f);
+  for (let i = 0; i < bands.length; i++) {
+    const band = bands[i];
+    const q = Number(band.q) || 1.41;
+    total += dspPeakingDb(f, band.freq, q, Number(current[i]) || 0)
+      - dspPeakingDb(f, band.freq, q, Number(saved[i]) || 0);
+  }
+  return total;
+}
+
+function dspEqDrawGrid() {
+  const grid = $('#dsp-eq-grid');
+  if (!grid || grid.dataset.ready) return;
+  grid.dataset.ready = '1';
+  const parts = [];
+  for (const db of [12, 6, 0, -6, -12, -18]) {
+    const y = dspEqY(db).toFixed(1);
+    parts.push(`<line x1="${DSP_EQ_LEFT}" y1="${y}" x2="${DSP_EQ_RIGHT}" y2="${y}" stroke="var(--line)" stroke-width="1" ${db === 0 ? '' : 'stroke-dasharray="3 3"'} opacity="${db === 0 ? '.9' : '.5'}"/>`);
+    parts.push(`<text x="${DSP_EQ_LEFT - 8}" y="${(Number(y) + 4).toFixed(1)}" text-anchor="end" fill="var(--muted)" font-size="11" font-family="monospace">${db > 0 ? '+' : ''}${db} dB</text>`);
+  }
+  for (const f of [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]) {
+    const x = dspEqX(f).toFixed(1);
+    parts.push(`<line x1="${x}" y1="${DSP_EQ_TOP}" x2="${x}" y2="${DSP_EQ_BOTTOM}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3" opacity=".4"/>`);
+    parts.push(`<text x="${x}" y="${DSP_EQ_BOTTOM + 18}" text-anchor="middle" fill="var(--muted)" font-size="11" font-family="monospace">${f >= 1000 ? (f / 1000) + 'k' : f}</text>`);
+  }
+  grid.innerHTML = parts.join('');
+}
+
+function dspEqDrawCurve(freqs, saved, preview) {
+  const line = arr => arr.map((db, i) => `${i ? 'L' : 'M'} ${dspEqX(freqs[i]).toFixed(1)} ${dspEqY(db).toFixed(1)}`).join(' ');
+  const pSaved = $('#dsp-eq-saved');
+  const pLine = $('#dsp-eq-line');
+  const pArea = $('#dsp-eq-area');
+  if (pSaved) pSaved.setAttribute('d', line(saved));
+  if (pLine) pLine.setAttribute('d', line(preview));
+  if (pArea) {
+    const bottom = DSP_EQ_BOTTOM.toFixed(1);
+    pArea.setAttribute('d', `${line(preview)} L ${dspEqX(freqs[freqs.length - 1]).toFixed(1)} ${bottom} L ${dspEqX(freqs[0]).toFixed(1)} ${bottom} Z`);
+  }
+}
+
+function dspEqDrawPoints(bands, values) {
+  const group = $('#dsp-eq-points');
+  if (!group) return;
+  if (group.dataset.bands !== String(bands.length)) {
+    group.dataset.bands = String(bands.length);
+    group.innerHTML = bands.map((band, i) => `<circle data-eq-point="${i}" r="7" fill="var(--accent)" stroke="#fff" stroke-width="2" style="cursor:ns-resize" tabindex="0" role="slider" aria-label="${esc(band.label)}" aria-valuemin="${band.min ?? -12}" aria-valuemax="${band.max ?? 9}" aria-valuenow="0"><title>${esc(band.label)}</title></circle>`).join('');
+  }
+  $$('#dsp-eq-points circle').forEach((circle, i) => {
+    const gain = Number(values[i] || 0);
+    circle.setAttribute('cx', dspEqX(bands[i].freq).toFixed(1));
+    circle.setAttribute('cy', dspEqY(dspEqTotalAt(bands[i].freq, values)).toFixed(1));
+    circle.setAttribute('aria-valuenow', String(gain));
+    circle.dataset.gain = String(gain);
+  });
+}
+
+function dspEqValuesNow() {
+  const count = (dspState?.eq_bands || []).length || 10;
+  if (!dspEqValues) dspEqValues = Array(count).fill(0);
+  while (dspEqValues.length < count) dspEqValues.push(0);
+  return dspEqValues;
+}
+
+function renderDSPEqCurveOnly() {
+  const resp = dspState?.response;
+  if (!resp?.freqs || !resp.system_db || !dspEqSaved) return;
+  const values = dspEqValuesNow();
+  const delta = dspEqCurveDelta(resp.freqs, dspEqSaved, values);
+  const preview = resp.system_db.map((v, i) => Math.max(DSP_EQ_DB_BOTTOM, Math.min(DSP_EQ_DB_TOP, v + delta[i])));
+  const saved = resp.system_db.map(v => Math.max(DSP_EQ_DB_BOTTOM, Math.min(DSP_EQ_DB_TOP, v)));
+  dspEqDrawCurve(resp.freqs, saved, preview);
+}
+
+function renderDSPEq() {
+  if (!dspState?.supported) return;
+  const bands = dspState.eq_bands || [];
+  if (!bands.length) return;
+  dspEqDrawGrid();
+  const values = dspEqValuesNow();
+  if (!dspEqSaved) dspEqSaved = values.slice();
+
+  const wrap = $('#dsp-eq-bands');
+  if (wrap && wrap.dataset.bands !== String(bands.length)) {
+    wrap.dataset.bands = String(bands.length);
+    const row = (band, i) => `
+      <label class="dsp-eq-band">
+        <span>${esc(band.label)}</span>
+        <input type="range" min="${band.min ?? -12}" max="${band.max ?? 9}" step="0.5" value="0" data-eq-band="${i}" aria-label="${esc(band.label)}">
+        <b id="dsp-eq-val-${i}">0.0 дБ</b>
+      </label>`;
+    const half = Math.ceil(bands.length / 2);
+    wrap.innerHTML = `<div class="dsp-eq-col">${bands.slice(0, half).map(row).join('')}</div>`
+      + `<div class="dsp-eq-col">${bands.slice(half).map((band, i) => row(band, i + half)).join('')}</div>`;
+    $$('#dsp-eq-bands input').forEach(input => {
+      input.addEventListener('input', () => dspEqSetValue(Number(input.dataset.eqBand), Number(input.value), true));
+      input.addEventListener('change', () => dspEqSchedule());
+    });
+  }
+  $$('#dsp-eq-bands input').forEach((input, i) => {
+    input.value = values[i] ?? 0;
+    const val = $('#dsp-eq-val-' + i);
+    if (val) val.textContent = (values[i] > 0 ? '+' : '') + Number(values[i] || 0).toFixed(1) + ' дБ';
+  });
+  dspEqDrawPoints(bands, values);
+  renderDSPEqCurveOnly();
+}
+
+function dspEqSetValue(index, raw, fromSlider = false) {
+  const bands = dspState?.eq_bands || [];
+  const band = bands[index];
+  if (!band) return;
+  const values = dspEqValuesNow();
+  const min = Number(band.min ?? -12), max = Number(band.max ?? 9);
+  const value = Math.max(min, Math.min(max, Math.round(Number(raw) * 2) / 2));
+  values[index] = value;
+  const input = document.querySelector(`#dsp-eq-bands input[data-eq-band="${index}"]`);
+  if (input && !fromSlider) input.value = value;
+  const val = $('#dsp-eq-val-' + index);
+  if (val) val.textContent = (value > 0 ? '+' : '') + value.toFixed(1) + ' дБ';
+  dspEqDrawPoints(bands, values);
+  renderDSPEqCurveOnly();
+  dspEqSchedule();
+}
+
+function dspEqSetTotal(index, desiredDb) {
+  const band = (dspState?.eq_bands || [])[index];
+  if (!band) return;
+  const values = dspEqValuesNow();
+  const currentTotal = dspEqTotalAt(band.freq, values);
+  dspEqSetValue(index, Number(values[index] || 0) + (desiredDb - currentTotal));
+}
+
+function dspEqSchedule() {
+  dspEqRev++;
+  dspEqStatus('Есть изменения');
+  clearTimeout(dspEqTimer);
+  dspEqTimer = setTimeout(dspEqCommit, 250);
+}
+
+async function dspEqCommit() {
+  if (dspEqBusy || !dspEqValues) return;
+  const rev = dspEqRev;
+  const values = dspEqValues.slice();
+  dspEqBusy = true;
+  dspEqStatus('Применяю…');
+  try {
+    const res = await api('/api/dsp', { action: 'set_eq', bands: values });
+    if (res && res.ok === false) throw new Error(res.error || 'Не удалось применить эквалайзер');
+    dspEqSaved = values.slice();
+    if (res && res.supported !== undefined) dspState = res;
+    else if (dspState) { dspState.eq = values.slice(); dspState.active_profile = 'custom'; }
+    if (rev === dspEqRev) {
+      dspEqStatus('Сохранено');
+      renderDSP();
+      renderDSPEq();
+    }
+  } catch (e) {
+    dspEqStatus('Ошибка: ' + e.message);
+    toast(e.message, true);
+  } finally {
+    dspEqBusy = false;
+    if (rev !== dspEqRev) dspEqCommit();
+  }
+}
+
+function dspEqPointerFreq(e) {
+  const svg = $('#dsp-eq-svg');
+  const rect = svg.getBoundingClientRect();
+  const x = ((e.clientX - rect.left) / rect.width) * 800;
+  const ratio = Math.max(0, Math.min(1, (x - DSP_EQ_LEFT) / (DSP_EQ_RIGHT - DSP_EQ_LEFT)));
+  return 20 * Math.pow(1000, ratio);
+}
+
+function dspEqPointerGain(e) {
+  const svg = $('#dsp-eq-svg');
+  const rect = svg.getBoundingClientRect();
+  const y = ((e.clientY - rect.top) / rect.height) * 300;
+  const db = DSP_EQ_DB_TOP - ((y - DSP_EQ_TOP) / (DSP_EQ_BOTTOM - DSP_EQ_TOP)) * (DSP_EQ_DB_TOP - DSP_EQ_DB_BOTTOM);
+  return db;
+}
+
+function dspEqNearestBand(x) {
+  const bands = dspState?.eq_bands || [];
+  let best = 0, distance = Infinity;
+  bands.forEach((band, i) => {
+    const d = Math.abs(dspEqX(band.freq) - x);
+    if (d < distance) { distance = d; best = i; }
+  });
+  return best;
+}
+
+function dspEqBindGraph() {
+  const svg = $('#dsp-eq-svg');
+  if (!svg || svg.dataset.bound) return;
+  svg.dataset.bound = '1';
+  const cursor = $('#dsp-eq-cursor');
+  const readout = $('#dsp-eq-readout');
+
+  const moveCursor = (freq, label) => {
+    if (!cursor) return;
+    const x = dspEqX(freq).toFixed(1);
+    cursor.setAttribute('x1', x);
+    cursor.setAttribute('x2', x);
+    cursor.style.display = 'block';
+    if (readout) readout.textContent = label;
+  };
+
+  svg.addEventListener('pointerdown', e => {
+    if (!dspEqOpen) return;
+    const rect = svg.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 800;
+    const point = e.target.closest?.('[data-eq-point]');
+    dspEqDragging = point ? Number(point.dataset.eqPoint) : dspEqNearestBand(x);
+    svg.setPointerCapture?.(e.pointerId);
+    dspEqSetTotal(dspEqDragging, dspEqPointerGain(e));
+    e.preventDefault();
+  });
+
+  svg.addEventListener('pointermove', e => {
+    if (!dspEqOpen) return;
+    const index = dspEqDragging ?? dspEqNearestBand(dspEqX(dspEqPointerFreq(e)));
+    const band = (dspState?.eq_bands || [])[index];
+    if (!band) return;
+    if (dspEqDragging !== null) dspEqSetTotal(index, dspEqPointerGain(e));
+    const gain = Number(dspEqValuesNow()[index] || 0);
+    const total = dspEqTotalAt(band.freq);
+    moveCursor(band.freq, `${band.label}: ${gain > 0 ? '+' : ''}${gain.toFixed(1)} дБ · АЧХ ${total > 0 ? '+' : ''}${total.toFixed(1)} дБ`);
+    if (dspEqDragging !== null) e.preventDefault();
+  });
+
+  const endDrag = e => {
+    if (dspEqDragging === null) return;
+    dspEqDragging = null;
+    svg.releasePointerCapture?.(e.pointerId);
+    dspEqSchedule();
+  };
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
+  svg.addEventListener('pointerleave', () => {
+    if (dspEqDragging !== null) return;
+    if (cursor) cursor.style.display = 'none';
+    if (readout) readout.textContent = '20 Гц – 20 кГц';
+  });
+  svg.addEventListener('keydown', e => {
+    const point = e.target.closest?.('[data-eq-point]');
+    if (!point) return;
+    const index = Number(point.dataset.eqPoint);
+    const step = e.shiftKey ? 1 : 0.5;
+    const current = Number(dspEqValuesNow()[index] || 0);
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { dspEqSetValue(index, current + step); e.preventDefault(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { dspEqSetValue(index, current - step); e.preventDefault(); }
+  });
+}
+
+function openDSPEq() {
+  if (!dspState?.supported) { toast('Аппаратный DSP доступен только на Станции Макс', true); return; }
+  const dialog = $('#dsp-eq-dialog');
+  if (!dialog || dialog.open) return;
+  const count = (dspState.eq_bands || []).length || 10;
+  dspEqValues = (dspState.eq || []).slice(0, count);
+  while (dspEqValues.length < count) dspEqValues.push(0);
+  dspEqSaved = dspEqValues.slice();
+  dspEqRev = 0;
+  dspEqBusy = false;
+  dspEqDragging = null;
+  dspEqDrawGrid();
+  dialog.showModal();
+  dspEqOpen = true;
+  dspEqStatus('Сохранено');
+  renderDSPEq();
+}
+
+function closeDSPEq() {
+  const dialog = $('#dsp-eq-dialog');
+  if (dialog?.open) dialog.close();
+  dspEqOpen = false;
+  dspEqDragging = null;
+}
+
 // Привязка кликов по кнопкам пресетов
 document.addEventListener('DOMContentLoaded', () => {
   $$('#dsp-profiles .pill').forEach(btn => {
@@ -1882,6 +2229,36 @@ document.addEventListener('DOMContentLoaded', () => {
       };
     }
   });
+
+  // Большое окно настройки АЧХ
+  dspEqDrawGrid();
+  dspEqBindGraph();
+  const eqOpen = $('#dsp-open-eq');
+  if (eqOpen) eqOpen.onclick = openDSPEq;
+  const eqGraph = $('#dsp-graph-open');
+  if (eqGraph) {
+    eqGraph.onclick = openDSPEq;
+    eqGraph.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDSPEq(); }
+    });
+  }
+  const eqDialog = $('#dsp-eq-dialog');
+  if (eqDialog) {
+    const eqClose = $('#dsp-eq-close');
+    const eqDone = $('#dsp-eq-done');
+    if (eqClose) eqClose.onclick = closeDSPEq;
+    if (eqDone) eqDone.onclick = closeDSPEq;
+    eqDialog.addEventListener('close', () => { dspEqOpen = false; dspEqDragging = null; });
+    eqDialog.addEventListener('click', e => { if (e.target === eqDialog) closeDSPEq(); });
+  }
+  const eqFlat = $('#dsp-eq-flat');
+  if (eqFlat) eqFlat.onclick = () => {
+    if (!dspEqValues) return;
+    dspEqValues = dspEqValues.map(() => 0);
+    dspEqStatus('Есть изменения');
+    renderDSPEq();
+    dspEqSchedule();
+  };
 });
 
 

@@ -267,6 +267,34 @@
   .mode-card.active { background: var(--accent-soft); border-color: var(--accent); font-weight: 700; }
   .mode-card.active b { color: var(--accent-ink); }
   .dsp-graph-wrap { position: relative; width: 100%; height: 130px; background: var(--field, #151515); border-radius: 14px; padding: 10px; box-sizing: border-box; }
+  .dsp-graph-wrap[role="button"] { cursor: pointer; }
+  /* Полное окно настройки АЧХ */
+  .dsp-dialog { width: min(1040px, calc(100vw - 28px)); max-width: 1040px; max-height: calc(100dvh - 28px); padding: 0; border: 1px solid var(--line); border-radius: 20px; background: var(--card); color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.38); overflow: hidden; }
+  .dsp-dialog[open] { display: flex; flex-direction: column; }
+  .dsp-dialog::backdrop { background: rgba(8,8,12,.62); }
+  .dsp-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px 10px; }
+  .dsp-dialog-head h2 { margin: 0 0 4px; font-size: 20px; }
+  .dsp-dialog-head .hint { max-width: 760px; }
+  .dsp-eq-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 20px 8px; }
+  .dsp-eq-graph-wrap { position: relative; background: var(--field); border-radius: 14px; padding: 8px 8px 0; }
+  #dsp-eq-svg { width: 100%; height: auto; aspect-ratio: 800 / 300; display: block; touch-action: none; cursor: crosshair; }
+  .dsp-eq-readout { padding: 4px 6px 8px; font: 12px var(--mono); color: var(--muted); pointer-events: none; }
+  .dsp-eq-bands { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 24px; padding: 12px 4px 4px; }
+  .dsp-eq-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .dsp-eq-band { display: grid; grid-template-columns: 62px minmax(80px, 1fr) 66px; align-items: center; gap: 10px; min-height: 34px; font-size: 13px; font-weight: 600; }
+  .dsp-eq-band input { width: 100%; accent-color: var(--accent); }
+  .dsp-eq-band b { text-align: right; font: 12px var(--mono); color: var(--accent-ink); }
+  .dsp-eq-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+  .dsp-eq-foot .row { gap: 8px; }
+  @media (max-width: 760px) {
+    .dsp-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border: 0; border-radius: 0; }
+    .dsp-dialog-head { padding: 14px 14px 8px; }
+    .dsp-eq-scroll { padding: 0 14px 6px; }
+    .dsp-eq-bands { grid-template-columns: 1fr; gap: 0 16px; padding: 8px 0 2px; }
+    .dsp-eq-band { grid-template-columns: 58px minmax(80px, 1fr) 62px; }
+    .dsp-eq-foot { padding: 10px 14px 14px; }
+    .dsp-eq-foot .row:last-child { width: 100%; justify-content: space-between; }
+  }
 
   .chip { min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--field); font-size: 13px; font-weight: 600; color: var(--text-2); }
   .chip:hover { border-color: var(--accent); color: var(--accent-ink); }
@@ -1415,6 +1443,7 @@
           <div class="card-head">
             <h2>Звук и Hi-Fi</h2>
             <div class="row" style="gap:8px">
+              <button class="btn sm" id="dsp-open-eq" type="button" title="Открыть большую настройку АЧХ">Настроить АЧХ</button>
               <span class="badge ok" id="dsp-badge">Студия</span>
             </div>
           </div>
@@ -1430,7 +1459,7 @@
           </div>
 
           <!-- Интерактивная кривая АЧХ (SVG) -->
-          <div class="dsp-graph-wrap" style="position:relative; width:100%; height:135px; background:var(--field, #151515); border-radius:14px; padding:10px 10px 24px; box-sizing:border-box;">
+          <div class="dsp-graph-wrap" id="dsp-graph-open" role="button" tabindex="0" title="Открыть полную настройку АЧХ" style="position:relative; width:100%; height:135px; background:var(--field, #151515); border-radius:14px; padding:10px 10px 24px; box-sizing:border-box;">
             <svg id="dsp-svg" viewBox="0 0 400 110" style="width:100%; height:100%; display:block; overflow:visible; cursor:crosshair;" preserveAspectRatio="none">
               <defs>
                 <linearGradient id="dsp-grad-system" x1="0" y1="0" x2="0" y2="1">
@@ -1486,6 +1515,8 @@
               </div>
             </div>
           </div>
+
+          <p class="hint" style="margin-top:-6px">Нажмите на график или «Настроить АЧХ», чтобы открыть большое окно с 10-полосным эквалайзером.</p>
 
           <!-- Интерактивный регулятор мощности баса -->
           <div class="dsp-slider-row" title="Добавить или убрать низы. 0 дБ — как в выбранном пресете" style="display:flex; align-items:center; gap:12px; padding:10px 14px; background:var(--field, #151515); border-radius:12px; margin-top:6px;">
@@ -3062,6 +3093,44 @@
     <a class="cbtn" href="#player" aria-label="Открыть плеер"><svg width="18" height="18" aria-hidden="true"><use href="#i-expand"/></svg></a>
   </div>
 </div>
+<dialog class="dsp-dialog" id="dsp-eq-dialog" aria-labelledby="dsp-eq-title">
+  <div class="dsp-dialog-head">
+    <div>
+      <h2 id="dsp-eq-title">Настройка АЧХ</h2>
+      <p class="hint">10 аппаратных полос усилителей SY6045S. Тяните точки на графике или ползунки: на графике — итоговая АЧХ с фильтрами, внизу — усиление самой полосы.</p>
+    </div>
+    <button class="btn sm icon" id="dsp-eq-close" type="button" aria-label="Закрыть настройку АЧХ">✕</button>
+  </div>
+  <div class="dsp-eq-scroll">
+    <div class="dsp-eq-graph-wrap">
+      <svg id="dsp-eq-svg" viewBox="0 0 800 300" role="group" aria-label="График АЧХ с точками полос">
+        <defs>
+          <linearGradient id="dsp-eq-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.20"/>
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <g id="dsp-eq-grid"></g>
+        <path id="dsp-eq-area" d="" fill="url(#dsp-eq-grad)"/>
+        <path id="dsp-eq-saved" d="" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="4 4" opacity=".45"/>
+        <path id="dsp-eq-line" d="" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <g id="dsp-eq-points"></g>
+        <line id="dsp-eq-cursor" x1="0" y1="0" x2="0" y2="300" stroke="rgba(255,255,255,.35)" stroke-dasharray="2 3" style="display:none; pointer-events:none"/>
+      </svg>
+      <div class="dsp-eq-readout" id="dsp-eq-readout" aria-live="polite">20 Гц – 20 кГц</div>
+    </div>
+    <div class="dsp-eq-bands" id="dsp-eq-bands" aria-label="Полосы эквалайзера"></div>
+  </div>
+  <div class="dsp-eq-foot">
+    <div class="row">
+      <button class="btn sm" id="dsp-eq-flat" type="button">Сбросить полосы</button>
+    </div>
+    <div class="row">
+      <span class="meta" id="dsp-eq-status" role="status" aria-live="polite">—</span>
+      <button class="btn sm primary" id="dsp-eq-done" type="button">Готово</button>
+    </div>
+  </div>
+</dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 <div class="msheet-bg" id="msheet-bg"></div>
 <div class="alice-wait" id="alice-wait" role="status" aria-live="polite" hidden>

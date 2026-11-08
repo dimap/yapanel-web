@@ -1,10 +1,10 @@
 // One shell/cache per explicit device base. API responses are never cached.
 const BASE=new URL('./',self.location.href);
-const NAMESPACE='panel-v8:'+BASE.pathname+':';
+const NAMESPACE='panel-v9:'+BASE.pathname+':';
 const CACHE=NAMESPACE+'shell';
 // Кэши прошлых версий для этой же панели: имя оканчивается на «:<base>:shell» при любом panel-vN.
 const CACHE_SUFFIX=':'+BASE.pathname+':shell';
-const SHELL=[BASE.href,new URL('static/app.js?v=0.3.6-eq',BASE).href,new URL('static/icons/icon-192.png',BASE).href];
+const SHELL=[BASE.href,new URL('static/app.js?v=0.3.6-eq2',BASE).href,new URL('static/icons/icon-192.png',BASE).href];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).catch(()=>{}));
   self.skipWaiting();

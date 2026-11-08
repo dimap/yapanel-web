@@ -1837,43 +1837,27 @@ function dspPeakingDb(f, f0, q, gain) {
   return 20 * Math.log10(Math.max(mag, 1e-6));
 }
 
-function dspEqCurveDelta(freqs, before, after) {
+function dspEqSumAt(f, values) {
   const bands = dspState?.eq_bands || [];
-  return freqs.map(f => {
-    let delta = 0;
-    for (let i = 0; i < bands.length; i++) {
-      const band = bands[i];
-      const q = Number(band.q) || 1.41;
-      delta += dspPeakingDb(f, band.freq, q, Number(after[i]) || 0)
-        - dspPeakingDb(f, band.freq, q, Number(before[i]) || 0);
-    }
-    return delta;
-  });
-}
-
-function dspEqInterp(freqs, values, f) {
-  if (!freqs?.length || !values?.length) return 0;
-  if (f <= freqs[0]) return values[0];
-  if (f >= freqs[freqs.length - 1]) return values[values.length - 1];
-  const pos = Math.log10(f / freqs[0]) / Math.log10(freqs[freqs.length - 1] / freqs[0]) * (freqs.length - 1);
-  const i = Math.floor(pos), t = pos - i;
-  return (values[i] || 0) * (1 - t) + (values[Math.min(i + 1, values.length - 1)] || 0) * t;
-}
-
-function dspEqTotalAt(f, values) {
-  const resp = dspState?.response;
-  const bands = dspState?.eq_bands || [];
-  if (!resp?.freqs || !resp.system_db || !bands.length) return 0;
   const current = values || dspEqValuesNow();
-  const saved = dspEqSaved || [];
-  let total = dspEqInterp(resp.freqs, resp.system_db, f);
+  let sum = 0;
   for (let i = 0; i < bands.length; i++) {
     const band = bands[i];
-    const q = Number(band.q) || 1.41;
-    total += dspPeakingDb(f, band.freq, q, Number(current[i]) || 0)
-      - dspPeakingDb(f, band.freq, q, Number(saved[i]) || 0);
+    sum += dspPeakingDb(f, band.freq, Number(band.q) || 1.41, Number(current[i]) || 0);
   }
-  return total;
+  return sum;
+}
+
+function dspEqResponse(freqs, values) {
+  const bands = dspState?.eq_bands || [];
+  return freqs.map(f => {
+    let sum = 0;
+    for (let i = 0; i < bands.length; i++) {
+      const band = bands[i];
+      sum += dspPeakingDb(f, band.freq, Number(band.q) || 1.41, Number(values[i]) || 0);
+    }
+    return sum;
+  });
 }
 
 function dspEqDrawGrid() {
@@ -1894,16 +1878,16 @@ function dspEqDrawGrid() {
   grid.innerHTML = parts.join('');
 }
 
-function dspEqDrawCurve(freqs, saved, preview) {
+function dspEqDrawCurve(freqs, total, eq) {
   const line = arr => arr.map((db, i) => `${i ? 'L' : 'M'} ${dspEqX(freqs[i]).toFixed(1)} ${dspEqY(db).toFixed(1)}`).join(' ');
   const pSaved = $('#dsp-eq-saved');
   const pLine = $('#dsp-eq-line');
   const pArea = $('#dsp-eq-area');
-  if (pSaved) pSaved.setAttribute('d', line(saved));
-  if (pLine) pLine.setAttribute('d', line(preview));
+  if (pSaved) pSaved.setAttribute('d', line(total));
+  if (pLine) pLine.setAttribute('d', line(eq));
   if (pArea) {
     const bottom = DSP_EQ_BOTTOM.toFixed(1);
-    pArea.setAttribute('d', `${line(preview)} L ${dspEqX(freqs[freqs.length - 1]).toFixed(1)} ${bottom} L ${dspEqX(freqs[0]).toFixed(1)} ${bottom} Z`);
+    pArea.setAttribute('d', `${line(eq)} L ${dspEqX(freqs[freqs.length - 1]).toFixed(1)} ${bottom} L ${dspEqX(freqs[0]).toFixed(1)} ${bottom} Z`);
   }
 }
 
@@ -1917,7 +1901,7 @@ function dspEqDrawPoints(bands, values) {
   $$('#dsp-eq-points circle').forEach((circle, i) => {
     const gain = Number(values[i] || 0);
     circle.setAttribute('cx', dspEqX(bands[i].freq).toFixed(1));
-    circle.setAttribute('cy', dspEqY(dspEqTotalAt(bands[i].freq, values)).toFixed(1));
+    circle.setAttribute('cy', dspEqY(dspEqSumAt(bands[i].freq, values)).toFixed(1));
     circle.setAttribute('aria-valuenow', String(gain));
     circle.dataset.gain = String(gain);
   });
@@ -1934,10 +1918,11 @@ function renderDSPEqCurveOnly() {
   const resp = dspState?.response;
   if (!resp?.freqs || !resp.system_db || !dspEqSaved) return;
   const values = dspEqValuesNow();
-  const delta = dspEqCurveDelta(resp.freqs, dspEqSaved, values);
-  const preview = resp.system_db.map((v, i) => Math.max(DSP_EQ_DB_BOTTOM, Math.min(DSP_EQ_DB_TOP, v + delta[i])));
-  const saved = resp.system_db.map(v => Math.max(DSP_EQ_DB_BOTTOM, Math.min(DSP_EQ_DB_TOP, v)));
-  dspEqDrawCurve(resp.freqs, saved, preview);
+  const eq = dspEqResponse(resp.freqs, values);
+  const savedEq = dspEqResponse(resp.freqs, dspEqSaved);
+  const clamp = v => Math.max(DSP_EQ_DB_BOTTOM, Math.min(DSP_EQ_DB_TOP, v));
+  const total = resp.system_db.map((v, i) => clamp(v + eq[i] - savedEq[i]));
+  dspEqDrawCurve(resp.freqs, total, eq.map(clamp));
 }
 
 function renderDSPEq() {
@@ -1995,8 +1980,8 @@ function dspEqSetTotal(index, desiredDb) {
   const band = (dspState?.eq_bands || [])[index];
   if (!band) return;
   const values = dspEqValuesNow();
-  const currentTotal = dspEqTotalAt(band.freq, values);
-  dspEqSetValue(index, Number(values[index] || 0) + (desiredDb - currentTotal));
+  const currentEq = dspEqSumAt(band.freq, values);
+  dspEqSetValue(index, Number(values[index] || 0) + (desiredDb - currentEq));
 }
 
 function dspEqSchedule() {
@@ -2092,8 +2077,8 @@ function dspEqBindGraph() {
     if (!band) return;
     if (dspEqDragging !== null) dspEqSetTotal(index, dspEqPointerGain(e));
     const gain = Number(dspEqValuesNow()[index] || 0);
-    const total = dspEqTotalAt(band.freq);
-    moveCursor(band.freq, `${band.label}: ${gain > 0 ? '+' : ''}${gain.toFixed(1)} дБ · АЧХ ${total > 0 ? '+' : ''}${total.toFixed(1)} дБ`);
+    const sum = dspEqSumAt(band.freq);
+    moveCursor(band.freq, `${band.label}: полоса ${gain > 0 ? '+' : ''}${gain.toFixed(1)} дБ · EQ ${sum > 0 ? '+' : ''}${sum.toFixed(1)} дБ`);
     if (dspEqDragging !== null) e.preventDefault();
   });
 

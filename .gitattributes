@@ -10,6 +10,8 @@ device/wakeword/frida/*.js text eol=lf
 *.bat text eol=crlf
 *.png binary
 *.stl binary
+# install_to_max.ps1 собирается tools/build_installer.py: не считаем его исходником
+install_to_max.ps1 linguist-generated
 # В архивы GitHub (Download ZIP, исходники релиза, обновление панели из архива) — только то, что нужно для запуска
 /tests export-ignore
 /docs export-ignore

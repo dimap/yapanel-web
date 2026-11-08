@@ -1854,7 +1854,7 @@ document.addEventListener('DOMContentLoaded', () => {
           dspState.active_profile = 'custom';
         }
         renderDSP();
-        toast(`Мощность баса: ${(v > 0 ? '+' : '') + v.toFixed(1)} дБ`);
+        toast(`Бас: ${(v > 0 ? '+' : '') + v.toFixed(1)} дБ`);
       } catch (e) {
         toast(e.message, true);
       }

@@ -1411,22 +1411,22 @@
         </section>
 
         <!-- аппаратный звук и dsp -->
-        <section class="card" id="card-dsp" data-widget="dsp" data-title="Аппаратный DSP (Hi-Fi)" hidden>
+        <section class="card" id="card-dsp" data-widget="dsp" data-title="Звук и Hi-Fi" hidden>
           <div class="card-head">
-            <h2>Аппаратный DSP (Hi-Fi)</h2>
+            <h2>Звук и Hi-Fi</h2>
             <div class="row" style="gap:8px">
-              <span class="badge ok" id="dsp-badge">Hi-Fi Studio</span>
+              <span class="badge ok" id="dsp-badge">Студия</span>
             </div>
           </div>
 
           <!-- Пресеты звучания -->
           <div class="chips" id="dsp-profiles" style="display:flex; flex-wrap:wrap; gap:8px;">
-            <button class="pill active" data-dsp-profile="hifi" type="button" title="Линейная студийная АЧХ: срез вибраций стола, режектор 120 Гц, фазовое выравнивание сабвуфера и воздух ВЧ">🎵 Hi-Fi Studio</button>
-            <button class="pill" data-dsp-profile="stock" type="button" title="Заводской звук: без фильтрации, с корпусным бубнением и вибрацией стола">📦 Заводской сток</button>
-            <button class="pill" data-dsp-profile="night" type="button" title="Ночной режим: глубокий срез НЧ (65 Гц), чтобы вибрация не передавалась соседям">🌙 Ночной</button>
-            <button class="pill" data-dsp-profile="bass" type="button" title="Deep Punch: энергичный плотный бас (65 Гц) с защитой пассивных излучателей">💥 Deep Punch</button>
-            <button class="pill" data-dsp-profile="club" type="button" title="Club Bass: мощный клубный бас (+6.5 дБ @ 60 Гц) со срезом инфразвука на 40 Гц">🔥 Club Bass</button>
-            <button class="pill" data-dsp-profile="custom" type="button" title="Индивидуальная конфигурация: кастомный бас, ВЧ и фильтры">🎛️ Свой (Custom)</button>
+            <button class="pill active" data-dsp-profile="hifi" type="button" title="Ровный студийный звук: без дрожи мебели, гула корпуса и отставания баса">🎵 Студийный звук</button>
+            <button class="pill" data-dsp-profile="stock" type="button" title="Вернуть стандартное звучание — для сравнения">📦 Как с завода</button>
+            <button class="pill" data-dsp-profile="night" type="button" title="Тише низы и мягче высокие — не мешать соседям">🌙 Ночной режим</button>
+            <button class="pill" data-dsp-profile="bass" type="button" title="Плотный, упругий бас без гула">💥 Плотный бас</button>
+            <button class="pill" data-dsp-profile="club" type="button" title="Максимум низов для вечеринки, вокал не пропадает">🔥 Клубный бас</button>
+            <button class="pill" data-dsp-profile="custom" type="button" title="Настроить бас и фильтры вручную">🎛️ Свои настройки</button>
           </div>
 
           <!-- Интерактивная кривая АЧХ (SVG) -->
@@ -1480,18 +1480,18 @@
             <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:-14px; font-size:10px; font-weight:600; padding:0 6px;">
               <div id="dsp-inspect-val" style="color:var(--muted); font-family:monospace; font-size:10.5px;">20Hz – 20kHz</div>
               <div style="display:flex; gap:10px;">
-                <span style="color:#00e5ff">■ Сабвуфер</span>
-                <span style="color:#d500f9">■ Твитеры</span>
-                <span style="color:var(--accent, #ffcc00)">■ Система</span>
+                <span style="color:#00e5ff">■ Бас</span>
+                <span style="color:#d500f9">■ Высокие</span>
+                <span style="color:var(--accent, #ffcc00)">■ Вся система</span>
               </div>
             </div>
           </div>
 
           <!-- Интерактивный регулятор мощности баса -->
-          <div class="dsp-slider-row" style="display:flex; align-items:center; gap:12px; padding:10px 14px; background:var(--field, #151515); border-radius:12px; margin-top:6px;">
+          <div class="dsp-slider-row" title="Добавить или убрать низы. 0 дБ — как в выбранном пресете" style="display:flex; align-items:center; gap:12px; padding:10px 14px; background:var(--field, #151515); border-radius:12px; margin-top:6px;">
             <div style="flex:none; font-size:13px; font-weight:700; display:flex; align-items:center; gap:6px;">
               <span>💥</span>
-              <span>Мощность баса</span>
+              <span>Бас</span>
             </div>
             <input type="range" id="dsp-slider-bass" min="-6" max="8" step="0.5" value="0" style="flex:1; accent-color:var(--accent, #ffcc00); cursor:pointer;">
             <span id="dsp-slider-bass-val" class="mono" style="flex:none; min-width:58px; text-align:right; font-size:13px; font-weight:800; color:var(--accent, #ffcc00);">0.0 дБ</span>
@@ -1499,29 +1499,29 @@
 
           <!-- Фильтры и тумблеры -->
           <div class="col" style="gap:6px">
-            <label class="toggle" style="cursor:pointer" title="Срезает неслышимый инфразвук (20–45 Гц), устраняя паразитную тряску стола и мебели">
-              <span>🔇 Анти-вибрация (Subsonic 48 Гц)</span>
+            <label class="toggle" style="cursor:pointer" title="Срезает неслышимый инфразвук ниже 48 Гц, из-за которого трясутся стол и полки">
+              <span>🔇 Сабсоник</span>
               <input type="checkbox" id="dsp-filter-subsonic" checked>
             </label>
-            <label class="toggle" style="cursor:pointer" title="Устраняет паразитный резонанс пластиковой камеры колонки на 120 Гц">
-              <span>🛡️ Режекторный фильтр 120 Гц (-4.5 дБ)</span>
+            <label class="toggle" style="cursor:pointer" title="Приглушает резонанс корпуса на 120 Гц, из-за которого звук бубнит">
+              <span>🛡️ Фильтр 120 Гц</span>
               <input type="checkbox" id="dsp-filter-notch120" checked>
             </label>
-            <label class="toggle" style="cursor:pointer" title="Выравнивает групповую задержку направленного вниз сабвуфера относительно твитеров (+3 дБ вокала)">
-              <span>⏱️ Фазовая компенсация APF-2 (260 Гц)</span>
+            <label class="toggle" style="cursor:pointer" title="Выравнивает задержку сабвуфера относительно динамиков на 260 Гц — бас звучит собранно">
+              <span>⏱️ Сабвуфер не отстаёт</span>
               <input type="checkbox" id="dsp-filter-phase" checked>
             </label>
-            <label class="toggle" style="cursor:pointer" title="Раскрывает шёлковые купольные твитеры на Lossless / FLAC">
-              <span>✨ Воздух ВЧ (+3 дБ 13.5 кГц)</span>
+            <label class="toggle" style="cursor:pointer" title="Добавляет лёгкости и деталей высоким частотам на 13.5 кГц">
+              <span>✨ Детализация ВЧ</span>
               <input type="checkbox" id="dsp-filter-treble" checked>
             </label>
-            <label class="toggle" style="cursor:pointer" title="Отключает аппаратный компрессор-лимитер усилителя (DRC), полностью раскрывая динамический диапазон для треков Яндекс Музыки (ударные без сжатия и пампинга)">
-              <span>🔓 Полный динамический диапазон (DRC Bypass)</span>
+            <label class="toggle" style="cursor:pointer" title="Отключает сжатие: удары барабанов звучат живее, без «зажатости»">
+              <span>🔓 Полный динамический диапазон</span>
               <input type="checkbox" id="dsp-filter-drc_bypass">
             </label>
           </div>
 
-          <p class="hint" id="dsp-desc">Hi-Fi Studio Flat: чистый студийный звук с устраненным гулом пластикового корпуса и защитой мебели от вибраций на неслышимом инфразвуке.</p>
+          <p class="hint" id="dsp-desc">Ровный, чистый звук: без дрожи мебели, гула корпуса и отставания баса.</p>
         </section>
 
         <!-- подсветка -->

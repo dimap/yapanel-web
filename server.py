@@ -40,6 +40,39 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
+
+def _recover_legacy_update_modules():
+    """Complete upgrades made by old ZIP updaters before importing new modules."""
+    root = Path(__file__).resolve().parent
+    modules = ("zvuk.py", "zvuk_player.py", "zvuk_queries.py")
+    missing = [name for name in modules if not (root / name).is_file()]
+    if not missing or (root / ".git").exists():
+        return
+    version = (root / "VERSION").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9.-]+)?", version):
+        raise RuntimeError("Неверная версия панели; восстановите файлы из архива релиза")
+    url = f"https://github.com/dimap/yapanel-web/archive/refs/tags/v{version}.zip"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "webpanel"}), timeout=120) as response:
+            blob = response.read(64 * 1024 * 1024 + 1)
+        if len(blob) > 64 * 1024 * 1024:
+            raise ValueError("архив слишком велик")
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            prefix = f"yapanel-web-{version}/"
+            for name in missing:
+                info = archive.getinfo(prefix + name)
+                if info.file_size > 4 * 1024 * 1024:
+                    raise ValueError("модуль слишком велик")
+                data = archive.read(info)
+                tmp = root / (name + ".recover")
+                tmp.write_bytes(data)
+                os.replace(tmp, root / name)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+        raise RuntimeError("Не удалось восстановить файлы панели из архива релиза; см. README: " + str(exc)) from exc
+
+
+_recover_legacy_update_modules()
+
 import access
 import agent as agentlink
 import glagol
@@ -7008,11 +7041,14 @@ class PanelUpdater:
             if not any(n == prefix + "server.py" for n in names):
                 raise AdbError("в архиве релиза нет server.py")
             for n in names:
+                if not n.startswith(prefix):
+                    continue
                 rel = n[len(prefix):]
                 top = rel.split("/", 1)[0]
-                if rel not in self.FILES and top not in self.DIRS:
+                # The running (old) version cannot know future top-level modules.
+                if rel not in self.FILES and top not in self.DIRS and not ("/" not in rel and rel.endswith(".py")):
                     continue
-                if ".." in Path(rel).parts:
+                if "\\" in rel or ".." in Path(rel).parts:
                     continue
                 dst = ROOT / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)

@@ -3287,6 +3287,12 @@ echo @@BLUEZ
         except (ValueError, IndexError):
             state = {}
         cfg = self._assist_keys_migrate(self._assist_config())
+        llm = cfg.get("llm")
+        if not isinstance(llm, dict):
+            llm = cfg["llm"] = {}
+        real_proxy = str(llm.get("proxy") or "")
+        llm["proxy"] = self._mask_proxy(real_proxy)
+        llm["proxy_set"] = bool(real_proxy)
         # ключи наружу не отдаём: только для каких адресов они есть и последние символы
         mask = lambda k: ("…" + k[-4:]) if len(k) > 8 else "задан"
         cfg["keys"] = {url: mask(k) for url, k in (cfg.get("keys") or {}).items() if k}
@@ -3305,6 +3311,33 @@ echo @@BLUEZ
                 "outdated": outdated,
                 "state": state if running else {}}
 
+    def _assist_proxy_value(self, old, new):
+        """Маска пароля не должна затирать сохранённый прокси при сохранении формы."""
+        old = str(old or "").strip()
+        new = str(new or "").strip()
+        if "•••" in new:
+            if not old or self._mask_proxy(old) != new:
+                raise AdbError("пароль прокси скрыт; введите его заново при смене адреса или логина")
+            return old
+        if new:
+            self._validate_assist_proxy(new)
+        return new
+
+    @staticmethod
+    def _validate_assist_proxy(proxy):
+        """Проверяет SOCKS5/SOCKS5H до записи в config.json."""
+        proxy = str(proxy or "").strip()
+        if urlparse(proxy).scheme.lower() not in ("socks5", "socks5h"):
+            return
+        try:
+            from assistant_socks import SocksProxyError, parse_socks_url
+        except ImportError:
+            raise AdbError("модуль SOCKS5 не установлен — обновите панель") from None
+        try:
+            parse_socks_url(proxy)
+        except SocksProxyError as e:
+            raise AdbError(str(e)) from None
+
     def assistant_install(self):
         arch, _, _ = self.adb.shell("uname -m", check=False)
         if strip_ansi(arch).strip() not in ("aarch64", "arm64"):
@@ -3314,6 +3347,9 @@ echo @@BLUEZ
         if not max_py.exists():
             max_py = ASSIST_SRC / "assistant_max.py"
         assistd_wrapper = ASSIST_SRC / "assistantd"
+        socks_helper = ROOT / "assistant_socks.py"
+        if not socks_helper.is_file():
+            socks_helper = ASSIST_SRC / "assistant_socks.py"
 
         self.adb.shell(f"mkdir -p {ASSIST_DIR}; start-stop-daemon -K -p {ASSIST_SD} 2>/dev/null; true", check=False)
         if max_py.exists() and assistd_wrapper.exists():
@@ -3325,6 +3361,13 @@ echo @@BLUEZ
             binary = self._assist_binary()
             self.adb.push(binary, ASSISTD + ".new", timeout=300)
             self.adb.shell(f"chmod 755 {shlex.quote(ASSISTD + '.new')}; mv {shlex.quote(ASSISTD + '.new')} {shlex.quote(ASSISTD)}")
+        if socks_helper.is_file() and max_py.is_file():
+            self.adb.push(socks_helper, f"{ASSIST_DIR}/assistant_socks.py.new")
+            self.adb.shell(
+                f"chmod 644 {shlex.quote(f'{ASSIST_DIR}/assistant_socks.py.new')}; "
+                f"mv {shlex.quote(f'{ASSIST_DIR}/assistant_socks.py.new')} "
+                f"{shlex.quote(f'{ASSIST_DIR}/assistant_socks.py')}"
+            )
         if not self._assist_config():
             self._assist_write({"enabled": False})
         try:
@@ -3387,7 +3430,10 @@ echo @@BLUEZ
             sec = cfg.setdefault(part, {})
             for k in fields:
                 if k in src:
-                    sec[k] = src[k]
+                    if part == "llm" and k == "proxy":
+                        sec[k] = self._assist_proxy_value(sec.get("proxy", ""), src[k])
+                    else:
+                        sec[k] = src[k]
             key = str(src.get("api_key") or "").strip()
             if key:
                 if not sec.get("base_url"):
@@ -3412,6 +3458,15 @@ echo @@BLUEZ
     def assistant_models(self, d):
         """Список моделей API — запрашивает сама колонка: её сеть и прокси, ключ из настроек или ещё не сохранённый."""
         over = {k: str(d.get(k) or "").strip() for k in ("base_url", "api_key", "proxy")}
+        if "•••" in over["proxy"]:
+            cfg = self._assist_config()
+            llm = cfg.get("llm") if isinstance(cfg, dict) else None
+            stored = str((llm or {}).get("proxy") or "") if isinstance(llm, dict) else ""
+            if not stored or self._mask_proxy(stored) != over["proxy"]:
+                raise AdbError("пароль прокси скрыт; введите его заново при смене адреса или логина")
+            over["proxy"] = stored
+        if over["proxy"]:
+            self._validate_assist_proxy(over["proxy"])
         tmp = "/tmp/webpanel_assistant.models"
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "o.json"
@@ -7529,7 +7584,7 @@ class PanelUpdater:
     """Проверка новых релизов панели на GitHub и обновление — в зависимости от того, как панель установлена:
     zip (Windows-сборка, Download ZIP) — скачать релиз и заменить файлы панели; git — git pull --ff-only;
     docker — только подсказать команду (образ изнутри не обновить)."""
-    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "max_privacy.py", "dsp_max.py", "assistant_max.py", "party.py", "party_store.py", "party_audio.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
+    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "max_privacy.py", "dsp_max.py", "assistant_max.py", "assistant_socks.py", "party.py", "party_store.py", "party_audio.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
     DIRS = ("api", "static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно

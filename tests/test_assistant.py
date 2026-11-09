@@ -68,6 +68,63 @@ class AssistantKeys(unittest.TestCase):
         panel.adb.push.assert_not_called()
 
 
+class AssistantProxy(unittest.TestCase):
+    """Пароль SOCKS5 не уходит в API, но сохраняется и доходит до демона."""
+
+    def panel(self, cfg):
+        panel = server.Panel(Mock())
+        panel.stored = cfg
+        panel._assist_config = lambda: json.loads(json.dumps(panel.stored))
+        panel._assist_write = lambda c: setattr(panel, "stored", c)
+        panel._assist_local_md5 = lambda: None
+        panel.adb.shell.return_value = ("@installed\n@running\n@status\n{}\n", "", 0)
+        return panel
+
+    def test_status_masks_proxy_password(self):
+        panel = self.panel({"llm": {"proxy": "socks5h://user:secret@proxy:1080"}})
+        status = panel.assistant_status()
+        dumped = json.dumps(status, ensure_ascii=False)
+        self.assertNotIn("secret", dumped)
+        self.assertIn("•••", status["config"]["llm"]["proxy"])
+        self.assertIs(status["config"]["llm"]["proxy_set"], True)
+
+    def test_masked_proxy_is_preserved_on_save(self):
+        panel = self.panel({"llm": {"proxy": "socks5h://user:secret@proxy:1080"}})
+        masked = panel.assistant_status()["config"]["llm"]["proxy"]
+        panel.assistant_set({"llm": {"proxy": masked, "model": "other-model"}})
+        self.assertEqual(panel.stored["llm"]["proxy"], "socks5h://user:secret@proxy:1080")
+
+    def test_changed_host_with_masked_password_is_rejected(self):
+        panel = self.panel({"llm": {"proxy": "socks5h://user:secret@proxy:1080"}})
+        masked = panel.assistant_status()["config"]["llm"]["proxy"]
+        changed = masked.replace("proxy:1080", "other:1080")
+        with self.assertRaises(server.AdbError):
+            panel.assistant_set({"llm": {"proxy": changed}})
+        self.assertEqual(panel.stored["llm"]["proxy"], "socks5h://user:secret@proxy:1080")
+
+    def test_new_socks_proxy_is_validated(self):
+        panel = self.panel({})
+        panel.assistant_set({"llm": {"proxy": "socks5h://user:p%40ss@proxy:1080"}})
+        self.assertEqual(panel.stored["llm"]["proxy"], "socks5h://user:p%40ss@proxy:1080")
+        with self.assertRaises(server.AdbError):
+            panel.assistant_set({"llm": {"proxy": "socks5h://user@proxy:1080"}})
+
+    def test_models_receive_real_proxy_not_mask(self):
+        panel = self.panel({"llm": {"proxy": "socks5h://user:secret@proxy:1080"}})
+        masked = panel.assistant_status()["config"]["llm"]["proxy"]
+        pushed = {}
+
+        def push(local, remote):
+            pushed["text"] = Path(local).read_text(encoding="utf-8")
+
+        panel.adb.push = push
+        panel.adb.shell.return_value = ('{"models":["mock-model"]}\n', "", 0)
+        result = panel.assistant_models({"base_url": "https://x/v1", "proxy": masked})
+        self.assertEqual(result, {"models": ["mock-model"]})
+        self.assertIn("secret", pushed["text"])
+        self.assertNotIn("•••", pushed["text"])
+
+
 class AssistantDaemonStop(unittest.TestCase):
     """Остановка демона: процессу уходит SIGTERM, затем pid-файл убирается."""
 

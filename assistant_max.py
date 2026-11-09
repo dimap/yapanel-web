@@ -196,6 +196,21 @@ def _redact_value(value, secrets):
     return value
 
 
+def _proxy_secrets(proxy) -> set:
+    """Пароль и полный URL прокси, которые нельзя показывать в status/логах."""
+    secrets = set()
+    proxy = str(proxy or "")
+    if proxy:
+        secrets.add(proxy)
+        try:
+            password = urllib.parse.urlsplit(proxy).password
+        except (ValueError, TypeError):
+            password = None
+        if password:
+            secrets.add(urllib.parse.unquote(password))
+    return secrets
+
+
 def _config_secrets(cfg: dict) -> set:
     secrets = set()
     if not isinstance(cfg, dict):
@@ -204,6 +219,9 @@ def _config_secrets(cfg: dict) -> set:
         sec = cfg.get(part)
         if isinstance(sec, dict) and isinstance(sec.get("api_key"), str):
             secrets.add(sec["api_key"])
+    llm = cfg.get("llm")
+    if isinstance(llm, dict):
+        secrets |= _proxy_secrets(llm.get("proxy"))
     keys = cfg.get("keys")
     if isinstance(keys, dict):
         for value in keys.values():
@@ -837,6 +855,9 @@ class AssistantDaemon:
 
     @staticmethod
     def _opener(proxy: str):
+        if proxy and urllib.parse.urlsplit(proxy).scheme.lower() in ("socks5", "socks5h"):
+            from assistant_socks import build_socks_opener
+            return build_socks_opener(proxy)
         handler_args = {}
         if proxy:
             handler_args["http"] = proxy
@@ -1180,7 +1201,7 @@ def print_models(config_path: str, override_path: str):
         models.sort()
         print(json.dumps({"models": models}, ensure_ascii=False))
     except Exception as e:
-        safe_error = _redact_secrets(str(e), {api_key})
+        safe_error = _redact_secrets(str(e), {api_key} | _proxy_secrets(proxy))
         print(json.dumps({"error": f"Ошибка запроса моделей: {safe_error}"}, ensure_ascii=False))
 
 

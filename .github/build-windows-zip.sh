@@ -14,7 +14,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/$NAME/runtime/python" "$OUT"
 cd "$ROOT"
-cp -r server.py access.py agent.py glagol.py profiles.py max_profile.py max_privacy.py assistant_max.py config.py multi.py pyadb.py dsp_max.py party.py party_store.py party_audio.py speakers.example.json VERSION api static device start.bat install_to_max.bat install_to_max.ps1 README_WINDOWS.txt LICENSE README.md CONTRIBUTION.md "$WORK/$NAME/"
+cp -r server.py access.py agent.py glagol.py profiles.py max_profile.py max_privacy.py assistant_max.py assistant_socks.py config.py multi.py pyadb.py dsp_max.py party.py party_store.py party_audio.py speakers.example.json VERSION api static device start.bat install_to_max.bat install_to_max.ps1 README_WINDOWS.txt LICENSE README.md CONTRIBUTION.md "$WORK/$NAME/"
 # помощник для колонки (linux/arm64): на Windows Go обычно нет, поэтому кладём готовую сборку
 rm -rf "$WORK/$NAME/device/assistant/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go -C device/assistant build -trimpath -ldflags "-s -w -X main.version=$VER" \

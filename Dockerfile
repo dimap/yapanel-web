@@ -26,7 +26,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY server.py access.py agent.py glagol.py profiles.py max_profile.py assistant_max.py config.py multi.py pyadb.py dsp_max.py party.py party_store.py party_audio.py speakers.example.json VERSION ./
+COPY server.py access.py agent.py glagol.py profiles.py max_profile.py assistant_max.py assistant_socks.py config.py multi.py pyadb.py dsp_max.py party.py party_store.py party_audio.py speakers.example.json VERSION ./
 COPY api ./api
 COPY static ./static
 COPY device ./device

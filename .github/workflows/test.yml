@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   python:
-    runs-on: ubuntu-latest
+    # Python 3.9 недоступен на ubuntu-26.04, используем совместимый runner.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python: ['3.9', '3.11', '3.14']

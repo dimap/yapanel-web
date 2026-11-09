@@ -218,8 +218,9 @@ class MaxProfileTests(unittest.TestCase):
 
         # Verify Android TV paths on server module
         self.assertEqual(s.HOSTS_TARGET, "/system/etc/hosts")
-        self.assertIn("appmetrica", s.METRICA_BATCH)
-        self.assertIn("appmetrica", s.ANALYTICS_PURGE)
+        self.assertIn("com.yandex.tv.services/no_backup/appmetrica", s.METRICA_BATCH)
+        self.assertIn("com.yandex.tv.services/no_backup/appmetrica", s.ANALYTICS_PURGE)
+        self.assertIn("com.yandex.io.sdk/databases/appmetrica", s.METRICA_BATCH)
         self.assertEqual(p._boot_route(), "watchdog")
 
         # Verify audio player is native Android playaudio
@@ -235,6 +236,20 @@ class MaxProfileTests(unittest.TestCase):
         self.assertIn("wakeword", hook_users_sh)
         self.assertIn("frida", hook_users_sh)
         self.assertNotIn("alarmd", hook_users_sh)
+        self.assertIn("webpanel/hosts", hook_users_sh)
+
+    def test_analytics_hosts_text_has_ipv4_and_ipv6(self):
+        s = fresh_server()
+        text = s.analytics_hosts_text("127.0.0.1 localhost\r\n")
+        self.assertIn("127.0.0.1 localhost", text)
+        self.assertIn("127.0.0.1\tclck.yandex.net", text)
+        self.assertIn("::1\tclck.yandex.net", text)
+        self.assertIn("::1\treport.appmetrica.yandex.net", text)
+        self.assertIn("webpanel", text)
+
+    def test_max_boot_hook_does_not_override_existing_odm_hosts(self):
+        source = (ROOT / "max_profile.py").read_text(encoding="utf-8")
+        self.assertIn("! grep -q appmetrica.yandex.net /odm/etc/hosts", source)
 
 
 if __name__ == "__main__":

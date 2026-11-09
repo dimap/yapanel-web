@@ -296,6 +296,22 @@ ANALYTICS_HOSTS = _cfg.server.analytics_hosts
 METRICA_BATCH = "/data/quasar/appmetrica/persistedBatch"
 ANALYTICS_PURGE = ("p=$(ps | grep '[m]aind --telemetry' | awk '{print $1}'); "
                    f"[ -n \"$p\" ] && kill -9 $p; rm -f {METRICA_BATCH}")
+
+
+def analytics_hosts_text(base):
+    """Свой hosts: системный файл плюс адреса аналитики на localhost.
+
+    IPv6-запись нужна не для красоты: клиент, который явно запрашивает AAAA,
+    иначе может получить настоящий адрес из DNS и уйти мимо hosts (это
+    отдельно разбирали в базе Yandex Station Extended).
+    """
+    lines = [ln for ln in str(base).replace("\r\n", "\n").splitlines() if ln.strip()]
+    entries = []
+    for host in ANALYTICS_HOSTS:
+        entries += [f"127.0.0.1\t{host}", f"::1\t{host}"]
+    return "\n".join(lines + ["", HOSTS_MARK] + entries) + "\n"
+
+
 # Свой голосовой помощник (device/assistant): «Алиса, спроси GPT …» уходит выбранной модели. Программа на Go
 # работает на самой колонке; панель кладёт её и config.json, проверяет текстом и читает состояние из /tmp.
 ASSIST_DIR = _cfg.remote.assist_dir
@@ -3125,7 +3141,7 @@ echo @@BLUEZ
             self._ensure_hook()
         m = re.search(r"queued=(\d+)", out)
         return {"enabled": enabled, "hosts": list(ANALYTICS_HOSTS), "queued": int(m.group(1)) if m else 0,
-                "blocked": f"({ANALYTICS_HOSTS[0]}" not in out and "127.0.0.1" in out}
+                "blocked": bool(re.search(r"\((?:127\.0\.0\.1|::1)\)", out))}
 
     def privacy_set(self, enabled):
         if not enabled:
@@ -3137,9 +3153,8 @@ echo @@BLUEZ
             return self.privacy_status()
         # основа — настоящий системный /etc/hosts (если наш уже подключён, сначала снимаем его)
         self.adb.shell(f"grep -q ' {HOSTS_TARGET} ' /proc/mounts && umount {HOSTS_TARGET}; true")
-        base = strip_ansi(self.adb.read_bytes(HOSTS_TARGET).decode("utf-8", "replace")).replace("\r\n", "\n")
-        lines = [ln for ln in base.splitlines() if ln.strip()]
-        text = "\n".join(lines + ["", HOSTS_MARK] + [f"127.0.0.1\t{h}" for h in ANALYTICS_HOSTS]) + "\n"
+        base = strip_ansi(self.adb.read_bytes(HOSTS_TARGET).decode("utf-8", "replace"))
+        text = analytics_hosts_text(base)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "hosts"
             write_unix(f, text)
@@ -7514,7 +7529,7 @@ class PanelUpdater:
     """Проверка новых релизов панели на GitHub и обновление — в зависимости от того, как панель установлена:
     zip (Windows-сборка, Download ZIP) — скачать релиз и заменить файлы панели; git — git pull --ff-only;
     docker — только подсказать команду (образ изнутри не обновить)."""
-    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "dsp_max.py", "assistant_max.py", "party.py", "party_store.py", "party_audio.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
+    FILES = ("server.py", "config.py", "access.py", "agent.py", "glagol.py", "profiles.py", "max_profile.py", "max_privacy.py", "dsp_max.py", "assistant_max.py", "party.py", "party_store.py", "party_audio.py", "multi.py", "pyadb.py", "speakers.example.json", "VERSION", "LICENSE", "README.md", "CONTRIBUTION.md", "start.bat", "start.sh", "start.command",
              "Dockerfile", "docker-compose.yml")
     DIRS = ("api", "static", "device")
     OBSOLETE = ("3d", "tools", "docs")  # папки прежних версий: модель переехала в static/models, остальное не нужно

@@ -21,6 +21,7 @@ import shutil
 import struct
 import time
 import threading
+import max_privacy
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -940,8 +941,14 @@ def install(s, profile):
     s.ROOTKEEPER_CREATED = f"{s.BOOT_HOOK}.webpanel.created"
     # Station Max Android TV specific paths & privacy purge (no Buildroot /system/vendor/quasar or maind)
     s.HOSTS_TARGET = "/system/etc/hosts"
-    s.METRICA_BATCH = "/data/data/com.yandex.io.sdk/databases/appmetrica*"
-    s.ANALYTICS_PURGE = "rm -f /data/data/com.yandex.io.sdk/databases/appmetrica* 2>/dev/null; true"
+    # AppMetrica на этой прошивке живёт в com.yandex.tv.services, а не в com.yandex.io.sdk.
+    # Старый путь оставляем как fallback для других сборок Макса.
+    s.METRICA_BATCH = ("/data/data/com.yandex.tv.services/no_backup/appmetrica/analytics/appmetrica_vital*.dat "
+                       "/data/data/com.yandex.tv.services/no_backup/appmetrica/analytics/appmetrica*.db "
+                       "/data/data/com.yandex.io.sdk/databases/appmetrica*")
+    s.ANALYTICS_PURGE = ("rm -f /data/data/com.yandex.tv.services/no_backup/appmetrica/analytics/appmetrica_vital*.dat "
+                         "/data/data/com.yandex.tv.services/no_backup/appmetrica/analytics/appmetrica*.db "
+                         "/data/data/com.yandex.io.sdk/databases/appmetrica* 2>/dev/null; true")
 
     # Ensure clock pattern and anim directories exist
     try:
@@ -2133,6 +2140,10 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             'bind() { [ -f "$1" ] && [ -f "$2" ] && ! grep -q " $2 " /proc/mounts && mount --bind "$1" "$2"; }\n'
             f"bind {s.BOOT_CUSTOM} {s.BOOT_TARGET}\n"
             f"bind {s.SOUND_CUSTOM} {s.SOUND_TARGET}\n"
+            # Не подключаем hosts панели поверх внешнего менеджера OTA или
+            # готового внешнего hosts, который уже блокирует аналитику (/odm).
+            f"[ ! -f /odm/bin/adbguard.sh ] && [ ! -f /odm/etc/hosts-ota ] && "
+            f"! grep -q appmetrica.yandex.net /odm/etc/hosts 2>/dev/null && "
             f"bind {s.WEB_DIR}/hosts {s.HOSTS_TARGET}\n"
             f"[ -d {s.OVR_DIR} ] && (cd {s.OVR_DIR} && find . -type f) | while read -r f; do "
             f"bind \"{s.OVR_DIR}/${{f#./}}\" \"{s.PATTERNS['clock']}/${{f#./}}\"; done\n"
@@ -2202,6 +2213,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         users = [
             ("заставка", s.BOOT_CUSTOM),
             ("звук запуска", s.SOUND_CUSTOM),
+            ("блокировка аналитики", s.HOSTS_CUSTOM),
             ("выключенный bluetooth", s.BT_OFF),
             ("агент", s.AGENT_TOKENS),
             ("ассистент", s.ASSIST_CONF),
@@ -2619,6 +2631,12 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         sound_on = b[2] or b[3]
         backup_on = b[5] or b[6]
         hook_on = b[16]
+        privacy_state = self.privacy_status(migrate=False)
+        privacy_detail = {
+            "panel": "подмена /system/etc/hosts",
+            "adbguard-v2": "adbguard v2, OTA отдельно",
+            "conflict": "внешний hosts, панель не меняет",
+        }.get(privacy_state.get("backend"), "управление hosts")
 
         items = [
             {"key": "boot", "name": "Своя заставка часов", "on": boot_on},
@@ -2628,7 +2646,9 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
              "detail": f"заменено встроенных: {n(v[11])}, своих: {n(v[12])}"},
             {"key": "always", "name": "Заставка при каждой загрузке", "on": b[4]},
             {"key": "btoff", "name": "Bluetooth выключен", "on": b[13], "detail": "и после перезагрузки"},
-            {"key": "privacy", "name": "Блокировка аналитики", "on": b[8], "detail": "подмена /system/etc/hosts"},
+            {"key": "privacy", "name": "Блокировка аналитики",
+             "on": privacy_state.get("enabled", False),
+             "detail": privacy_detail},
             {"key": "viz", "name": "Живой спектр с колонки", "on": b[14], "size_kb": n(v[15]),
              "detail": "захват звука усилителя (ALSA/Android)"},
             {"key": "agent", "name": "Агент панели (защищённое соединение)", "on": b[17],
@@ -2731,7 +2751,13 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
                 f"killall viz 2>/dev/null; killall yapanel-agent 2>/dev/null; "
                 f"grep -q ' {boot_target} ' /proc/mounts && umount {q(boot_target)} 2>/dev/null; "
                 f"grep -q ' {sound_target} ' /proc/mounts && umount {q(sound_target)} 2>/dev/null; "
-                f"grep -q ' /system/etc/hosts ' /proc/mounts && umount /system/etc/hosts 2>/dev/null; "
+                # Снимаем только подтверждённый одиночный mount панели.
+                f'if [ -f {q(s.HOSTS_CUSTOM)} ] && '
+                f'[ ! -f /odm/bin/adbguard.sh ] && [ ! -f /odm/etc/hosts-ota ] && '
+                f'[ "$(stat -c %d:%i {q(s.HOSTS_CUSTOM)} 2>/dev/null)" = '
+                f'"$(stat -c %d:%i /system/etc/hosts 2>/dev/null)" ] && '
+                f'[ "$(grep -c " /system/etc/hosts " /proc/mounts)" = "1" ]; '
+                f'then umount /system/etc/hosts 2>/dev/null; fi; '
                 f"{unmount_overrides}"
                 f"{rm_owned}"
                 f"{restore_boot}{restore_sound}"
@@ -2745,6 +2771,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
 
     P.footprint = max_footprint
     P._footprint_reset = max_footprint_reset
+    max_privacy.install(s, P)
 
     def _dsp_monitor(self):
         """Следит за сменой трека/потока и возвращает DSP после сброса.

@@ -5,6 +5,12 @@ import { readFile } from 'node:fs/promises';
 const app = await readFile(new URL('../static/app.js', import.meta.url), 'utf8');
 const html = await readFile(new URL('../static/index.html', import.meta.url), 'utf8');
 
+// The mobile bottom bar has at least five visible items; a fixed four-column
+// grid wrapped the last one under the viewport.
+const mbarRule = html.match(/\.mbar\s*\{([^}]*)\}/)?.[1] || '';
+assert(!mbarRule.includes('repeat(4,'), 'mobile bar must not force four columns');
+assert(/\.mbar a, \.mbar button\s*\{[^}]*flex:\s*1 1 0/.test(html), 'mobile bar items must share width');
+
 // Every id (and every tab page) must be unique: a duplicated <main> makes the
 // browser show two copies of the same page side by side.
 const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);

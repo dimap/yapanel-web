@@ -62,6 +62,26 @@ class TestAssistantMaxUtils(unittest.TestCase):
         self.assertIn("интернету", assistant_max.voice_error("Failed to establish connection"))
 
 
+class TestAssistantInstanceLock(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "fcntl/flock доступны только на POSIX")
+    def test_second_instance_is_rejected_and_stale_lock_can_be_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lockfile = Path(directory) / "assistant.sd.lock"
+            first, first_fd = assistant_max._acquire_assistant_lock(lockfile)
+            self.assertTrue(first)
+            self.assertIsNotNone(first_fd)
+            try:
+                second, second_fd = assistant_max._acquire_assistant_lock(lockfile)
+                self.assertFalse(second)
+                self.assertIsNone(second_fd)
+            finally:
+                os.close(first_fd)
+            # Файл lock остаётся, но flock освобождён после закрытия fd.
+            third, third_fd = assistant_max._acquire_assistant_lock(lockfile)
+            self.assertTrue(third)
+            os.close(third_fd)
+
+
 class TestAssistantMaxDaemon(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

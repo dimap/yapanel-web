@@ -5,4 +5,9 @@ if [ ! -x "$PYTHON" ]; then
     PYTHON="python3"
 fi
 SCRIPT_DIR="$(dirname "$0")"
+# Одинаковый CA bundle для запуска через boot hook и Python worker.
+# Не переопределяем сертификат, явно заданный вызывающей стороной.
+if [ -z "${SSL_CERT_FILE:-}" ] && [ -r /data/yapanel/certs/cacert.pem ]; then
+    export SSL_CERT_FILE=/data/yapanel/certs/cacert.pem
+fi
 exec "$PYTHON" "$SCRIPT_DIR/assistant_max.py" "$@"

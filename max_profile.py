@@ -2152,8 +2152,12 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             f"[ -f {s.WEB_DIR}/bt_off ] && ( svc bluetooth disable ) >/dev/null 2>&1 &\n"
             f"[ -f {s.ASSIST_CONF} ] && [ -x {s.ASSISTD} ] && {{ "
             f"if [ ! -f {s.ASSIST_SD} ] || ! kill -0 \"$(cat {s.ASSIST_SD} 2>/dev/null)\" 2>/dev/null; then "
-            f"rm -f {s.ASSIST_SD}; "
-            f"/odm/bin/start-stop-daemon -S -b -m -p {s.ASSIST_SD} -x /bin/sh -- -c {shlex.quote(s.ASSIST_RUN)}; "
+            # PID публикует только Python-демон после получения flock.
+            # start-stop-daemon с -m перезаписывал бы PID при гонке с автозапуском Yapanel.
+            f"if [ -x /odm/bin/start-stop-daemon ]; then "
+            f"/odm/bin/start-stop-daemon -S -b -x /system/bin/sh -- -c {shlex.quote(s.ASSIST_RUN)}; "
+            f"else ( /system/bin/sh -c {shlex.quote(s.ASSIST_RUN)} </dev/null >/dev/null 2>&1 & ); "
+            f"fi; "
             f"fi; }}\n"
             + s.wakeword_boot_lines(android=True)
             + s.frida_boot_lines(android=True)

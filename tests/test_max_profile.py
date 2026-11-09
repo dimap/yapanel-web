@@ -247,6 +247,16 @@ class MaxProfileTests(unittest.TestCase):
         self.assertIn("::1\treport.appmetrica.yandex.net", text)
         self.assertIn("webpanel", text)
 
+    def test_max_boot_hook_does_not_write_assistant_pid(self):
+        source = (ROOT / "max_profile.py").read_text(encoding="utf-8")
+        start = source.index('f"[ -f {s.ASSIST_CONF} ]')
+        stop = source.index("+ s.wakeword_boot_lines(android=True)", start)
+        assistant_hook = source[start:stop]
+        self.assertIn("start-stop-daemon -S -b -x", assistant_hook)
+        self.assertNotIn(" -m -p ", assistant_hook)
+        self.assertNotIn("rm -f {s.ASSIST_SD}", assistant_hook)
+        self.assertIn("s.ASSIST_RUN", assistant_hook)
+
     def test_max_boot_hook_does_not_override_existing_odm_hosts(self):
         source = (ROOT / "max_profile.py").read_text(encoding="utf-8")
         self.assertIn("! grep -q appmetrica.yandex.net /odm/etc/hosts", source)

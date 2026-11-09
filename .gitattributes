@@ -2,6 +2,7 @@
 *.sh text eol=lf
 *.command text eol=lf
 device/* text eol=lf
+device/assistant/assistantd text eol=lf
 device/wakeword/build/wakeword binary
 device/wakeword/bin/frida-inject binary
 device/wakeword/negatives.bin binary

@@ -31,8 +31,8 @@
 Самый простой путь — готовый установщик. Python на компьютер ставить не нужно.
 
 1. Скачайте архив из [релизов](https://github.com/Timobzdecc/yapanel-web_max/releases/latest):
-   * **[yapanel-web-0.3.7-windows-x64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.7/yapanel-web-0.3.7-windows-x64.zip)** — для обычных ПК;
-   * **[yapanel-web-0.3.7-windows-arm64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.7/yapanel-web-0.3.7-windows-arm64.zip)** — для ARM-ноутбуков;
+   * **[yapanel-web-0.3.8-windows-x64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.8/yapanel-web-0.3.8-windows-x64.zip)** — для обычных ПК;
+   * **[yapanel-web-0.3.8-windows-arm64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.8/yapanel-web-0.3.8-windows-arm64.zip)** — для ARM-ноутбуков;
    * или отдельный **[`install_to_max.bat`](https://raw.githubusercontent.com/Timobzdecc/yapanel-web_max/main/install_to_max.bat)** — он сам скачает актуальный установщик.
 2. Распакуйте архив и запустите **`install_to_max.bat`**.
 3. Введите IP станции, например `192.168.1.100`.

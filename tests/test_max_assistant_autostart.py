@@ -46,6 +46,29 @@ class TestMaxAssistantAutostart(unittest.TestCase):
             self.assertIn("START_OK", log)
             self.assertNotIn("RETRIES_EXHAUSTED", log)
 
+    def test_autostart_flag_disables_worker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            directory = root / "assistant"
+            directory.mkdir()
+            (directory / "config.json").write_text("{}", encoding="utf-8")
+            launcher = directory / "assistantd"
+            launcher.write_text("#!/bin/sh\n", encoding="ascii")
+            launcher.chmod(0o755)
+            flag = root / "no-autostart"
+            flag.write_text("", encoding="ascii")
+            start = Mock()
+            ok = server._max_assistant_autostart_worker(
+                assistant_dir=directory, log_path=root / "startup.log",
+                attempts=2, delay=0, sleep=lambda _: None, launch=start,
+                autostart_path=flag,
+            )
+            self.assertFalse(ok)
+            start.assert_not_called()
+            log = (root / "startup.log").read_text(encoding="utf-8")
+            self.assertIn("AUTOSTART_DISABLED", log)
+            self.assertNotIn("START_ATTEMPT", log)
+
     def test_does_not_restart_existing_process(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

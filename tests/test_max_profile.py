@@ -256,6 +256,7 @@ class MaxProfileTests(unittest.TestCase):
         self.assertNotIn(" -m -p ", assistant_hook)
         self.assertNotIn("rm -f {s.ASSIST_SD}", assistant_hook)
         self.assertIn("s.ASSIST_RUN", assistant_hook)
+        self.assertIn("[ ! -f {s.ASSIST_NO_AUTOSTART} ]", assistant_hook)
 
     def test_max_boot_hook_does_not_override_existing_odm_hosts(self):
         source = (ROOT / "max_profile.py").read_text(encoding="utf-8")

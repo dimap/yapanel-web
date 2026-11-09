@@ -285,7 +285,7 @@ def test_footprint_reset_removes_only_known_panel_paths(caplog):
 
     known = {
         s.BOOT_CUSTOM, s.SOUND_CUSTOM, s.BOOT_ALWAYS, s.BOOT_HOOK, s.BT_OFF,
-        s.HOSTS_CUSTOM, s.ROOTKEEPER_CREATED,
+        s.HOSTS_CUSTOM, s.ROOTKEEPER_CREATED, s.ASSIST_NO_AUTOSTART,
         s.WAKE_AUTOSTART, s.WAKE_FRIDA_AUTOSTART,
         f"{s.WEB_DIR}/override", f"{s.WEB_DIR}/patterns", f"{s.WEB_DIR}/viz",
         f"{s.WEB_DIR}/bt_off", f"{s.WEB_DIR}/hosts",

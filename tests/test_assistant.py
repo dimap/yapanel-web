@@ -125,6 +125,36 @@ class AssistantProxy(unittest.TestCase):
         self.assertNotIn("•••", pushed["text"])
 
 
+class AssistantAutostart(unittest.TestCase):
+    """Отдельный флаг автозапуска не связан с enabled и не мешает ручному запуску."""
+
+    def panel(self):
+        panel = server.Panel(Mock())
+        panel.stored = {}
+        panel._assist_config = lambda: json.loads(json.dumps(panel.stored))
+        panel._assist_write = lambda c: setattr(panel, "stored", c)
+        panel._assist_local_md5 = lambda: None
+        panel._ensure_hook = Mock()
+        panel.adb.shell.return_value = ("@installed\n@running\n@status\n{}\n", "", 0)
+        return panel
+
+    def test_status_reports_autostart_from_flag(self):
+        panel = self.panel()
+        self.assertIs(panel.assistant_status()["autostart"], True)
+        panel.adb.shell.return_value = ("@installed\n@running\n@noautostart\n@status\n{}\n", "", 0)
+        self.assertIs(panel.assistant_status()["autostart"], False)
+
+    def test_toggle_writes_and_removes_flag(self):
+        panel = self.panel()
+        panel.assistant_autostart(False)
+        commands = [call.args[0] for call in panel.adb.shell.call_args_list]
+        self.assertTrue(any("touch" in command and server.ASSIST_NO_AUTOSTART in command for command in commands))
+        panel.assistant_autostart(True)
+        commands = [call.args[0] for call in panel.adb.shell.call_args_list]
+        self.assertTrue(any("rm -f" in command and server.ASSIST_NO_AUTOSTART in command for command in commands))
+        self.assertEqual(panel._ensure_hook.call_count, 2)
+
+
 class AssistantDaemonStop(unittest.TestCase):
     """Остановка демона: процессу уходит SIGTERM, затем pid-файл убирается."""
 
@@ -144,6 +174,8 @@ class AssistantHook(unittest.TestCase):
     def test_boot_hook_starts_assistant_only_when_configured(self):
         line = next(l for l in server.BOOT_HOOK_SCRIPT.splitlines() if "assistant" in l)
         self.assertTrue(line.startswith(f"[ -f {server.ASSIST_CONF} ] && [ -x {server.ASSISTD} ]"))
+        # отдельный флаг автозапуска учитывается до старта демона
+        self.assertIn(f"[ ! -f {server.ASSIST_NO_AUTOSTART} ]", line)
         # пока помощник настроен, строку автозапуска из rootkeeper.sh не убираем
         panel = server.Panel(Mock())
         panel._drop_hook_if_unused()

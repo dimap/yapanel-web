@@ -5134,6 +5134,8 @@ async function loadAssistant(fill) {
   if (st.model_name) $('#as-exp-model').textContent = st.model_name.replace(/^Станция/, 'Станции');
   $('#as-missing').hidden = st.installed;
   $('#as-on').hidden = !st.installed;
+  $('#as-autostart').checked = st.autostart !== false;
+  $('#as-autostart').disabled = !st.installed;
   $('#as-update').hidden = !st.outdated;
   $('#as-daemon-stop').disabled = !st.running;
   $('#as-restart').textContent = st.running ? 'Перезапустить' : 'Запустить';
@@ -5274,6 +5276,9 @@ $('#as-daemon-stop').onclick = e => act(e.currentTarget, async () => { await api
   .then(() => loadAssistant());
 $('#as-enabled').onchange = e => act(null, async () => { await api('/api/assistant', { enabled: e.target.checked }); await loadAssistant(); },
   e.target.checked ? 'Помощник отвечает на фразу' : 'Помощник выключен');
+$('#as-autostart').onchange = e => act(null, async () => {
+  await api('/api/assistant/autostart', { on: e.target.checked }); await loadAssistant();
+}, e.target.checked ? 'Ассистент будет запускаться после перезагрузки' : 'Автозапуск ассистента выключен');
 $('#as-save').onclick = e => act(e.currentTarget, async () => {
   const num = (id, d) => Number($(id).value) || d;
   const st = await api('/api/assistant', {

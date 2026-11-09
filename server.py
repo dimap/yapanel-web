@@ -317,6 +317,7 @@ def analytics_hosts_text(base):
 ASSIST_DIR = _cfg.remote.assist_dir
 ASSISTD = f"{ASSIST_DIR}/assistantd"
 ASSIST_CONF = f"{ASSIST_DIR}/config.json"
+ASSIST_NO_AUTOSTART = f"{WEB_DIR}/assistant_no_autostart"
 ASSIST_STATUS = "/tmp/webpanel_assistant.json"
 ASSIST_CMD = "/tmp/webpanel_assistant.cmd"
 ASSIST_SD = "/tmp/webpanel_assistant.sd"
@@ -612,7 +613,7 @@ BOOT_HOOK_SCRIPT = (
     f"[ -f {YAM_AUTOSTART} ] && [ -x {YAMD} ] && ! pidof yamd >/dev/null && "
     f"start-stop-daemon -S -b -m -p /tmp/webpanel_yamd.sd -x /bin/sh -- -c {shlex.quote(YAMD_CMD)}\n"
     f"[ -f {ALARM_CONF} ] && [ -f {ALARMD} ] && start-stop-daemon -S -b -m -p {ALARM_SD} -x /bin/sh -- {ALARMD}\n"
-    f"[ -f {ASSIST_CONF} ] && [ -x {ASSISTD} ] && start-stop-daemon -S -b -m -p {ASSIST_SD} -x /bin/sh -- -c {shlex.quote(ASSIST_RUN)}\n"
+    f"[ -f {ASSIST_CONF} ] && [ -x {ASSISTD} ] && [ ! -f {ASSIST_NO_AUTOSTART} ] && start-stop-daemon -S -b -m -p {ASSIST_SD} -x /bin/sh -- -c {shlex.quote(ASSIST_RUN)}\n"
     f"[ -f {BTOUT_MAC} ] && [ -f {BTOUT_SH} ] && start-stop-daemon -S -b -m -p {BTOUT_SD} -x /bin/sh -- {BTOUT_SH}\n"
     # свои слова активации: демон из yam-пакета, стартуем из /data (rootfs-init после OTA пропадает)
     + wakeword_boot_lines(android=False) +
@@ -3279,7 +3280,8 @@ echo @@BLUEZ
             f"[ -x {ASSISTD} ] && echo @installed && md5sum {ASSISTD}; "
             f"[ -f {ASSIST_DIR}/assistant_max.py ] && echo @pymd5 && md5sum {ASSIST_DIR}/assistant_max.py; "
             f"[ -f {ASSIST_SD} ] && kill -0 $(cat {ASSIST_SD}) 2>/dev/null "
-            f"&& echo @running; echo @status; cat {ASSIST_STATUS} 2>/dev/null; echo; true", check=False)
+            f"&& echo @running; [ -f {ASSIST_NO_AUTOSTART} ] && echo @noautostart; "
+            f"echo @status; cat {ASSIST_STATUS} 2>/dev/null; echo; true", check=False)
         out = strip_ansi(out)
         flags = set(re.findall(r"^@(\w+)$", out, re.M))
         try:
@@ -3308,8 +3310,22 @@ echo @@BLUEZ
         if local_py:
             outdated = outdated or not py_md5 or py_md5 != local_py
         return {"supported": True, "installed": "installed" in flags, "running": running, "config": cfg,
+                "autostart": "noautostart" not in flags,
                 "outdated": outdated,
                 "state": state if running else {}}
+
+    def assistant_autostart(self, on):
+        """Включает/выключает только запуск процесса после перезагрузки."""
+        flag = shlex.quote(ASSIST_NO_AUTOSTART)
+        if on:
+            self.adb.shell(f"rm -f {flag}", check=False)
+        else:
+            self.adb.shell(f"mkdir -p {shlex.quote(WEB_DIR)}; touch {flag}; chmod 644 {flag}", check=False)
+        try:
+            self._ensure_hook()
+        except AdbError:
+            pass
+        return self.assistant_status()
 
     def _assist_proxy_value(self, old, new):
         """Маска пароля не должна затирать сохранённый прокси при сохранении формы."""
@@ -7587,6 +7603,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/privacy": lambda: p.privacy_set(bool(d.get("enabled"))),
             "/api/privacy/purge": p.privacy_purge,
             "/api/assistant": lambda: p.assistant_set(d),
+            "/api/assistant/autostart": lambda: p.assistant_autostart(bool(d.get("on"))),
             "/api/assistant/install": p.assistant_install,
             "/api/assistant/start": p.assistant_start,
             "/api/assistant/daemon/stop": p.assistant_daemon_stop,
@@ -8139,16 +8156,23 @@ def _max_assistant_launch_local(assistant_dir=None, pid_path=None):
 
 
 def _max_assistant_autostart_worker(assistant_dir=None, log_path=None, attempts=36,
-                                    delay=5, sleep=None, launch=None):
+                                    delay=5, sleep=None, launch=None, autostart_path=None):
     """Ожидаем файлы /data, запускаем ассистента и оставляем диагностический след."""
     directory = Path(assistant_dir or ASSIST_DIR)
     pidfile = Path(ASSIST_SD)
+    disabled = Path(autostart_path or ASSIST_NO_AUTOSTART)
     pause = sleep or time.sleep
     start = launch or _max_assistant_launch_local
     record = lambda message: _max_assistant_boot_log(message, log_path)
     record("WORKER_STARTED")
+    if disabled.exists():
+        record("AUTOSTART_DISABLED")
+        return False
     for attempt in range(1, attempts + 1):
         pause(delay)
+        if disabled.exists():
+            record("AUTOSTART_DISABLED")
+            return False
         ready_config = (directory / "config.json").is_file()
         launcher = directory / "assistantd"
         ready_launcher = launcher.is_file() and os.access(launcher, os.X_OK)

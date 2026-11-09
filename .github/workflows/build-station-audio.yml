@@ -1,0 +1,56 @@
+name: Build StationAudio DEX
+
+on:
+  push:
+    branches: [fix/max-android-say, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile first-party Android audio player
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -f "$SDK/platforms/android-34/android.jar"
+          mkdir -p build/station-audio/classes build/station-audio/dex
+          javac --release 8 -cp "$SDK/platforms/android-34/android.jar" \
+            -d build/station-audio/classes device/android_audio/StationAudio.java
+          TOOLS="$(find "$SDK/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$TOOLS/d8" --min-api 28 \
+            --lib "$SDK/platforms/android-34/android.jar" \
+            --output build/station-audio/dex \
+            build/station-audio/classes/StationAudio*.class
+          cp build/station-audio/dex/classes.dex build/station-audio/StationAudio.dex
+          sha256sum build/station-audio/StationAudio.dex
+          python - <<'PY'
+          import base64
+          import hashlib
+          from pathlib import Path
+          import max_profile
+
+          compiled = Path("build/station-audio/StationAudio.dex").read_bytes()
+          committed = Path("device/android_audio/StationAudio.dex").read_bytes()
+          embedded = base64.b64decode(max_profile._MAX_AUDIO_DEX_BASE64)
+          digest = hashlib.sha256(compiled).hexdigest()
+          assert compiled == committed == embedded, "DEX differs between build, source file and Python bundle"
+          assert digest == max_profile._MAX_AUDIO_DEX_SHA256
+          print("Android DEX matches compiled source and bundled payload")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: station-audio-dex
+          path: build/station-audio/StationAudio.dex
+      - name: Run Max profile regression tests
+        run: |
+          python -m pip install pytest
+          python -m py_compile max_profile.py tests/test_max_profile.py
+          python -m pytest tests/test_max_profile.py -q
+

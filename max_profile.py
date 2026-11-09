@@ -22,6 +22,7 @@ import struct
 import time
 import threading
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 try:
@@ -53,6 +54,160 @@ _MAX_USER_ADDR = 0x0000FFFFFFFFFFFF  # 48-bit user-space address on AArch64
 _POSIX = os.name == "posix"
 
 _log = logging.getLogger(__name__)
+
+# Встроенный DEX собирается из device/android_audio/StationAudio.java.
+# Для локальной Android-установки он распаковывается в каталог данных панели.
+_MAX_AUDIO_DEX_PATH = Path("/data/yapanel-state/bin/StationAudio.dex")
+_MAX_AUDIO_TMP_DIR = Path("/data/yapanel-state/tmp")
+_MAX_AUDIO_DEX_SHA256 = "9b8bd5f89cc99b0ad9f8cf4a83d325c0f5e4e4d529d0ba3ab10ac5ec321fc8ea"
+_MAX_AUDIO_DEX_BASE64 = (
+    "ZGV4CjAzOQCXuKuA2OU3syyIt2N4tdT7wun0D0e9hrBAEAAAcAAAAHhWNBIAAAAAAAAAAHAPAABT"
+    "AAAAcAAAABwAAAC8AQAAFQAAACwCAAAIAAAAKAMAACoAAABoAwAABAAAALgEAAAICwAAOAUAABAJ"
+    "AAAVCQAAHwkAACcJAABVCQAAbwkAAIcJAACKCQAAjgkAAJEJAACUCQAAmAkAAJwJAACuCQAAwAkA"
+    "ANIJAADiCQAACwoAACwKAABeCgAAiwoAAKgKAAC+CgAA0woAAPgKAAAYCwAANwsAAEcLAABeCwAA"
+    "dQsAAIkLAACfCwAAswsAAM4LAADiCwAADwwAACAMAAA6DAAATQwAAG8MAAByDAAAdgwAAHoMAAB/"
+    "DAAAggwAAIgMAACNDAAAogwAAK8MAAC3DAAAvgwAAMcMAADMDAAA0gwAANcMAADoDAAA9AwAAPwM"
+    "AAACDQAACA0AABINAAAYDQAAJg0AAC8NAAA1DQAAQg0AAEsNAABUDQAAWg0AAGMNAABoDQAAbQ0A"
+    "AIENAACRDQAAoA0AALkNAADNDQAA1w0AAN4NAADoDQAA9g0AAAIOAAAJDgAABgAAAAgAAAAMAAAA"
+    "DQAAAA4AAAAPAAAAEAAAABEAAAASAAAAEwAAABQAAAAVAAAAFgAAABcAAAAYAAAAGQAAABoAAAAb"
+    "AAAAHAAAAB0AAAAeAAAAHwAAACAAAAAhAAAAIgAAACcAAAArAAAALgAAAAYAAAAAAAAAAAAAAAcA"
+    "AAAAAAAAxAgAAAoAAAAGAAAAzAgAAAkAAAAHAAAAAAAAAAkAAAAMAAAAAAAAAAkAAAAVAAAAAAAA"
+    "AAoAAAAWAAAAzAgAAAsAAAAWAAAA1AgAACcAAAAZAAAAAAAAACgAAAAZAAAAzAgAACkAAAAZAAAA"
+    "3AgAACkAAAAZAAAArAgAACkAAAAZAAAAtAgAACkAAAAZAAAA5AgAACkAAAAZAAAA7AgAACkAAAAZ"
+    "AAAA1AgAACoAAAAZAAAA9AgAACkAAAAZAAAAxAgAACsAAAAaAAAAAAAAACwAAAAaAAAA/AgAAC0A"
+    "AAAaAAAACAkAAAIAGABPAAAAAgAMAFAAAAADABgATwAAAAMADABQAAAABAAYAE8AAAAEAAwAUAAA"
+    "AAUAAAAjAAAAFwARADMAAAACABAAAgAAAAIADQA9AAAAAwAQAAIAAAADABMAPgAAAAQAEAACAAAA"
+    "BAAIAEUAAAAFAAgAAgAAAAUAEQA6AAAABQABAD8AAAAGAAgAAgAAAAYAAwAxAAAABgACAEgAAAAG"
+    "AAIATAAAAAoACAACAAAACgAIAEEAAAAKAAgARAAAAAoACgBHAAAACgAPAEkAAAAKAAsASgAAAAoA"
+    "DABLAAAACgAIAE0AAAALAA4AAgAAAAsAFABAAAAADAAIADkAAAAMAAQAOwAAAAwACABBAAAADAAI"
+    "AEMAAAAQAA8AAgAAABAAEgAyAAAAEAAFADYAAAAQABIAOAAAABEADwBCAAAAEgAFADcAAAATAAgA"
+    "AgAAABYACAACAAAAFgAGADAAAAAWAAcAMAAAABYABQBOAAAAFwAJADQAAAAYAAkAAgAAABgAAAA1"
+    "AAAAGAAJAEYAAAACAAAAAAAAABMAAACsCAAAJQAAACgPAAC+DgAAAAAAAAMAAAAAAAAAEwAAALQI"
+    "AAAlAAAAQA8AANIOAAAAAAAABAAAAAAAAAATAAAAvAgAACUAAABYDwAA5g4AAAAAAAAFAAAAEQAA"
+    "ABMAAAAAAAAAJQAAAAAAAAD6DgAADg8AAAMAAwABAAAARAgAAAgAAABbAQAAWwIBAHAQIQAAAA4A"
+    "AwACAAIAAABKCAAADAAAAFQSAAASAG4gKQACAFQSAQBuEBoAAgAOAAYABAACAAAAUQgAAC4AAABi"
+    "AwcAIgAWAHAQIgAAABoBJABuICQAEAAMAG4gIwBAAAwEGgABAG4gJAAEAAwEbiAjAFQADARuECUA"
+    "BAAMBG4gHwBDAFQjAgASFG4gKQBDAFQjAwBuEBoAAwAPBAMAAwABAAAAXQgAAAgAAABbAQIAWwID"
+    "AHAQIQAAAA4AAwADAAEAAABjCAAACAAAAFsBBABbAgUAcBAhAAAADgADAAEAAgAAAGkIAAAXAAAA"
+    "VCAEAG4QKAAAAAoAEwF8ADMQDgBiAAcAGgEEAG4gHwAQAFQgBQBuEBoAAAAOAAAACAABAAQAAgBw"
+    "CAAAuAAAACFwEiESEjIgCgBiBwcAGgAmAG4gHwAHAA8BIgAQABIDRgcHA3AgGwBwAG4QHgAAAAoH"
+    "OAeXAG4QHAAAAAoHOQcEACkAjwBxABgAAAAMBzkHBQBxABkAAABxABgAAAAMByIBGAATA3wAcCAn"
+    "ADEAIgMKAHAQDQADACIEBgBwEAkABABuIAwAJAAMBG4gCwAkAAwEbhAKAAQADARuIBAAQwAiBAIA"
+    "cDAAABQHbiASAEMAIgQDAHAwAgAUB24gEwBDAG4QHQAAAAwAbiARAAMAbhAOAAMAbhAUAAMAIgAL"
+    "AHAgFQBwACIEBABwMAQAFAcXBWDqAABuQBYAQGVxABcAAABuECgAAQAKB24QDwADAA8HDQcoIw0H"
+    "YgAHACIBFgBwECIAAQAaBAUAbiAkAEEADAFuECAABwAMB24gJABxAAwHbhAlAAcADAduIB8AcAAA"
+    "AG4QDwADAA8CbhAPAAMAJwdiBwcAGgADAG4gHwAHAA8BPAAAAEgAAQCLAAAAHAAHAAJ/EooBiAEA"
+    "iAEAAAEAAQABAAAAnwgAAAQAAABwECEAAAAOAAEAAQABAAAApAgAAAoAAABxEAgAAAAKADgABQBx"
+    "ECYAAAAOADYCAAAOADkBAA5pWgBBAwAAAA4BIg9pWgA+AgAADgBMAgAADgBPAA6leFsAHQEADlp4"
+    "IIflaT5LeFxaS0tHQI6QeDw9ARAYPE8CezsiKB4BHA8fOR88AkcdeAASAA48ABYBAA5LLT0AAQAA"
+    "AAgAAAABAAAACQAAAAEAAAAUAAAAAQAAABsAAAABAAAAAAAAAAEAAAAVAAAAAQAAAAcAAAABAAAA"
+    "CgAAAAEAAAAMAAAAAgAAABgADAADAAAACgAAAAAAAAACAAAAFAABAAMoKVYACCwgZXh0cmE9AAY8"
+    "aW5pdD4ALEF1ZGlvIGZpbGUgZG9lcyBub3QgZXhpc3Qgb3IgaXMgbm90IHJlYWRhYmxlABhBdWRp"
+    "byBwbGF5YmFjayB0aW1lZCBvdXQAFkNvdWxkIG5vdCBwbGF5IGF1ZGlvOiAAAUkAAklMAAFKAAFM"
+    "AAJMSQACTEwAEExTdGF0aW9uQXVkaW8kMTsAEExTdGF0aW9uQXVkaW8kMjsAEExTdGF0aW9uQXVk"
+    "aW8kMzsADkxTdGF0aW9uQXVkaW87ACdMYW5kcm9pZC9tZWRpYS9BdWRpb0F0dHJpYnV0ZXMkQnVp"
+    "bGRlcjsAH0xhbmRyb2lkL21lZGlhL0F1ZGlvQXR0cmlidXRlczsAMExhbmRyb2lkL21lZGlhL01l"
+    "ZGlhUGxheWVyJE9uQ29tcGxldGlvbkxpc3RlbmVyOwArTGFuZHJvaWQvbWVkaWEvTWVkaWFQbGF5"
+    "ZXIkT25FcnJvckxpc3RlbmVyOwAbTGFuZHJvaWQvbWVkaWEvTWVkaWFQbGF5ZXI7ABRMYW5kcm9p"
+    "ZC9vcy9IYW5kbGVyOwATTGFuZHJvaWQvb3MvTG9vcGVyOwAjTGRhbHZpay9hbm5vdGF0aW9uL0Vu"
+    "Y2xvc2luZ01ldGhvZDsAHkxkYWx2aWsvYW5ub3RhdGlvbi9Jbm5lckNsYXNzOwAdTGRhbHZpay9h"
+    "bm5vdGF0aW9uL1NpZ25hdHVyZTsADkxqYXZhL2lvL0ZpbGU7ABVMamF2YS9pby9QcmludFN0cmVh"
+    "bTsAFUxqYXZhL2xhbmcvRXhjZXB0aW9uOwASTGphdmEvbGFuZy9PYmplY3Q7ABRMamF2YS9sYW5n"
+    "L1J1bm5hYmxlOwASTGphdmEvbGFuZy9TdHJpbmc7ABlMamF2YS9sYW5nL1N0cmluZ0J1aWxkZXI7"
+    "ABJMamF2YS9sYW5nL1N5c3RlbTsAK0xqYXZhL3V0aWwvY29uY3VycmVudC9hdG9taWMvQXRvbWlj"
+    "SW50ZWdlcjsAD01BWF9QTEFZQkFDS19NUwAYTWVkaWFQbGF5ZXIgZXJyb3I6IHdoYXQ9ABFTdGF0"
+    "aW9uQXVkaW8uamF2YQAgVXNhZ2U6IFN0YXRpb25BdWRpbyA8YXVkaW8tZmlsZT4AAVYAAlZJAAJW"
+    "TAADVkxMAAFaAARaTElJAANaTEoAE1tMamF2YS9sYW5nL1N0cmluZzsAC2FjY2Vzc0ZsYWdzAAZh"
+    "cHBlbmQABWJ1aWxkAAdjYW5SZWFkAANlcnIABGV4aXQAA2dldAAPZ2V0QWJzb2x1dGVQYXRoAApn"
+    "ZXRNZXNzYWdlAAZpc0ZpbGUABGxvb3AABG1haW4ACG15TG9vcGVyAARuYW1lAAxvbkNvbXBsZXRp"
+    "b24AB29uRXJyb3IABHBsYXkAC3Bvc3REZWxheWVkAAdwcmVwYXJlAAdwcmludGxuAARxdWl0AAdy"
+    "ZWxlYXNlAANydW4AA3NldAASc2V0QXVkaW9BdHRyaWJ1dGVzAA5zZXRDb250ZW50VHlwZQANc2V0"
+    "RGF0YVNvdXJjZQAXc2V0T25Db21wbGV0aW9uTGlzdGVuZXIAEnNldE9uRXJyb3JMaXN0ZW5lcgAI"
+    "c2V0VXNhZ2UABXN0YXJ0AAh0b1N0cmluZwAMdmFsJGV4aXRDb2RlAAp2YWwkbG9vcGVyAAV2YWx1"
+    "ZQCcAX5+RDh7ImJhY2tlbmQiOiJkZXgiLCJjb21waWxhdGlvbi1tb2RlIjoiZGVidWciLCJoYXMt"
+    "Y2hlY2tzdW1zIjpmYWxzZSwibWluLWFwaSI6MjgsInNoYS0xIjoiMDg0YTg5MTI2YWUwNTk2YzU5"
+    "OTE0M2RmNTdhNjU0NjQ2YWYyODMxMyIsInZlcnNpb24iOiI5LjIuNC1kZXYifQACDwFRHAEXAAIN"
+    "AVEaCAIOAi8EADweAAIBAQCQIAGQIACAgAS4CgEB2AoAAgEBApAgAZAgAoCABOwLAwGACwACAQEE"
+    "kCABkCAEgIAEjAwFAawMAQADAAYaBoKABIgQAQmgEAEK7AwBRGDqAAABAAAAqA4AAAIAAACwDgAA"
+    "tg4AABwPAAAAAAAAAQAAAAAAAAAAAAAAFA8AABwPAAAAAAAAAQAAAAAAAAACAAAAFA8AABwPAAAA"
+    "AAAAAQAAAAAAAAAEAAAAFA8AABEAAAAAAAAAAQAAAAAAAAABAAAAUwAAAHAAAAACAAAAHAAAALwB"
+    "AAADAAAAFQAAACwCAAAEAAAACAAAACgDAAAFAAAAKgAAAGgDAAAGAAAABAAAALgEAAABIAAACQAA"
+    "ADgFAAADIAAACQAAAEQIAAABEAAADAAAAKwIAAACIAAAUwAAABAJAAAEIAAAAwAAAKgOAAAAIAAA"
+    "BAAAAL4OAAAFIAAAAQAAAA4PAAADEAAAAgAAABQPAAAGIAAAAwAAACgPAAAAEAAAAQAAAHAPAAA="
+)
+_MAX_SAY_LOCK = threading.Lock()
+
+
+def _max_audio_player():
+    """Установить и проверить наш Android-проигрыватель без доступа к /odm."""
+    target = _MAX_AUDIO_DEX_PATH
+    if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() == _MAX_AUDIO_DEX_SHA256:
+        return target
+
+    data = base64.b64decode(_MAX_AUDIO_DEX_BASE64)
+    if hashlib.sha256(data).hexdigest() != _MAX_AUDIO_DEX_SHA256:
+        raise RuntimeError("Контрольная сумма встроенного Android-проигрывателя не совпадает")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".new")
+    try:
+        temporary.write_bytes(data)
+        temporary.chmod(0o644)
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return target
+
+
+def _max_android_say(text):
+    """Синтезировать речь и проиграть через стандартный Android MediaPlayer."""
+    if not _MAX_SAY_LOCK.acquire(blocking=False):
+        raise RuntimeError("Другое озвучивание уже выполняется")
+    try:
+        dex = _max_audio_player()
+        url = (
+            "https://translate.google.com/translate_tts"
+            "?ie=UTF-8&tl=ru&client=tw-ob&q=" + urllib.parse.quote(text)
+        )
+        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            content_type = response.headers.get("Content-Type", "")
+            audio = response.read(1_000_001)
+
+        if not content_type.lower().startswith("audio/") or not 256 < len(audio) <= 1_000_000:
+            raise RuntimeError("Сервис синтеза речи вернул некорректные аудиоданные")
+
+        temp_dir = _MAX_AUDIO_TMP_DIR
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix="say-", suffix=".mp3", dir=str(temp_dir),
+                                         delete=False) as output:
+            output.write(audio)
+            audio_path = output.name
+
+        try:
+            env = os.environ.copy()
+            env["CLASSPATH"] = str(dex)
+            result = subprocess.run(
+                ["/system/bin/app_process", "/system/bin", "StationAudio", audio_path],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=65,
+                check=False,
+            )
+            if result.returncode != 0:
+                detail = (result.stderr or "").strip()[-500:]
+                raise RuntimeError(f"Android-проигрыватель завершился с кодом {result.returncode}: {detail}")
+        finally:
+            os.unlink(audio_path)
+    finally:
+        _MAX_SAY_LOCK.release()
+
 
 
 def _shell_result(res):
@@ -1760,6 +1915,16 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
                 return {"ok": True, "method": "glagol"}
             except Exception:
                 pass
+
+        # Локальный Android: штатные start-stop-daemon и playaudio могут отсутствовать.
+        if getattr(self.adb, "is_local", False):
+            try:
+                _max_android_say(text)
+            except Exception as exc:
+                # Не записываем текст в журнал: HTTP-ошибка TTS может содержать исходный URL.
+                _log.warning("Не удалось воспроизвести текст на Станции Макс: %s", type(exc).__name__)
+                raise AdbError(f"Озвучивание не удалось: {type(exc).__name__}") from exc
+            return {"ok": True, "method": "tts_android"}
 
         # 2. Native TTS fallback
         tts_url = "https://translate.google.com/translate_tts?ie=UTF-8&tl=ru&client=tw-ob&q=" + urllib.parse.quote(text)

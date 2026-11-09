@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import profiles
 import max_profile
@@ -59,6 +59,7 @@ class MaxProfileTests(unittest.TestCase):
         profiles.install(s, "max")
         p = s.Panel(Mock())
         p.glagol = SimpleNamespace(ws=None)
+        p.adb.is_local = False
         p.detach = Mock()
 
         result = p.say("Привет мир")
@@ -68,6 +69,53 @@ class MaxProfileTests(unittest.TestCase):
         tag, script = p.detach.call_args.args
         self.assertEqual(tag, "say")
         self.assertIn(quote("Привет мир"), script)
+
+    def test_max_say_uses_android_player_when_local(self):
+        s = fresh_server()
+        profiles.install(s, "max")
+        p = s.Panel(Mock())
+        p.glagol = SimpleNamespace(ws=None)
+        p.adb.is_local = True
+        with patch.object(max_profile, "_max_android_say") as say:
+            result = p.say("Привет мир")
+        self.assertEqual(result, {"ok": True, "method": "tts_android"})
+        say.assert_called_once_with("Привет мир")
+
+    def test_max_android_player_installs_verified_dex(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as work:
+            target = Path(work) / "bin" / "StationAudio.dex"
+            with patch.object(max_profile, "_MAX_AUDIO_DEX_PATH", target):
+                self.assertEqual(max_profile._max_audio_player(), target)
+                self.assertTrue(target.is_file())
+                self.assertEqual(
+                    max_profile.hashlib.sha256(target.read_bytes()).hexdigest(),
+                    max_profile._MAX_AUDIO_DEX_SHA256,
+                )
+                self.assertEqual(max_profile._max_audio_player(), target)
+
+    def test_max_android_say_downloads_and_plays_audio(self):
+        import tempfile
+
+        audio = bytes.fromhex("fff3") + b"0" * 512
+        response = MagicMock()
+        response.headers = {"Content-Type": "audio/mpeg"}
+        response.read.return_value = audio
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+
+        with tempfile.TemporaryDirectory() as work:
+            work_dir = Path(work)
+            with patch.object(max_profile, "_MAX_AUDIO_TMP_DIR", work_dir), \
+                 patch.object(max_profile, "_max_audio_player", return_value=work_dir / "player.dex"), \
+                 patch.object(max_profile.urllib.request, "urlopen", return_value=response) as urlopen, \
+                 patch.object(max_profile.subprocess, "run", return_value=SimpleNamespace(returncode=0, stderr="")) as run:
+                max_profile._max_android_say("Привет мир")
+
+            self.assertIn(quote("Привет мир"), urlopen.call_args.args[0].full_url)
+            self.assertEqual(run.call_args.args[0][2], "StationAudio")
+            self.assertFalse(list(work_dir.glob("say-*.mp3")))
 
     def test_max_render_matrix_text(self):
         buf = max_profile.render_matrix_text("12:34", 180)

@@ -1,17 +1,70 @@
-# yapanel-web_max — панель управления Яндекс Станцией Макс
+<div align="center">
 
-Это веб-панель для Станции Макс с root-доступом. Она собирает в одном окне музыку, свет, звук, микрофоны, LED-матрицу и системные инструменты — то, что обычно разбросано по приложениям и adb-командам.
+<img src="static/icons/icon-192.png" width="76" alt="Иконка yapanel">
 
-Панель может жить прямо на колонке: запускается вместе с ней и открывается с телефона или ноутбука по адресу `http://<IP_колонки>:8765`. А может работать на ПК или домашнем сервере — тогда к станции она подключается по Wi-Fi.
+# yapanel
 
-Всё управление идёт по локальной сети. Облачные аккаунты, подписки и внешние серверы для работы панели не нужны.
+**Панель управления Яндекс Станцией Макс**
+
+Музыка, звук, свет, микрофоны, LED-экран и root-инструменты — в одном окне.  
+Работает на самой колонке или на компьютере в той же Wi-Fi-сети.
+
+[![Release](https://img.shields.io/github/v/release/Timobzdecc/yapanel-web_max?style=for-the-badge&logo=github&label=release)](https://github.com/Timobzdecc/yapanel-web_max/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Station%20Max-ff6a00?style=for-the-badge)](https://github.com/Timobzdecc/yapanel-web_max)
+
+</div>
+
+![Обзор панели управления Яндекс Станцией Макс](docs/screenshots/readme-overview.png)
 
 > [!WARNING]
 > Неофициальный проект, не связан с Яндексом и не одобрен им. Панель работает только на колонке, где **уже получен root-доступ по adb**, и сама колонку не рутирует. Консоль и файловый менеджер дают полный root-доступ к системе — используйте осознанно.
 
-![Обзор панели управления Яндекс Станцией Макс](docs/screenshots/station_max_overview.png)
+## 🎉 Что нового в 0.3.10
 
----
+**Звуки Bluetooth, галерея анимаций и кольцо, которое снова светится.**
+
+- **Звуки Bluetooth** — свой звук включения и выключения, «тишина вместо фразы», загрузка через панель и автозапуск после перезагрузки.
+- **Галерея анимаций** — 10 пресетов для LED-экрана 25×16 и 6 цветных для кольца. Живые превью, установка на загрузку и системные анимации.
+- **Кольцо починено** — «На колонке» больше не падает, установка показывает «изменена», после ребута ничего не откатывается.
+- **Компактный редактор кольца** — кадры с мини-кольцами, выбор точки кликом, пикер цвета и «Залить все».
+
+**[Скачать 0.3.10](https://github.com/Timobzdecc/yapanel-web_max/releases/tag/v0.3.10)** · **[Полный чейнжлог](https://github.com/Timobzdecc/yapanel-web_max/blob/main/docs/release-notes/v0.3.10.md)**
+
+## 📸 Скриншоты
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/readme-animations.png" alt="Галерея анимаций LED-экрана">
+      <br><b>Анимации LED-экрана</b><br>
+      <sub>10 готовых пресетов: портал, плазма, куб, огонь, цифровой дождь и другие.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/readme-ring.png" alt="Редактор анимаций кольца">
+      <br><b>Кольцо 24 LED</b><br>
+      <sub>Цветные пресеты, компактные кадры и правка цвета выбранной точки.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/readme-bluetooth.png" alt="Звуки Bluetooth в панели">
+      <br><b>Звуки Bluetooth</b><br>
+      <sub>Свои джинглы, тишина вместо фразы Алисы и автозапуск демона.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/readme-charts.png" alt="Графики температуры, памяти и нагрузки">
+      <br><b>Мониторинг</b><br>
+      <sub>Температура, память, нагрузка, Wi-Fi и диск — с историей за сутки.</sub>
+    </td>
+  </tr>
+</table>
+
+<details>
+<summary><b>📱 Мобильная версия</b></summary>
+<br>
+<img src="docs/screenshots/readme-mobile.png" width="320" alt="Мобильная версия панели">
+</details>
 
 ## Зачем это нужно
 
@@ -24,17 +77,17 @@
 - **Светомузыка и Ambilight.** 12 пресетов, пространственное расположение ламп и синхронизация света с фильмом.
 - **Понятные root-инструменты.** Консоль, файлы, логи, температура и память — без запоминания adb-команд.
 
----
+## 🚀 Установка
 
-## Быстрый старт для Windows
+### Windows — самый простой путь
 
-Самый простой путь — готовый установщик. Python на компьютер ставить не нужно.
+Python на компьютер ставить не нужно.
 
-1. Скачайте архив из [релизов](https://github.com/Timobzdecc/yapanel-web_max/releases/latest):
-   * **[yapanel-web-0.3.10-windows-x64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.10/yapanel-web-0.3.10-windows-x64.zip)** — для обычных ПК;
-   * **[yapanel-web-0.3.10-windows-arm64.zip](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.10/yapanel-web-0.3.10-windows-arm64.zip)** — для ARM-ноутбуков;
-   * или отдельный **[`install_to_max.bat`](https://raw.githubusercontent.com/Timobzdecc/yapanel-web_max/main/install_to_max.bat)** — он сам скачает актуальный установщик.
-2. Распакуйте архив и запустите **`install_to_max.bat`**.
+[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.10/yapanel-web-0.3.10-windows-x64.zip)
+[![Windows arm64](https://img.shields.io/badge/Windows-arm64-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Timobzdecc/yapanel-web_max/releases/download/v0.3.10/yapanel-web-0.3.10-windows-arm64.zip)
+
+1. Скачайте архив и распакуйте его.
+2. Запустите **`install_to_max.bat`**.
 3. Введите IP станции, например `192.168.1.100`.
 
 Установщик сам проверит adb и root, подключится к станции, доустановит нужные библиотеки, зальёт панель в `/data/yapanel`, разложит файлы слов активации в `/data/wakeword` (включая `frida-inject`, negatives и jar), настроит автозапуск и откроет панель в браузере.
@@ -43,11 +96,10 @@
 
 Нужны только **root** и **Python 3** на колонке. Отдельные `maxctl` и `YAM` для слов активации не требуются.
 
----
+<details>
+<summary><b>Ручная установка</b></summary>
 
-## Если ставите вручную
-
-### 🚀 На самой колонке
+### На самой колонке
 
 Станция Макс — полноценный ARM-компьютер, панель на ней работает без внешнего сервера. Положите файлы в `/data/yapanel` и запустите:
 
@@ -57,7 +109,7 @@ adb shell "/data/python/bin/python3 /data/yapanel/server.py --host 0.0.0.0 --por
 
 Автозапуск на Максе идёт через `adbd_watchdog.sh`, который при загрузке вызывает `/data/quasar/webpanel/boot_hook.sh`. Этот хук панель создаёт сама — править `rootkeeper.sh` не нужно. Включить автозапуск можно в настройках панели.
 
-### 💻 На компьютере или сервере
+### На компьютере или сервере
 
 **Windows**
 
@@ -104,7 +156,7 @@ services:
     restart: unless-stopped
 ```
 
----
+</details>
 
 ## Что умеет панель
 
@@ -146,9 +198,7 @@ services:
 
 Пароль с PBKDF2, проверка Origin/CSRF и локальный HTTPS для микрофона браузера. Всё общение — по локальной сети.
 
----
-
-## Параметры командной строки
+## ⚙️ Параметры командной строки
 
 | Аргумент | Переменная | По умолчанию | Описание |
 |---|---|---|---|
@@ -160,7 +210,15 @@ services:
 | `--data-dir` | `PANEL_DATA_DIR` | Папка с `server.py` | Где хранить настройки и метрики |
 | `--open` | — | — | Открыть панель в браузере после старта |
 
----
+## 🧪 Разработка
+
+```bash
+python -m pytest tests -q
+node tests/test_ui_hardening.mjs
+node tests/test_anim_presets.mjs
+```
+
+Панель — Python + ванильный JS без сборки: `server.py`, `api/`, `static/`. Устройство подключается через `adb`; на самой станции панель работает в режиме `--device local`.
 
 ## Лицензия и благодарности
 

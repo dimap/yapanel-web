@@ -1075,6 +1075,21 @@
   .boot-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
   @media (max-width: 900px) { .boot-grid { grid-template-columns: 1fr; } }
   .frames { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 8px; }
+  /* галерея готовых анимаций */
+  .anim-library { margin: 2px 0 14px; }
+  .anim-library[hidden] { display: none; }
+  .anim-library-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .anim-library-head b { font-size: 14px; }
+  .anim-library-head span { color: var(--muted); font-size: 12.5px; }
+  .preset-strip { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 10px; scroll-snap-type: x proximity; }
+  .preset-card { flex: 0 0 128px; scroll-snap-align: start; padding: 8px; border: 1px solid var(--line); border-radius: 14px;
+    background: var(--card); color: var(--text); text-align: left; cursor: pointer; transition: border-color .15s, transform .15s, box-shadow .15s; }
+  .preset-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .preset-card.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .preset-card canvas { display: block; width: 100%; height: auto; margin-bottom: 7px; border-radius: 9px; background: var(--display); }
+  .preset-card b { display: block; font-size: 12.5px; line-height: 1.25; }
+  .preset-card span { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
+  @media (max-width: 600px) { .preset-card { flex-basis: 112px; } }
   .anim-pick { gap: 8px; flex-wrap: nowrap; min-width: 0; }
   .anim-pick select { min-height: 36px; padding: 0 10px; max-width: 260px; min-width: 0; }
   [data-boot-only][hidden] { display: none !important; }
@@ -1096,6 +1111,8 @@
   .anim-pending span { flex: 1 1 260px; }
   .ra-preview { display: flex; justify-content: center; gap: 18px; padding: 22px; border-radius: 14px; background: var(--display); }
   .ra-preview span { width: 46px; height: 46px; border-radius: 50%; background: #000; box-shadow: 0 0 18px 2px var(--glow, transparent); transition: background .05s; }
+  .ra-preview.many { position: relative; display: block; width: min(100%, 280px); aspect-ratio: 1; height: auto; margin: 0 auto; padding: 0; }
+  .ra-preview.many span { position: absolute; width: 20px; height: 20px; transform: translate(-50%, -50%); box-shadow: 0 0 12px 1px var(--glow, transparent); }
   .ra-frames { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; }
   .ra-frame { display: flex; align-items: center; gap: 6px; }
   .ra-frame .n { width: 26px; font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; flex: none; }
@@ -2092,6 +2109,10 @@
         <span>Алиса подхватит изменённые анимации только после перезапуска — колонку перезагружать не нужно.</span>
         <button class="btn sm primary" data-anim-restart>Перезапустить Алису</button>
       </div>
+      <div class="anim-library" id="matrix-library" hidden>
+        <div class="anim-library-head"><b>Готовые анимации</b><span>Нажмите карточку — она откроется в редакторе</span></div>
+        <div class="preset-strip" id="matrix-preset-strip" aria-label="Готовые анимации экрана 25×16"></div>
+      </div>
       <div class="frames" id="boot-frames" aria-label="Кадры"></div>
       <div class="boot-grid">
         <div class="col">
@@ -2154,6 +2175,10 @@
       <div class="anim-pending" data-anim-pending hidden>
         <span>Алиса подхватит изменённые анимации только после перезапуска — колонку перезагружать не нужно.</span>
         <button class="btn sm primary" data-anim-restart>Перезапустить Алису</button>
+      </div>
+      <div class="anim-library" id="ring-library" hidden>
+        <div class="anim-library-head"><b>Готовые анимации кольца</b><span>Нажмите карточку — она откроется в редакторе</span></div>
+        <div class="preset-strip" id="ring-preset-strip" aria-label="Готовые анимации кольца"></div>
       </div>
       <div class="boot-grid">
         <div class="col">
@@ -3178,7 +3203,8 @@
   <div class="actions"><button class="btn sm" id="ab-snooze">Отложить</button><button class="btn sm primary" id="ab-stop">Выключить</button></div>
 </div>
 
-<script src="static/app.js?v=0.3.9-assistant"></script>
+<script src="static/anim-presets.js?v=0.3.10-gallery"></script>
+<script src="static/app.js?v=0.3.10-gallery"></script>
 <script type="module">
 import { bindVoiceInput } from './static/voice-input.js';
 import { startAsciiBackground } from './static/ascii-background.js';

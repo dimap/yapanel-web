@@ -1237,6 +1237,8 @@ async function loadBoot() {
     renderBootStatus();
     await loadClockAnim();
     if (!ra.name && $('#anim-ring').value) loadRingAnim();
+    mountPresetGallery('matrix');
+    mountPresetGallery('ring');
   } catch (e) { if (!e.offline) $('#boot-status').innerHTML = `<span class="badge bad">${esc(e.message)}</span>`; }
 }
 async function loadClockAnim() {
@@ -1259,6 +1261,7 @@ async function loadClockAnim() {
 $('#anim-clock').onchange = e => {
   if (e.target.value === '__new') return myNewFromSelect('clock', () => ({ frames: bootFull() }), loadClockAnim);
   e.target.dataset.cur = e.target.value;
+  markPresetSelected('matrix', null);
   loadClockAnim().catch(err => err.offline || toast(err.message, true));
 };
 // Кисть яркости: щелчок зажигает сегмент её яркостью, повторный по такому же — гасит; правый — пипетка.
@@ -1420,7 +1423,19 @@ function raShow(c) {
   spans.forEach((s, i) => { const v = c?.[i] || [0, 0, 0]; s.style.background = `rgb(${v})`; s.style.setProperty('--glow', v.some(x => x > 20) ? `rgba(${v},.6)` : 'transparent'); });
 }
 function renderRa() {
-  $('#ra-preview').innerHTML = '<span></span>'.repeat(raPixels());
+  const n = raPixels();
+  const host = $('#ra-preview');
+  const many = n > 8;
+  host.classList.toggle('many', many);
+  host.innerHTML = '<span></span>'.repeat(n);
+  if (many) {
+    // 24 LED Макса: раскладываем точки по кругу, иначе они сжимаются в полоски.
+    [...host.children].forEach((span, i) => {
+      const angle = -Math.PI / 2 + i / n * Math.PI * 2;
+      span.style.left = `${50 + 40 * Math.cos(angle)}%`;
+      span.style.top = `${50 + 40 * Math.sin(angle)}%`;
+    });
+  }
   raShow(ra.frames[0]?.c);
   $('#ra-loop').checked = ra.loop;
   $('#ra-loop').disabled = !ra.simple;
@@ -1486,6 +1501,7 @@ async function loadRingAnim() {
 $('#anim-ring').onchange = e => {
   if (e.target.value === '__new') return myNewFromSelect('ring', () => ({ text: $('#ra-text').value }), loadRingAnim);
   e.target.dataset.cur = e.target.value;
+  markPresetSelected('ring', null);
   loadRingAnim().catch(err => err.offline || toast(err.message, true));
 };
 $('#ra-load-default').onclick = e => act(e.currentTarget, async () => {
@@ -1509,6 +1525,151 @@ $('#ra-reset').onclick = e => confirm(`Вернуть стандартную а�
   boot.status = await api('/api/clock/boot');
   fillAnimSelect('ring'); renderBootStatus(); animPending(true); await loadRingAnim();
 }, 'Стандартная анимация восстановлена');
+
+// ---------- готовые анимации ----------
+// Кадры генерирует static/anim-presets.js. Галерея только показывает пресеты
+// и кладёт выбранный в текущий редактор: дальше работают обычные кнопки.
+const presetBuilt = new Map();
+const presetSelected = { matrix: null, ring: null };
+let presetTicker = 0;
+
+const presetList = kind => (window.AnimPresets?.[kind]) || [];
+
+function presetData(kind, id) {
+  const key = kind + ':' + id;
+  if (!presetBuilt.has(key)) {
+    const spec = presetList(kind).find(p => p.id === id);
+    if (!spec) return null;
+    const built = spec.build();
+    built.duration = built.frames.reduce((sum, f) => sum + f.ms, 0);
+    presetBuilt.set(key, built);
+  }
+  return presetBuilt.get(key);
+}
+
+function drawMatrixPreset(canvas, pixels) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#0d0e11';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const cell = canvas.width / 25;
+  for (let i = 0; i < Math.min(pixels.length, 400); i++) {
+    const b = pixels[i];
+    if (!b) continue;
+    const x = (i % 25) * cell, y = Math.floor(i / 25) * cell;
+    ctx.fillStyle = `rgba(255,255,255,${(0.12 + 0.88 * b / 255).toFixed(3)})`;
+    ctx.fillRect(x + 0.5, y + 0.5, cell - 1, cell - 1);
+  }
+}
+
+function drawRingPreset(canvas, colors) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#0d0e11';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const radius = Math.min(canvas.width, canvas.height) / 2 - 9;
+  const leds = colors || [];
+  for (let i = 0; i < leds.length; i++) {
+    const a = -Math.PI / 2 + i / leds.length * Math.PI * 2;
+    const x = cx + Math.cos(a) * radius, y = cy + Math.sin(a) * radius;
+    const [r, g, b] = leds[i];
+    ctx.beginPath();
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.shadowColor = `rgba(${r},${g},${b},.8)`;
+    ctx.shadowBlur = 5;
+    ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function drawPresetCard(card) {
+  const st = card._preset;
+  if (!st) return;
+  if (st.kind === 'matrix') drawMatrixPreset(card._canvas, st.built.frames[st.index].v);
+  else drawRingPreset(card._canvas, st.built.frames[st.index].c);
+}
+
+function startPresetTicker() {
+  if (presetTicker) return;
+  presetTicker = setInterval(() => {
+    if (document.hidden || $('#tab-boot').hidden) return;
+    $$('.preset-card').forEach(card => {
+      if (!card._preset) return;
+      const active = card.classList.contains('sel') || card.matches(':hover') || card === document.activeElement;
+      if (!active) return;
+      card._preset.index = (card._preset.index + 1) % card._preset.built.frames.length;
+      drawPresetCard(card);
+    });
+  }, 90);
+}
+
+function markPresetSelected(kind, id) {
+  presetSelected[kind] = id;
+  $$(`#${kind}-preset-strip .preset-card`).forEach(card => {
+    const on = card.dataset.preset === id;
+    card.classList.toggle('sel', on);
+    card.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+function mountPresetGallery(kind) {
+  const box = $(kind === 'matrix' ? '#matrix-library' : '#ring-library');
+  const host = $(kind === 'matrix' ? '#matrix-preset-strip' : '#ring-preset-strip');
+  if (!box || !host || !window.AnimPresets) return;
+  if (!window.__isMatrix) { box.hidden = true; return; }
+  box.hidden = false;
+  if (!host._mounted) {
+    host._mounted = true;
+    host.innerHTML = presetList(kind).map(p => {
+      const data = presetData(kind, p.id);
+      const secs = data ? (data.duration / 1000).toFixed(1) : '';
+      return `<button type="button" class="preset-card" data-preset="${esc(p.id)}"
+        aria-pressed="false" title="${esc(p.desc)} — ${data ? data.frames.length : 0} кадров, ${secs} с">
+        <canvas width="100" height="64" aria-hidden="true"></canvas>
+        <b>${esc(p.title)}</b><span>${esc(p.desc)}</span></button>`;
+    }).join('');
+    $$(`#${kind}-preset-strip .preset-card`).forEach(card => {
+      const id = card.dataset.preset;
+      const built = presetData(kind, id);
+      if (!built) return;
+      card._canvas = card.querySelector('canvas');
+      card._preset = { kind, id, built, index: Math.floor(built.frames.length * 0.35) };
+      drawPresetCard(card);
+      card.onclick = () => {
+        if (kind === 'matrix') applyMatrixPreset(id);
+        else applyRingPreset(id);
+      };
+      card.onmouseenter = startPresetTicker;
+      card.onfocus = startPresetTicker;
+    });
+    startPresetTicker();
+  }
+  markPresetSelected(kind, presetSelected[kind]);
+}
+
+function applyMatrixPreset(id) {
+  const data = presetData('matrix', id);
+  if (!data) return;
+  const pause = +$('#boot-pause').value || 0;
+  setBootFrames(structuredClone(data.frames));
+  if (isBootAnim()) $('#boot-pause').value = pause || 3300;
+  checkPause();
+  renderBoot();
+  markPresetSelected('matrix', id);
+  const title = presetList('matrix').find(p => p.id === id)?.title || 'Анимация';
+  toast(`«${title}» открыта в редакторе`);
+}
+
+function applyRingPreset(id) {
+  const data = presetData('ring', id);
+  if (!data) return;
+  raSetText(data.text);
+  markPresetSelected('ring', id);
+  const title = presetList('ring').find(p => p.id === id)?.title || 'Анимация';
+  toast(`«${title}» открыта в редакторе`);
+}
 
 // ---------- bluetooth ----------
 

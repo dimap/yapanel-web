@@ -1113,6 +1113,23 @@
   .ra-preview span { width: 46px; height: 46px; border-radius: 50%; background: #000; box-shadow: 0 0 18px 2px var(--glow, transparent); transition: background .05s; }
   .ra-preview.many { position: relative; display: block; width: min(100%, 280px); aspect-ratio: 1; height: auto; margin: 0 auto; padding: 0; }
   .ra-preview.many span { position: absolute; width: 20px; height: 20px; transform: translate(-50%, -50%); box-shadow: 0 0 12px 1px var(--glow, transparent); }
+  .ra-preview.many span.sel { outline: 2px solid #fff; outline-offset: 2px; z-index: 1; }
+  .ra-led-edit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .ra-led-edit[hidden] { display: none; }
+  .ra-led-edit .meta { flex: 1 1 140px; }
+  .ra-led-edit input[type=color] { width: 44px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; }
+  #ra-frames.compact { max-height: 340px; }
+  .ra-frame.many { display: grid; grid-template-columns: 22px 44px minmax(72px, 1fr) auto auto; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 10px; }
+  .ra-frame.many .n { width: auto; text-align: center; }
+  .ra-frame.many.sel { background: var(--accent-soft); }
+  .ra-frame.many canvas { width: 44px; height: 44px; display: block; }
+  .ra-frame.many .ra-ms { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .ra-frame.many input[type=number] { width: 76px; min-width: 0; }
+  .ra-frame.many .btn { color: var(--muted); }
+  @media (max-width: 600px) {
+    .ra-frame.many { grid-template-columns: 18px 38px minmax(64px, 1fr) auto auto; gap: 6px; }
+    .ra-frame.many canvas { width: 38px; height: 38px; }
+  }
   .ra-frames { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; }
   .ra-frame { display: flex; align-items: center; gap: 6px; }
   .ra-frame .n { width: 26px; font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; flex: none; }
@@ -2183,8 +2200,14 @@
       <div class="boot-grid">
         <div class="col">
           <div class="ra-preview" id="ra-preview" aria-hidden="true"></div>
+          <div class="ra-led-edit" id="ra-led-edit" hidden>
+            <span class="meta" id="ra-led-label">Точка 1</span>
+            <input type="color" id="ra-led-color" aria-label="Цвет выбранной точки кольца">
+            <button class="btn sm" id="ra-led-fill">Залить все</button>
+          </div>
           <label class="toggle"><span>Повторять по кругу</span><input type="checkbox" id="ra-loop"></label>
           <div class="ra-frames" id="ra-frames"></div>
+          <p class="hint" id="ra-many-hint" hidden>Нажмите кадр в списке, затем точку на кольце — цвет выбранной точки меняется пикером. «Залить все» красит всё кольцо.</p>
           <div class="row" style="gap:8px" id="ra-visual-btns"><button class="btn sm" id="ra-add"><svg width="14" height="14" aria-hidden="true"><use href="#i-plus"/></svg>Кадр</button></div>
           <p class="hint" id="ra-complex" hidden>В этой анимации есть плавные переходы, градиенты или вращение — их можно править
             только текстом справа. В браузере они показываются упрощённо.</p>
@@ -3203,8 +3226,8 @@
   <div class="actions"><button class="btn sm" id="ab-snooze">Отложить</button><button class="btn sm primary" id="ab-stop">Выключить</button></div>
 </div>
 
-<script src="static/anim-presets.js?v=0.3.10-gallery"></script>
-<script src="static/app.js?v=0.3.10-gallery"></script>
+<script src="static/anim-presets.js?v=0.3.10-gallery4"></script>
+<script src="static/app.js?v=0.3.10-gallery4"></script>
 <script type="module">
 import { bindVoiceInput } from './static/voice-input.js';
 import { startAsciiBackground } from './static/ascii-background.js';

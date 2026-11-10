@@ -71,10 +71,13 @@ assert.ok(html.includes('static/anim-presets.js?v='), 'скрипт галере
 assert.ok(html.includes('id="matrix-preset-strip"'), 'галерея экрана есть в разметке');
 assert.ok(html.includes('id="ring-preset-strip"'), 'галерея кольца есть в разметке');
 assert.ok(html.includes('id="matrix-library"') && html.includes('id="ring-library"'), 'контейнеры галерей');
+assert.ok(html.includes('id="ra-led-edit"'), 'редактор выбранной точки кольца');
+assert.ok(html.includes('id="ra-many-hint"'), 'подсказка для кольца из 24 LED');
 const app = read('static/app.js');
 for (const name of ['mountPresetGallery', 'applyMatrixPreset', 'applyRingPreset', 'startPresetTicker']) {
   assert.ok(app.includes(`function ${name}`), `${name} есть в app.js`);
 }
+assert.ok(app.includes("classList.add('compact')"), 'компактный список кадров кольца');
 assert.ok(!app.includes('innerHTML = `<canvas'), 'карточки собираются без вложенного canvas');
 
 console.log('Animation presets: sizes, brightness, loops, determinism and UI hooks passed');

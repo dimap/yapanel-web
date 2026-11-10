@@ -1398,7 +1398,7 @@ $$('[data-anim-restart]').forEach(b => b.onclick = e => confirm('Перезап�
 
 // ---------- анимации кольца ----------
 // Файл .led — текст; простые (только кадры и loop) правим и визуально, остальные — текстом.
-const ra = { name: null, frames: [], loop: false, simple: true, def: null, timer: 0 };
+const ra = { name: null, frames: [], loop: false, simple: true, def: null, timer: 0, sel: 0, led: 0 };
 const rgbHex = c => c.map(x => clamp(x | 0, 0, 255).toString(16).padStart(2, '0')).join('');
 function parseLedJS(text) {
   const res = { frames: [], loop: false, simple: true };
@@ -1419,13 +1419,47 @@ function parseLedJS(text) {
 const raText = () => (ra.loop ? 'loop\n' : '') + ra.frames.map(f => f.c.map(rgbHex).join(' ') + ' ' + f.ms).join('\n') + '\n';
 const raPixels = () => ra.frames[0]?.c.length || 3;
 function raShow(c) {
+  const many = raPixels() > 8;
   const spans = $$('#ra-preview span');
-  spans.forEach((s, i) => { const v = c?.[i] || [0, 0, 0]; s.style.background = `rgb(${v})`; s.style.setProperty('--glow', v.some(x => x > 20) ? `rgba(${v},.6)` : 'transparent'); });
+  spans.forEach((s, i) => {
+    const v = c?.[i] || [0, 0, 0];
+    s.dataset.i = i;
+    s.style.background = `rgb(${v})`;
+    s.style.setProperty('--glow', v.some(x => x > 20) ? `rgba(${v},.6)` : 'transparent');
+    s.classList.toggle('sel', many && i === ra.led);
+  });
+}
+function drawRingThumb(canvas, colors) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const n = colors.length, cx = canvas.width / 2, cy = canvas.height / 2;
+  const radius = Math.min(cx, cy) - 4;
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI / 2 + i / n * Math.PI * 2;
+    const v = colors[i] || [0, 0, 0];
+    ctx.beginPath();
+    ctx.fillStyle = `rgb(${v})`;
+    ctx.arc(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius, 2.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+function syncRaEdit() {
+  const edit = $('#ra-led-edit');
+  if (!edit) return;
+  const many = raPixels() > 8;
+  const frame = ra.frames[ra.sel];
+  edit.hidden = !many || !frame;
+  if (!many || !frame) return;
+  $('#ra-led-label').textContent = `Точка ${ra.led + 1} из ${raPixels()} · кадр ${ra.sel + 1}`;
+  $('#ra-led-color').value = '#' + rgbHex(frame.c[ra.led] || [0, 0, 0]);
 }
 function renderRa() {
   const n = raPixels();
   const host = $('#ra-preview');
   const many = n > 8;
+  ra.sel = clamp(ra.sel | 0, 0, Math.max(0, ra.frames.length - 1));
+  ra.led = clamp(ra.led | 0, 0, Math.max(0, n - 1));
   host.classList.toggle('many', many);
   host.innerHTML = '<span></span>'.repeat(n);
   if (many) {
@@ -1436,16 +1470,34 @@ function renderRa() {
       span.style.top = `${50 + 40 * Math.sin(angle)}%`;
     });
   }
-  raShow(ra.frames[0]?.c);
+  raShow(ra.frames[ra.sel]?.c);
   $('#ra-loop').checked = ra.loop;
   $('#ra-loop').disabled = !ra.simple;
   $('#ra-complex').hidden = ra.simple;
   $('#ra-frames').hidden = $('#ra-visual-btns').hidden = !ra.simple;
-  $('#ra-frames').innerHTML = ra.frames.map((f, i) => `<div class="ra-frame" data-i="${i}"><span class="n">${i + 1}</span>
-    ${f.c.map((c, k) => `<input type="color" data-k="${k}" value="#${rgbHex(c)}" aria-label="Кадр ${i + 1}, точка ${k + 1}">`).join('')}
-    <input type="number" class="field mono" min="10" max="600000" step="10" value="${f.ms}" aria-label="Длительность кадра ${i + 1}, мс"><span class="meta">мс</span>
-    <button class="btn sm icon ghost" data-a="dup" title="Дублировать кадр" aria-label="Дублировать кадр ${i + 1}">${icon('i-plus', 14)}</button>
-    <button class="btn sm icon ghost" data-a="del" title="Удалить кадр" aria-label="Удалить кадр ${i + 1}">${icon('i-trash', 14)}</button></div>`).join('');
+  const framesHost = $('#ra-frames');
+  if (many) {
+    // Для 24 LED цветные input'ы не помещаются: показываем мини-кольца кадров,
+    // а цвет выбранной точки правим одним пикером под большим превью.
+    framesHost.classList.add('compact');    framesHost.innerHTML = ra.frames.map((f, i) => `<div class="ra-frame many${i === ra.sel ? ' sel' : ''}" data-i="${i}">
+      <span class="n">${i + 1}</span><canvas class="ra-mini" width="44" height="44" aria-hidden="true"></canvas>
+      <span class="ra-ms"><input type="number" class="field mono" min="10" max="600000" step="10" value="${f.ms}" aria-label="Длительность кадра ${i + 1}, мс"><span class="meta">мс</span></span>
+      <button class="btn sm icon ghost" data-a="dup" title="Дублировать кадр" aria-label="Дублировать кадр ${i + 1}">${icon('i-plus', 14)}</button>
+      <button class="btn sm icon ghost" data-a="del" title="Удалить кадр" aria-label="Удалить кадр ${i + 1}">${icon('i-trash', 14)}</button></div>`).join('');
+    $$('#ra-frames .ra-frame.many canvas').forEach(canvas => {
+      const frame = ra.frames[+canvas.closest('.ra-frame').dataset.i];
+      drawRingThumb(canvas, frame.c);
+    });
+  } else {
+    framesHost.classList.remove('compact');
+    framesHost.innerHTML = ra.frames.map((f, i) => `<div class="ra-frame" data-i="${i}"><span class="n">${i + 1}</span>
+      ${f.c.map((c, k) => `<input type="color" data-k="${k}" value="#${rgbHex(c)}" aria-label="Кадр ${i + 1}, точка ${k + 1}">`).join('')}
+      <input type="number" class="field mono" min="10" max="600000" step="10" value="${f.ms}" aria-label="Длительность кадра ${i + 1}, мс"><span class="meta">мс</span>
+      <button class="btn sm icon ghost" data-a="dup" title="Дублировать кадр" aria-label="Дублировать кадр ${i + 1}">${icon('i-plus', 14)}</button>
+      <button class="btn sm icon ghost" data-a="del" title="Удалить кадр" aria-label="Удалить кадр ${i + 1}">${icon('i-trash', 14)}</button></div>`).join('');
+  }
+  syncRaEdit();
+  $('#ra-many-hint').hidden = !many;
   const s = $('#ra-status');
   const my = isMy(ra.name);
   s.innerHTML = my ? '<span class="badge ok">своя анимация</span>' : animCustom.ring.includes(ra.name) ? '<span class="badge ok">изменена</span>' : '<span class="badge">стандартная</span>';
@@ -1456,24 +1508,64 @@ function renderRa() {
 function raSetText(text) {
   $('#ra-text').value = text;
   Object.assign(ra, parseLedJS(text));
+  ra.sel = 0; ra.led = 0;
   renderRa();
+  $('#ra-frames').scrollTop = 0;
 }
 function raChanged() { $('#ra-text').value = raText(); }
 $('#ra-frames').oninput = e => {
   const row = e.target.closest('.ra-frame'); if (!row) return;
   const f = ra.frames[+row.dataset.i];
-  if (e.target.type === 'color') { f.c[+e.target.dataset.k] = hex2rgb(e.target.value); raShow(f.c); }
-  else f.ms = clamp(+e.target.value || 100, 10, 600000);
+  if (!f) return;
+  if (e.target.type === 'color') {
+    f.c[+e.target.dataset.k] = hex2rgb(e.target.value);
+    ra.sel = +row.dataset.i;
+    raShow(f.c);
+    syncRaEdit();
+  } else {
+    f.ms = clamp(+e.target.value || 100, 10, 600000);
+  }
   raChanged();
 };
 $('#ra-frames').onclick = e => {
-  const b = e.target.closest('[data-a]'); if (!b) return;
-  const i = +b.closest('.ra-frame').dataset.i;
-  if (b.dataset.a === 'dup') ra.frames.splice(i + 1, 0, structuredClone(ra.frames[i]));
-  else ra.frames.splice(i, 1);
+  const b = e.target.closest('[data-a]');
+  if (b) {
+    const i = +b.closest('.ra-frame').dataset.i;
+    if (b.dataset.a === 'dup') ra.frames.splice(i + 1, 0, structuredClone(ra.frames[i]));
+    else ra.frames.splice(i, 1);
+    ra.sel = clamp(ra.sel, 0, Math.max(0, ra.frames.length - 1));
+    raChanged(); renderRa();
+    return;
+  }
+  if (e.target.closest('input')) return;
+  const row = e.target.closest('.ra-frame');
+  if (!row) return;
+  ra.sel = +row.dataset.i;
+  renderRa();
+};
+$('#ra-preview').onclick = e => {
+  const span = e.target.closest('span[data-i]');
+  if (!span || raPixels() <= 8) return;
+  ra.led = +span.dataset.i;
+  renderRa();
+};
+$('#ra-led-color').oninput = e => {
+  const f = ra.frames[ra.sel];
+  if (!f) return;
+  f.c[ra.led] = hex2rgb(e.target.value);
+  raChanged();
+  raShow(f.c);
+  const canvas = $(`#ra-frames .ra-frame.many[data-i="${ra.sel}"] canvas`);
+  if (canvas) drawRingThumb(canvas, f.c);
+};
+$('#ra-led-fill').onclick = () => {
+  const f = ra.frames[ra.sel];
+  if (!f) return;
+  const color = hex2rgb($('#ra-led-color').value);
+  f.c = f.c.map(() => color.slice());
   raChanged(); renderRa();
 };
-$('#ra-add').onclick = () => { ra.frames.push({ c: Array.from({ length: raPixels() }, () => hex2rgb(ringHex)), ms: 200 }); raChanged(); renderRa(); };
+$('#ra-add').onclick = () => { ra.frames.push({ c: Array.from({ length: raPixels() }, () => hex2rgb(ringHex)), ms: 200 }); ra.sel = ra.frames.length - 1; raChanged(); renderRa(); };
 $('#ra-loop').onchange = e => { ra.loop = e.target.checked; raChanged(); };
 $('#ra-text').oninput = e => { Object.assign(ra, parseLedJS(e.target.value)); renderRa(); };
 const raSeconds = () => {
@@ -1486,7 +1578,7 @@ $('#ra-preview-btn').onclick = () => {
   const until = Date.now() + raSeconds() * 1000;
   let i = 0;
   const step = () => {
-    if (Date.now() > until || (i >= ra.frames.length && !ra.loop)) return raShow(ra.frames[0]?.c);
+    if (Date.now() > until || (i >= ra.frames.length && !ra.loop)) return raShow(ra.frames[ra.sel]?.c);
     if (i >= ra.frames.length) i = 0;
     raShow(ra.frames[i].c);
     ra.timer = setTimeout(step, Math.max(16, ra.frames[i++].ms));

@@ -2,7 +2,7 @@
 
 <img src="static/icons/icon-192.png" width="76" alt="Иконка yapanel">
 
-# yapanel
+# yapanel-web_max
 
 **Панель управления Яндекс Станцией Макс**
 

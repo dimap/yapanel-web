@@ -54,6 +54,53 @@ class MaxProfileTests(unittest.TestCase):
         self.assertEqual(ver["model"], "max")
         self.assertEqual(ver["quasar_version"], "yandexstation_2_tv/132")
 
+    def test_max_ring_frame_bytes_are_bgr_and_full_length(self):
+        s = fresh_server()
+        profiles.install(s, "max")
+        p = s.Panel(Mock())
+        buf = p._ring_frame_bytes([[1, 2, 3]])
+        self.assertEqual(len(buf), 72)
+        self.assertEqual(buf[:3], bytes([3, 2, 1]))
+        self.assertEqual(buf[3:], bytes(69))
+        self.assertEqual(p._ring_frame_bytes(None), bytes(72))
+
+    def test_max_boot_hook_binds_ring_and_clock_overrides(self):
+        s = fresh_server()
+        profiles.install(s, "max")
+        p = s.Panel(Mock())
+        pushed = {}
+        p.adb.push = lambda local, remote, *a, **k: pushed.__setitem__(
+            remote, Path(local).read_text(encoding="utf-8"))
+        p._ensure_hook()
+        hook = pushed[s.BOOT_HOOK]
+        self.assertIn("for k in ring clock", hook)
+        self.assertIn(f"{s.OVR_DIR}/ledpatterns", hook)
+        self.assertIn(s.PATTERNS["ring"], hook)
+        self.assertIn(s.PATTERNS["clock"], hook)
+        self.assertNotIn(f"{s.PATTERNS['clock']}/ledpatterns/ring", hook)
+
+    def test_max_ring_try_writes_bgr_bytes_not_list(self):
+        import base64
+        import time
+        s = fresh_server()
+        profiles.install(s, "max")
+        p = s.Panel(Mock())
+        p.adb.is_local = False
+        p.adb.shell = Mock(return_value=("", "", 0))
+        text = "loop\nff0000 " + "000000 " * 23 + "40\n"
+        self.assertTrue(p.ring_try(text, 0.15)["ok"])
+        time.sleep(0.6)
+        commands = [call.args[0] for call in p.adb.shell.call_args_list
+                    if "base64 -d" in call.args[0]]
+        self.assertTrue(commands)
+        frames = []
+        for command in commands:
+            payload = command.split("echo '", 1)[1].split("'", 1)[0]
+            data = base64.b64decode(payload)
+            self.assertEqual(len(data), 72)
+            frames.append(data)
+        self.assertIn(bytes([0, 0, 255]) + bytes(69), frames)
+
     def test_max_say_falls_back_to_tts_when_glagol_is_offline(self):
         s = fresh_server()
         profiles.install(s, "max")

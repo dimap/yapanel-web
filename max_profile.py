@@ -1432,8 +1432,23 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
     _ring_pattern_thread = None
     _ring_pattern_stop = False
 
+    def max_ring_frame_bytes(colors):
+        """RGB-тройки кадра → 72-байтный BGR-буфер для fb5."""
+        buf = bytearray(MAX_RING_LEDS * 3)
+        for i, c in enumerate(list(colors or [])[:MAX_RING_LEDS]):
+            try:
+                r, g, b = int(c[0]), int(c[1]), int(c[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            buf[i * 3] = max(0, min(255, b))
+            buf[i * 3 + 1] = max(0, min(255, g))
+            buf[i * 3 + 2] = max(0, min(255, r))
+        return bytes(buf)
+
     def max_write_ring_raw(panel, raw_bytes):
         """Write 72-byte buffer to fb5 with FBIOPAN_DISPLAY ioctl."""
+        if not isinstance(raw_bytes, (bytes, bytearray)):
+            raw_bytes = max_ring_frame_bytes(raw_bytes)
         if getattr(panel.adb, "is_local", False) or os.path.exists(MAX_RING_DEV):
             try:
                 import fcntl
@@ -1475,14 +1490,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         else:
             return {"ok": False, "error": "invalid ring data"}
 
-        buf = bytearray(MAX_RING_LEDS * 3)
-        for i, c in enumerate(colors):
-            # Hardware expects BGR24: Byte 0 = Blue, Byte 1 = Green, Byte 2 = Red
-            buf[i * 3] = max(0, min(255, int(c[2])))     # Blue
-            buf[i * 3 + 1] = max(0, min(255, int(c[1]))) # Green
-            buf[i * 3 + 2] = max(0, min(255, int(c[0]))) # Red
-
-        max_write_ring_raw(self, buf)
+        max_write_ring_raw(self, max_ring_frame_bytes(colors))
         return {"ok": True}
 
     P.ring = max_ring
@@ -1494,6 +1502,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         return {"ok": True, "leds": [[0, 0, 0]] * 3}
 
     P.ring_reset = max_ring_reset
+    P._ring_frame_bytes = staticmethod(max_ring_frame_bytes)
 
     def max_patterns(self):
         """Return stock and custom animations for Station Max."""
@@ -1593,20 +1602,24 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         _ring_pattern_stop = False
 
         def _worker():
+            max_pause_alice_leds(self.adb)
             end_time = (time.time() + seconds) if seconds > 0 else float("inf")
             idx = 0
-            while not _ring_pattern_stop and time.time() < end_time:
-                if idx >= len(frames):
-                    if not parsed.get("loop", False):
-                        break
-                    idx = 0
-                frame = frames[idx]
-                c_list = frame.get("c", [])
-                max_write_ring_raw(self, c_list)
-                ms = max(20, min(10000, frame.get("ms", 50)))
-                time.sleep(ms / 1000.0)
-                idx += 1
-            max_write_ring_raw(self, [[0, 0, 0]] * MAX_RING_LEDS)
+            try:
+                while not _ring_pattern_stop and time.time() < end_time:
+                    if idx >= len(frames):
+                        if not parsed.get("loop", False):
+                            break
+                        idx = 0
+                    frame = frames[idx]
+                    c_list = frame.get("c", [])
+                    max_write_ring_raw(self, max_ring_frame_bytes(c_list))
+                    ms = max(20, min(10000, frame.get("ms", 50)))
+                    time.sleep(ms / 1000.0)
+                    idx += 1
+            finally:
+                max_write_ring_raw(self, bytes(MAX_RING_LEDS * 3))
+                max_resume_alice_leds(self.adb)
 
         _ring_pattern_thread = threading.Thread(target=_worker, daemon=True)
         _ring_pattern_thread.start()
@@ -1635,27 +1648,24 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         _ring_pattern_stop = False
 
         def _worker():
+            max_pause_alice_leds(self.adb)
             end_time = (time.time() + seconds) if seconds > 0 else float("inf")
             idx = 0
-            while not _ring_pattern_stop and time.time() < end_time:
-                if idx >= len(frames):
-                    if not parsed.get("loop", False):
-                        break
-                    idx = 0
-                frame = frames[idx]
-                c_list = frame.get("c", [])
-                buf = bytearray(MAX_RING_LEDS * 3)
-                for i in range(min(MAX_RING_LEDS, len(c_list))):
-                    rgb = c_list[i]
-                    buf[i * 3] = max(0, min(255, int(rgb[2])))     # Blue
-                    buf[i * 3 + 1] = max(0, min(255, int(rgb[1]))) # Green
-                    buf[i * 3 + 2] = max(0, min(255, int(rgb[0]))) # Red
-                max_write_ring_raw(self, buf)
-                idx += 1
-                ms = max(16, frame.get("ms", 50))
-                time.sleep(ms / 1000.0)
-            if not _ring_pattern_stop:
-                max_write_ring_raw(self, bytes(72))
+            try:
+                while not _ring_pattern_stop and time.time() < end_time:
+                    if idx >= len(frames):
+                        if not parsed.get("loop", False):
+                            break
+                        idx = 0
+                    frame = frames[idx]
+                    c_list = frame.get("c", [])
+                    max_write_ring_raw(self, max_ring_frame_bytes(c_list))
+                    idx += 1
+                    ms = max(16, frame.get("ms", 50))
+                    time.sleep(ms / 1000.0)
+            finally:
+                max_write_ring_raw(self, bytes(MAX_RING_LEDS * 3))
+                max_resume_alice_leds(self.adb)
 
         _ring_pattern_thread = threading.Thread(target=_worker, daemon=True, name="max-ring-pat")
         _ring_pattern_thread.start()
@@ -2408,8 +2418,10 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             f"[ ! -f /odm/bin/adbguard.sh ] && [ ! -f /odm/etc/hosts-ota ] && "
             f"! grep -q appmetrica.yandex.net /odm/etc/hosts 2>/dev/null && "
             f"bind {s.WEB_DIR}/hosts {s.HOSTS_TARGET}\n"
-            f"[ -d {s.OVR_DIR} ] && (cd {s.OVR_DIR} && find . -type f) | while read -r f; do "
-            f"bind \"{s.OVR_DIR}/${{f#./}}\" \"{s.PATTERNS['clock']}/${{f#./}}\"; done\n"
+            f"for k in ring clock; do d={shlex.quote(f'{s.OVR_DIR}/ledpatterns')}/$k; "
+            f"case $k in ring) t={shlex.quote(s.PATTERNS['ring'])};; clock) t={shlex.quote(s.PATTERNS['clock'])};; esac; "
+            f"[ -d \"$d\" ] && (cd \"$d\" && find . -type f) | while read -r f; do "
+            f"bind \"$d/${{f#./}}\" \"$t/${{f#./}}\"; done; done\n"
             f"[ -d {s.OVR_DIR}/sounds ] && (cd {s.OVR_DIR}/sounds && find . -type f) | while read -r f; do "
             f"bind \"{s.OVR_DIR}/sounds/${{f#./}}\" \"{s.SOUNDS_DIR}/${{f#./}}\"; done\n"
             f"[ -f {s.WEB_DIR}/bt_off ] && ( svc bluetooth disable ) >/dev/null 2>&1 &\n"

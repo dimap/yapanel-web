@@ -110,6 +110,12 @@ class AnimOverrides(unittest.TestCase):
         p.adb.shell.return_value = ("./oknix/qc.led\n./clock/blink.binscled.zst\n./other/x\n@boot\n", "", 0)
         self.assertEqual(p.anim_custom(), {"ring": ["qc.led"], "clock": ["blink.binscled.zst", "boot.binscled.zst"]})
 
+    def test_custom_list_accepts_max_ring_folder(self):
+        p = server.Panel(Mock())
+        p.adb.shell.return_value = ("./ring/alice_speaking.led\n./clock/blink.binscled.zst\n@boot\n", "", 0)
+        self.assertEqual(p.anim_custom(),
+                         {"ring": ["alice_speaking.led"], "clock": ["blink.binscled.zst", "boot.binscled.zst"]})
+
     def test_backup_names(self):
         ok = server.Panel.BACKUP_FILES.fullmatch
         self.assertTrue(ok("override/ledpatterns/oknix/timer.led"))

@@ -2865,6 +2865,10 @@ echo @@BLUEZ
             f"cd {OVR_DIR}/ledpatterns 2>/dev/null && find . -type f; [ -f {BOOT_CUSTOM} ] && echo @boot; true", check=False)
         res = {kind: [] for kind in PATTERNS}
         dirs = {posixpath.basename(d): kind for kind, d in PATTERNS.items()}
+        # На Максе каталог кольца называется ledpatterns, а свои анимации
+        # панель складывает в override/ledpatterns/ring. Принимаем оба имени.
+        dirs.setdefault("ring", "ring")
+        dirs.setdefault("ledpatterns", "ring")
         for line in strip_ansi(out).split():
             if line == "@boot":
                 res["clock"].append(posixpath.basename(BOOT_TARGET))

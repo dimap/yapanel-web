@@ -18,6 +18,7 @@ import posixpath
 import re
 import shlex
 import shutil
+import signal
 import struct
 import time
 import threading
@@ -950,6 +951,22 @@ def install(s, profile):
     s.WAKE_BIN_SHA256 = s.WAKE_BIN_SHA256 or "643c279b3327f1a110a8c65bc9e48bc70d305b4bee1efba1e491d9f94f61849f"
     s.SOUNDS_DIR = f"{s.QUASAR}/sounds"
     s.SOUND_TARGET = f"{s.SOUNDS_DIR}/common/boot.wav"
+    # Звуки включения/выключения Bluetooth: нативный демон + пользовательские файлы.
+    s.BT_MEMES_DIR = f"{s.WEB_DIR}/bt-memes"
+    s.BT_MEMES_BIN = f"{s.BT_MEMES_DIR}/bt-memes"
+    s.BT_MEMES_SOUNDS = f"{s.BT_MEMES_DIR}/sounds"
+    s.BT_MEMES_BACKUP = f"{s.BT_MEMES_DIR}/backup"
+    s.BT_MEMES_LOG = f"{s.BT_MEMES_DIR}/bt-memes.log"
+    s.BT_MEMES_SD = "/tmp/webpanel_bt_memes.sd"
+    s.BT_MEMES_AUTOSTART = f"{s.WEB_DIR}/bt_memes.autostart"
+    s.BT_MEMES_SRC = Path(__file__).resolve().parent / "device" / "bt_memes"
+    s.BT_MEMES_ON = "ruko_blud.opus"
+    s.BT_MEMES_OFF = "penis_her.opus"
+    s.BT_MEMES_SILENT = "silent.mp3"
+    s.BT_MEMES_TARGET_ON = f"{s.SOUNDS_DIR}/common/bluetooth_turning_on_jingle.opus"
+    s.BT_MEMES_TARGET_OFF = f"{s.SOUNDS_DIR}/common/bluetooth_turning_off_jingle.opus"
+    s.BT_MEMES_TARGET_SAY_ON = f"{s.SOUNDS_DIR}/ru-RU/bluetooth_turning_on.mp3"
+    s.BT_MEMES_TARGET_SAY_OFF = f"{s.SOUNDS_DIR}/ru-RU/bluetooth_turning_off.mp3"
     if not isinstance(getattr(s, "PATTERNS", None), dict):
         s.PATTERNS = {}
     s.PATTERNS["ring"] = f"{s.QUASAR}/ledpatterns"
@@ -984,7 +1001,6 @@ def install(s, profile):
                 dst = f"{clock_dir}/{fname}"
                 if os.path.exists(src) and not os.path.exists(dst):
                     try:
-                        import shutil
                         shutil.copyfile(src, dst)
                     except Exception:
                         pass
@@ -2164,6 +2180,216 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
 
     P.bt_action = max_bt_action
 
+    # ---------- звуки включения/выключения Bluetooth ----------
+    def _bt_memes_map(self):
+        return {
+            "on": (s.BT_MEMES_ON, [s.BT_MEMES_TARGET_ON]),
+            "off": (s.BT_MEMES_OFF, [s.BT_MEMES_TARGET_OFF]),
+            "silent": (s.BT_MEMES_SILENT, [s.BT_MEMES_TARGET_SAY_ON, s.BT_MEMES_TARGET_SAY_OFF]),
+        }
+
+    def _bt_memes_running(self):
+        path = Path(s.BT_MEMES_SD)
+        try:
+            pid = int(path.read_text(encoding="ascii").strip())
+            if pid <= 1:
+                return False
+            os.kill(pid, 0)
+            cmdline = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+            return b"bt-memes" in cmdline
+        except (OSError, ValueError):
+            return False
+
+    def _bt_memes_backup(self):
+        backup = Path(s.BT_MEMES_BACKUP)
+        backup.mkdir(parents=True, exist_ok=True)
+        for _, (_, targets) in self._bt_memes_map().items():
+            for target in targets:
+                src, dst = Path(target), backup / Path(target).name
+                if src.is_file() and not dst.exists():
+                    try:
+                        shutil.copy2(src, dst)
+                    except OSError:
+                        pass
+
+    def _bt_memes_apply(self):
+        for _, (name, targets) in self._bt_memes_map().items():
+            src = Path(s.BT_MEMES_SOUNDS) / name
+            if not src.is_file():
+                continue
+            for target in targets:
+                try:
+                    Path(target).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, target)
+                    os.chmod(target, 0o644)
+                except OSError:
+                    pass
+
+    def _bt_memes_restore(self, kind=None):
+        items = self._bt_memes_map()
+        kinds = (kind,) if kind in items else tuple(items)
+        for key in kinds:
+            for target in items[key][1]:
+                src = Path(s.BT_MEMES_BACKUP) / Path(target).name
+                if src.is_file():
+                    try:
+                        Path(target).parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, target)
+                        os.chmod(target, 0o644)
+                    except OSError:
+                        pass
+
+    def bt_memes_status(self):
+        if not getattr(self.adb, "is_local", False):
+            return {"supported": False, "installed": False, "running": False,
+                    "autostart": False, "sounds": {}}
+        binary = Path(s.BT_MEMES_BIN)
+        sounds = {}
+        for kind, (name, targets) in self._bt_memes_map().items():
+            src = Path(s.BT_MEMES_SOUNDS) / name
+            target = Path(targets[0])
+            sounds[kind] = {
+                "name": name,
+                "size": src.stat().st_size if src.is_file() else 0,
+                "present": src.is_file(),
+                "target_size": target.stat().st_size if target.is_file() else 0,
+            }
+        return {"supported": True, "installed": binary.is_file() and os.access(binary, os.X_OK),
+                "running": self._bt_memes_running(),
+                "autostart": Path(s.BT_MEMES_AUTOSTART).is_file(),
+                "sounds": sounds, "version": "2.0.0"}
+
+    def bt_memes_install(self):
+        src = Path(s.BT_MEMES_SRC)
+        binary = src / "bt-memes"
+        if not binary.is_file():
+            raise AdbError("в панели нет файла bt-memes")
+        self.adb.shell(
+            f"mkdir -p {shlex.quote(s.BT_MEMES_DIR)} {shlex.quote(s.BT_MEMES_SOUNDS)} "
+            f"{shlex.quote(s.BT_MEMES_BACKUP)} {shlex.quote(posixpath.dirname(s.BT_MEMES_TARGET_ON))} "
+            f"{shlex.quote(posixpath.dirname(s.BT_MEMES_TARGET_SAY_ON))}", check=False)
+        self._bt_memes_backup()
+        self.adb.push(binary, s.BT_MEMES_BIN)
+        self.adb.shell(f"chmod 755 {shlex.quote(s.BT_MEMES_BIN)}", check=False)
+        for name in (s.BT_MEMES_ON, s.BT_MEMES_OFF, s.BT_MEMES_SILENT):
+            target = Path(s.BT_MEMES_SOUNDS) / name
+            source = src / "sounds" / name
+            if not target.is_file() and source.is_file():
+                self.adb.push(source, str(target))
+                self.adb.shell(f"chmod 644 {shlex.quote(str(target))}", check=False)
+        self._bt_memes_apply()
+        return self.bt_memes_status()
+
+    def _bt_memes_start(self):
+        if self._bt_memes_running():
+            return
+        pid = shlex.quote(s.BT_MEMES_SD)
+        log = shlex.quote(s.BT_MEMES_LOG)
+        binary = shlex.quote(s.BT_MEMES_BIN)
+        run = shlex.quote(f"exec {s.BT_MEMES_BIN} >> {s.BT_MEMES_LOG} 2>&1")
+        self.adb.shell(
+            f"mkdir -p {shlex.quote(s.BT_MEMES_DIR)}; rm -f {pid}; "
+            f"if [ -x /odm/bin/start-stop-daemon ]; then "
+            f"/odm/bin/start-stop-daemon -S -b -m -p {pid} -x /system/bin/sh -- -c {run}; "
+            f"else ( {binary} >> {log} 2>&1 & echo $! > {pid} ); fi", check=False)
+        for _ in range(20):
+            if self._bt_memes_running():
+                return
+            time.sleep(0.1)
+        raise AdbError("демон звуков Bluetooth не запустился")
+
+    def _bt_memes_stop(self):
+        pidfile = Path(s.BT_MEMES_SD)
+        try:
+            pid = int(pidfile.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            pid = 0
+        if pid > 1 and self._bt_memes_running():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+            for _ in range(30):
+                if not self._bt_memes_running():
+                    break
+                time.sleep(0.1)
+            if self._bt_memes_running():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        pidfile.unlink(missing_ok=True)
+
+    def bt_memes_set(self, on):
+        if not getattr(self.adb, "is_local", False):
+            raise AdbError("Звуки Bluetooth поддерживаются только на Станции Макс")
+        if on:
+            self.bt_memes_install()
+            self._bt_memes_start()
+            Path(s.BT_MEMES_AUTOSTART).parent.mkdir(parents=True, exist_ok=True)
+            Path(s.BT_MEMES_AUTOSTART).touch()
+            try:
+                self._ensure_hook()
+            except AdbError:
+                pass
+        else:
+            self._bt_memes_stop()
+            self._bt_memes_restore()
+            Path(s.BT_MEMES_AUTOSTART).unlink(missing_ok=True)
+            self._drop_hook_if_unused()
+        return self.bt_memes_status()
+
+    def bt_memes_upload(self, kind, data):
+        mapping = self._bt_memes_map()
+        if kind not in mapping:
+            raise AdbError("неизвестный звук")
+        if not data or len(data) > 5 * 1024 * 1024:
+            raise AdbError("файл звука пустой или больше 5 МБ")
+        if kind in ("on", "off") and data[:4] != b"OggS":
+            raise AdbError("для включения/выключения нужен Ogg Opus (.opus)")
+        self.adb.shell(f"mkdir -p {shlex.quote(s.BT_MEMES_SOUNDS)} {shlex.quote(s.BT_MEMES_BACKUP)}", check=False)
+        self._bt_memes_backup()
+        name = mapping[kind][0]
+        with tempfile.TemporaryDirectory() as td:
+            local = Path(td) / name
+            local.write_bytes(data)
+            self.adb.push(local, f"{s.BT_MEMES_SOUNDS}/{name}")
+        self.adb.shell(f"chmod 644 {shlex.quote(f'{s.BT_MEMES_SOUNDS}/{name}')}", check=False)
+        self._bt_memes_apply()
+        return self.bt_memes_status()
+
+    def bt_memes_reset(self, kind):
+        mapping = self._bt_memes_map()
+        if kind not in mapping:
+            raise AdbError("неизвестный звук")
+        name, targets = mapping[kind]
+        source = Path(s.BT_MEMES_SRC) / "sounds" / name
+        if source.is_file():
+            self.adb.shell(f"mkdir -p {shlex.quote(s.BT_MEMES_SOUNDS)}", check=False)
+            self.adb.push(source, f"{s.BT_MEMES_SOUNDS}/{name}")
+            self.adb.shell(f"chmod 644 {shlex.quote(f'{s.BT_MEMES_SOUNDS}/{name}')}", check=False)
+            self._bt_memes_apply()
+        else:
+            try:
+                (Path(s.BT_MEMES_SOUNDS) / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._bt_memes_restore(kind)
+        return self.bt_memes_status()
+
+    P.bt_memes_status = bt_memes_status
+    P.bt_memes_install = bt_memes_install
+    P.bt_memes_set = bt_memes_set
+    P.bt_memes_upload = bt_memes_upload
+    P.bt_memes_reset = bt_memes_reset
+    P._bt_memes_map = _bt_memes_map
+    P._bt_memes_running = _bt_memes_running
+    P._bt_memes_backup = _bt_memes_backup
+    P._bt_memes_apply = _bt_memes_apply
+    P._bt_memes_restore = _bt_memes_restore
+    P._bt_memes_start = _bt_memes_start
+    P._bt_memes_stop = _bt_memes_stop
+
     def max_boot_hook_script():
         """Единственный генератор boot_hook.sh для Станции Макс.
 
@@ -2196,6 +2422,11 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             f"else ( /system/bin/sh -c {shlex.quote(s.ASSIST_RUN)} </dev/null >/dev/null 2>&1 & ); "
             f"fi; "
             f"fi; }}\n"
+            f"[ -f {s.BT_MEMES_AUTOSTART} ] && [ -x {s.BT_MEMES_BIN} ] && ! pidof bt-memes >/dev/null 2>&1 && {{ "
+            f"if [ -x /odm/bin/start-stop-daemon ]; then "
+            f"/odm/bin/start-stop-daemon -S -b -m -p {s.BT_MEMES_SD} -x /system/bin/sh -- -c "
+            f"{shlex.quote(f'exec {s.BT_MEMES_BIN} >> {s.BT_MEMES_LOG} 2>&1')}; "
+            f"else ( {s.BT_MEMES_BIN} >> {s.BT_MEMES_LOG} 2>&1 & echo $! > {s.BT_MEMES_SD} ); fi; }}\n"
             + s.wakeword_boot_lines(android=True)
             + s.frida_boot_lines(android=True)
             + "exit 0\n"
@@ -2255,6 +2486,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             ("заставка", s.BOOT_CUSTOM),
             ("звук запуска", s.SOUND_CUSTOM),
             ("блокировка аналитики", s.HOSTS_CUSTOM),
+            ("звуки Bluetooth", s.BT_MEMES_AUTOSTART),
             ("выключенный bluetooth", s.BT_OFF),
             ("агент", s.AGENT_TOKENS),
             ("ассистент", s.ASSIST_CONF),
@@ -2703,6 +2935,11 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
             {"key": "hook", "name": "Автозапуск: boot_hook.sh (adbd_watchdog)", "on": hook_on,
              "detail": "запуск хука при загрузке системы"},
         ]
+        bt_memes = self.bt_memes_status()
+        if bt_memes.get("supported"):
+            items.append({"key": "bt_memes", "name": "Звуки Bluetooth",
+                          "on": bool(bt_memes.get("running") or bt_memes.get("autostart")),
+                          "detail": "демон и звуки включения/выключения"})
         return {
             "items": items,
             "dir": s.WEB_DIR,
@@ -2729,12 +2966,12 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
                 owned.append(path)
 
         for attr in ("BOOT_CUSTOM", "SOUND_CUSTOM", "BOOT_ALWAYS", "BOOT_HOOK", "BT_OFF", "HOSTS_CUSTOM",
-                     "ASSIST_NO_AUTOSTART", "WAKE_AUTOSTART", "WAKE_FRIDA_AUTOSTART"):
+                     "ASSIST_NO_AUTOSTART", "BT_MEMES_AUTOSTART", "WAKE_AUTOSTART", "WAKE_FRIDA_AUTOSTART"):
             _add_owned(getattr(s, attr, None))
         created = getattr(s, "ROOTKEEPER_CREATED", "")
         if created and posixpath.normpath(str(created)).startswith(web + "/"):
             _add_owned(created)
-        for name in ("override", "patterns", "viz", "bt_off", "hosts"):
+        for name in ("override", "patterns", "viz", "bt_off", "hosts", "bt-memes"):
             _add_owned(posixpath.join(web, name))
 
         _log.info("Max footprint reset%s: panel-owned paths: %s",
@@ -2748,6 +2985,11 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         if dry_run:
             return self.footprint()
 
+        try:
+            self._bt_memes_stop()
+            self._bt_memes_restore()
+        except Exception:
+            pass
         self._agent_forget()
         q = shlex.quote
         bt_off = str(getattr(s, "BT_OFF", posixpath.join(web, "bt_off")))

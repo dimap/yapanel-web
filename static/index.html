@@ -455,6 +455,7 @@
   .bt-out .info .meta { display: block; margin-top: 2px; }
   .bt-out .actions { display: flex; flex-wrap: wrap; gap: 8px; flex-direction: row-reverse; justify-content: flex-end; }
   .bt-eq { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+  .bt-memes-sound { margin-top: 8px; }
   .bt-eq-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .bt-eq-head select { width: auto; min-width: 170px; }
   .bt-eq canvas { display: block; width: 100%; height: 96px; margin-top: 8px; }
@@ -1697,6 +1698,32 @@
           <div id="bt-out-pick" hidden>
             <p class="hint">Включите на Bluetooth-колонке режим сопряжения — панель поищет её рядом. Колонки и наушники — первыми.</p>
             <div class="bt-list" id="bt-out-list"></div>
+          </div>
+          <div class="bt-pair" id="bt-memes-row" hidden>
+            <div class="info"><b>Звуки Bluetooth</b><span class="meta" id="bt-memes-hint">—</span></div>
+            <div class="actions"><button class="btn sm" id="bt-memes-setup">Настроить</button>
+              <input type="checkbox" class="switch" id="bt-memes-on" aria-label="Звуки включения и выключения Bluetooth"></div>
+          </div>
+          <div id="bt-memes-panel" hidden>
+            <div class="bt-pair bt-memes-sound">
+              <div class="info"><b>Включение Bluetooth</b><span class="meta" id="bt-memes-on-info">—</span></div>
+              <div class="actions"><button class="btn sm" data-bt-memes-upload="on">Загрузить</button>
+                <button class="btn sm" data-bt-memes-reset="on">Сбросить</button></div>
+              <input type="file" id="bt-memes-on-file" accept=".opus,.ogg" hidden>
+            </div>
+            <div class="bt-pair bt-memes-sound">
+              <div class="info"><b>Выключение Bluetooth</b><span class="meta" id="bt-memes-off-info">—</span></div>
+              <div class="actions"><button class="btn sm" data-bt-memes-upload="off">Загрузить</button>
+                <button class="btn sm" data-bt-memes-reset="off">Сбросить</button></div>
+              <input type="file" id="bt-memes-off-file" accept=".opus,.ogg" hidden>
+            </div>
+            <div class="bt-pair bt-memes-sound">
+              <div class="info"><b>Тишина вместо фразы</b><span class="meta" id="bt-memes-silent-info">—</span></div>
+              <div class="actions"><button class="btn sm" data-bt-memes-upload="silent">Загрузить</button>
+                <button class="btn sm" data-bt-memes-reset="silent">Сбросить</button></div>
+              <input type="file" id="bt-memes-silent-file" accept=".mp3,.opus,.ogg" hidden>
+            </div>
+            <p class="hint">Демон глушит фразу Алисы на время переключения и включает выбранный звук. Исходные звуки Quasar сохраняются и вернутся при выключении.</p>
           </div>
           <div class="bt-eq" id="bt-eq-row" hidden>
             <div class="bt-eq-head"><b>Эквалайзер</b><select class="field" id="bt-eq" aria-label="Пресет эквалайзера"></select></div>

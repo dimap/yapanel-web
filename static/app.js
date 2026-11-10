@@ -1519,7 +1519,30 @@ async function loadBt() {
   if (!online || document.hidden || $('#tab-overview').hidden || $('[data-widget="bt"]').closest('#wz-hidden')) return;
   try { btData = await api('/api/bt'); renderBt(); } catch (e) { if (!e.offline) setListHtml($('#bt-list'), `<div class="empty">${esc(e.message)}</div>`); }
   Scheduler.setInterval(btTask, btData?.pair_until ? 2000 : 5000);
+  if (!btMemes) loadBtMemes();
 }
+let btMemes = null;
+async function loadBtMemes() {
+  let st;
+  try { st = await api('/api/bt/memes'); } catch { return; }
+  btMemes = st;
+  const row = $('#bt-memes-row');
+  row.hidden = !st.supported;
+  if (!st.supported) return;
+  $('#bt-memes-on').checked = !!(st.running || st.autostart);
+  const sounds = st.sounds || {};
+  const info = kind => {
+    const s = sounds[kind] || {};
+    return s.present && s.size ? `Свой звук · ${fmtSize(s.size)}` : 'Стандартный звук Quasar';
+  };
+  $('#bt-memes-on-info').textContent = info('on');
+  $('#bt-memes-off-info').textContent = info('off');
+  $('#bt-memes-silent-info').textContent = info('silent');
+  $('#bt-memes-hint').textContent = !st.installed ? 'Нажмите, чтобы установить'
+    : st.running ? 'Демон запущен — фраза Алисы заглушается'
+    : st.autostart ? 'Демон остановлен, автозапуск включён' : 'Демон остановлен';
+}
+
 btTask = every(3000, loadBt);
 function btLeft() {
   const left = btData?.pair_until ? Math.max(0, Math.round(btData.pair_until - Date.now() / 1000)) : 0;
@@ -1566,6 +1589,32 @@ $('#bt-power').onchange = e => {
   btDo(e.target, { action: on ? 'power_on' : 'power_off' }, on ? 'Bluetooth включён' : 'Bluetooth выключен')
     .then(() => { if (btData) $('#bt-power').checked = btData.powered; });
 };
+$('#bt-memes-setup').onclick = () => {
+  const panel = $('#bt-memes-panel');
+  panel.hidden = !panel.hidden;
+};
+$('#bt-memes-on').onchange = e => act(null, async () => {
+  btMemes = await api('/api/bt/memes', { enabled: e.target.checked });
+  await loadBtMemes();
+}, e.target.checked ? 'Звуки Bluetooth включены' : 'Звуки Bluetooth выключены');
+async function btMemesUpload(kind, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  await act(null, async () => {
+    btMemes = await api(`/api/bt/memes/upload?kind=${kind}`, file,
+      { raw: true, headers: { 'Content-Type': 'application/octet-stream' } });
+    await loadBtMemes();
+  }, 'Звук загружен');
+  input.value = '';
+}
+['on', 'off', 'silent'].forEach(kind => {
+  $(`#bt-memes-${kind}-file`).onchange = e => btMemesUpload(kind, e.target);
+  $(`[data-bt-memes-upload="${kind}"]`).onclick = () => $(`#bt-memes-${kind}-file`).click();
+  $(`[data-bt-memes-reset="${kind}"]`).onclick = e => act(e.currentTarget, async () => {
+    btMemes = await api('/api/bt/memes/reset', { kind });
+    await loadBtMemes();
+  }, 'Звук сброшен');
+});
 // ---- звук через Bluetooth-колонку ----
 let btEq = null;
 function renderBtOut() {

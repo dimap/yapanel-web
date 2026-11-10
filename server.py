@@ -6513,6 +6513,19 @@ echo @@BLUEZ
         self._drop_hook_if_unused()
         return {**self.bt_state(), "restarted": restarted}
 
+    def bt_memes_status(self):
+        return {"supported": False, "installed": False, "running": False,
+                "autostart": False, "sounds": {}}
+
+    def bt_memes_set(self, on):
+        raise AdbError("Звуки Bluetooth поддерживаются только на Станции Макс")
+
+    def bt_memes_upload(self, kind, data):
+        raise AdbError("Звуки Bluetooth поддерживаются только на Станции Макс")
+
+    def bt_memes_reset(self, kind):
+        raise AdbError("Звуки Bluetooth поддерживаются только на Станции Макс")
+
     def bt_action(self, data):
         act, mac = data.get("action"), str(data.get("mac") or "")
         if act in ("connect", "disconnect", "remove", "trust", "untrust"):
@@ -7519,6 +7532,10 @@ class Handler(BaseHTTPRequestHandler):
             name = unquote(self.headers.get("X-Filename", "upload.bin"))
             body = self._body(MEDIA_BODY_LIMIT)
             return self._handle(lambda: p.play_upload(name, body))
+        if u.path == "/api/bt/memes/upload":
+            kind = parse_qs(u.query).get("kind", [""])[0]
+            body = self._body(5 * 1024 * 1024)
+            return self._handle(lambda: p.bt_memes_upload(kind, body))
         if u.path == "/api/sounds/replace":
             name = unquote(self.headers.get("X-Sound", ""))
             body = self._body(SOUND_BODY_LIMIT)

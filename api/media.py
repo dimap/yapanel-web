@@ -33,6 +33,7 @@ def register(router: Router):
     router.get("/api/radio/logo", _radio_logo)
     router.get("/api/viz", lambda r: r.panel.viz_status())
     router.get("/api/bt", lambda r: r.panel.bt_state())
+    router.get("/api/bt/memes", lambda r: r.panel.bt_memes_status())
     router.get("/api/btout/eq", lambda r: r.panel.btout_eq_status())
 
     router.post("/api/music/cmd", lambda r: r.panel.music_cmd(r.data))
@@ -50,6 +51,8 @@ def register(router: Router):
     router.post("/api/radio/alice", lambda r: r.panel.radio_alice(r.data.get("name")))
     router.post("/api/viz", lambda r: r.panel.viz_set(bool(r.data.get("on"))))
     router.post("/api/bt", lambda r: r.panel.bt_action(r.data))
+    router.post("/api/bt/memes", lambda r: r.panel.bt_memes_set(bool(r.data.get("enabled"))))
+    router.post("/api/bt/memes/reset", lambda r: r.panel.bt_memes_reset(r.data.get("kind")))
     router.post("/api/btout/scan", lambda r: r.panel.btout_scan(r.data.get("seconds", 12)))
     router.post("/api/btout/use", lambda r: r.panel.btout_use(r.data.get("mac")))
     router.post("/api/btout/off", lambda r: r.panel.btout_off())

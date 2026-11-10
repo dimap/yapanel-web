@@ -80,6 +80,22 @@ class FakePanel:
         self.uploads.append((directory, name, body))
         return {"ok": True}
 
+    def bt_memes_status(self):
+        return {"supported": True, "installed": True, "running": True,
+                "autostart": False, "sounds": {}}
+
+    def bt_memes_set(self, on):
+        self.calls.append(("bt_memes_set", on))
+        return {"ok": True}
+
+    def bt_memes_upload(self, kind, data):
+        self.calls.append(("bt_memes_upload", kind, data))
+        return {"ok": True}
+
+    def bt_memes_reset(self, kind):
+        self.calls.append(("bt_memes_reset", kind))
+        return {"ok": True}
+
 
 class TestHandler(server.Handler):
     __test__ = False
@@ -181,6 +197,24 @@ class HttpApiTests(unittest.TestCase):
         status, body, _ = self.request("POST", "/api/fs/delete", {})
         self.assertEqual(status, 400)
         self.assertIn("path", self.json((status, body))["error"])
+
+    def test_bt_memes_routes(self):
+        status, body, _ = self.request("GET", "/api/bt/memes")
+        self.assertEqual(status, 200)
+        self.assertTrue(self.json((status, body))["supported"])
+
+        status, body, _ = self.request("POST", "/api/bt/memes", {"enabled": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.panel.calls[-1], ("bt_memes_set", True))
+
+        status, body, _ = self.request("POST", "/api/bt/memes/upload?kind=off", raw=b"OggS-payload",
+                                       headers={"Content-Type": "application/octet-stream"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.panel.calls[-1], ("bt_memes_upload", "off", b"OggS-payload"))
+
+        status, body, _ = self.request("POST", "/api/bt/memes/reset", {"kind": "on"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.panel.calls[-1], ("bt_memes_reset", "on"))
 
     def test_fs_upload_is_raw_and_fs_download_streams(self):
         status, body, _ = self.request("POST", "/api/fs/upload", raw=b"payload",

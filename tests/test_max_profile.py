@@ -250,7 +250,7 @@ class MaxProfileTests(unittest.TestCase):
     def test_max_boot_hook_does_not_write_assistant_pid(self):
         source = (ROOT / "max_profile.py").read_text(encoding="utf-8")
         start = source.index('f"[ -f {s.ASSIST_CONF} ]')
-        stop = source.index("+ s.wakeword_boot_lines(android=True)", start)
+        stop = source.index('f"[ -f {s.BT_MEMES_AUTOSTART} ]', start)
         assistant_hook = source[start:stop]
         self.assertIn("start-stop-daemon -S -b -x", assistant_hook)
         self.assertNotIn(" -m -p ", assistant_hook)

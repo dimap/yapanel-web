@@ -38,7 +38,7 @@ for(const path of ['/','/speaker/room-a/','/speaker/room-b/']){
     caches:{
       open:async()=>({put:async(key,response)=>puts.push({key,response})}),
       match:async()=>null,
-      keys:async()=>['panel-v9:'+new URL(path,base).pathname+':shell','panel-v10:'+new URL(path,base).pathname+':shell'],
+      keys:async()=>['panel-v10:'+new URL(path,base).pathname+':shell','panel-v11:'+new URL(path,base).pathname+':shell'],
       delete:async key=>deleted.push(key),
     },
     Response:{error:()=>({error:true})},
@@ -55,7 +55,7 @@ for(const path of ['/','/speaker/room-a/','/speaker/room-b/']){
   assert.notEqual(puts.at(-1).key,base);
   // Обновление namespace удаляет старый кэш.
   let activation;handlers.activate({waitUntil:p=>activation=p});await activation;
-  assert(deleted.some(key=>key.startsWith('panel-v9:')),'old panel cache is deleted');
-  assert(!deleted.some(key=>key.startsWith('panel-v10:')),'current cache is kept');
+  assert(deleted.some(key=>key.startsWith('panel-v10:')),'old panel cache is deleted');
+  assert(!deleted.some(key=>key.startsWith('panel-v11:')),'current cache is kept');
 }
 console.log('Page context, scoped storage, WebSocket, manifest, shell-only navigation cache and cache version cases passed');

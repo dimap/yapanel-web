@@ -233,6 +233,11 @@ def _preexec_allowed():
         return False
 
 
+def _android_shell_available():
+    """На самой станции root-процесс в u:r:su:s0 не видит bluetooth_manager."""
+    return os.path.exists("/system/bin/sh")
+
+
 def _preexec_unsupported(exc):
     msg = str(exc).lower()
     return "preexec" in msg and ("not supported" in msg or "support" in msg or "implemented" in msg)
@@ -637,6 +642,22 @@ def max_android_cmd(adb, args, timeout=None):
     """Run Android command with proper SELinux context for system services (dumpsys, svc)."""
     effective_timeout = timeout if timeout is not None else (_cfg_dev.shell_timeout if _cfg_dev else 10)
     if getattr(adb, "is_local", False):
+        cmd = " ".join(shlex.quote(a) for a in args)
+        if _android_shell_available():
+            # Root in u:r:su:s0 не видит bluetooth_manager/часть системных служб.
+            # Выполняем через shell с явной сменой контекста; preexec_fn в
+            # многопоточном процессе не используется.
+            script = ("echo u:r:shell:s0 > /proc/self/attr/current 2>/dev/null; "
+                      "exec " + cmd)
+            try:
+                return subprocess.run(
+                    ["/system/bin/sh", "-c", script],
+                    capture_output=True, text=True, errors="replace",
+                    timeout=effective_timeout,
+                ).stdout
+            except Exception:
+                pass
+
         def _preexec():
             try:
                 with open("/proc/self/attr/current", "w") as f:
@@ -1956,6 +1977,11 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
 
     P._bt_position = max_bt_position
 
+    def _bt_powered_now(self):
+        out = max_android_cmd(self.adb, ["dumpsys", "bluetooth_manager"])
+        m = re.search(r"enabled:\s*(true|false)", out, re.I)
+        return bool(m and m.group(1).lower() == "true")
+
     def max_bt_state(self):
         bt_off_path = getattr(s, "BT_OFF", "/data/quasar/webpanel/bt_off")
         keep_off = max_is_bt_off(self.adb, bt_off_path)
@@ -2059,6 +2085,7 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         }
 
     P.bt_state = max_bt_state
+    P._bt_powered_now = _bt_powered_now
 
     def max_bt_action(self, data):
         AdbError = getattr(s, "AdbError", Exception)
@@ -2069,6 +2096,10 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         if act == "power_off":
             max_set_bt_off(self.adb, bt_off_path, True)
             max_android_cmd(self.adb, ["svc", "bluetooth", "disable"])
+            for _ in range(10):
+                time.sleep(0.2)
+                if not self._bt_powered_now():
+                    break
             self._pair_until = 0
             if getattr(self, "glagol", None) and getattr(self.glagol, "ws", None):
                 try:
@@ -2078,11 +2109,17 @@ pidof com.yandex.io.sdk >/dev/null && echo "quasar=running" || echo "quasar=stop
         elif act == "power_on":
             max_set_bt_off(self.adb, bt_off_path, False)
             max_android_cmd(self.adb, ["svc", "bluetooth", "enable"])
-            time.sleep(0.5)
+            for _ in range(10):
+                time.sleep(0.5)
+                if self._bt_powered_now():
+                    break
         elif act == "pair_on":
             max_set_bt_off(self.adb, bt_off_path, False)
             max_android_cmd(self.adb, ["svc", "bluetooth", "enable"])
-            time.sleep(0.5)
+            for _ in range(10):
+                time.sleep(0.5)
+                if self._bt_powered_now():
+                    break
             self._pair_until = time.time() + 180
             if getattr(self, "glagol", None) and getattr(self.glagol, "ws", None):
                 try:

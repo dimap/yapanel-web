@@ -372,6 +372,25 @@ def test_android_cmd_retries_without_preexec_when_platform_rejects_it(monkeypatc
     assert "preexec_fn" not in calls[1]
 
 
+def test_android_cmd_uses_shell_context_on_android(monkeypatch):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(stdout="Bluetooth Status\n  enabled: true")
+
+    monkeypatch.setattr(max_profile, "_android_shell_available", lambda: True)
+    monkeypatch.setattr(max_profile.subprocess, "run", fake_run)
+
+    out = max_profile.max_android_cmd(local_adb(), ["dumpsys", "bluetooth_manager"])
+    assert out.startswith("Bluetooth")
+    assert len(calls) == 1
+    args, _ = calls[0]
+    assert args[:2] == ["/system/bin/sh", "-c"]
+    assert "u:r:shell:s0" in args[2]
+    assert "dumpsys bluetooth_manager" in args[2]
+
+
 # ---------------------------------------------------------------------------
 # max_play_remote_wav: do not fail while playaudio is still starting
 # ---------------------------------------------------------------------------

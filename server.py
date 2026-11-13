@@ -3395,6 +3395,27 @@ echo @@BLUEZ
         text = strip_ansi(out).strip()[-600:]
         return {"ok": text.startswith("ok:"), "text": text or "пустой ответ"}
 
+    def assistant_proxy_check(self, d=None):
+        """Проверяет доступность API через прокси прямо с колонки."""
+        if not self.assistant_status()["installed"]:
+            raise AdbError("помощник не установлен на колонке")
+        d = d or {}
+        over = {k: str(d.get(k) or "").strip() for k in ("base_url", "proxy")}
+        tmp = "/tmp/webpanel_assistant.check_proxy"
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "o.json"
+            write_unix(f, json.dumps(over, ensure_ascii=False))
+            self.adb.push(f, tmp)
+        try:
+            out, _, _ = self.adb.shell(f"chmod 600 {tmp}; {ASSISTD} -dir {ASSIST_DIR} -check-proxy {tmp}; true", timeout=20, check=False)
+        finally:
+            self.adb.shell(f"rm -f {tmp}", check=False)
+        line = next((l for l in strip_ansi(out).splitlines() if l.startswith("{")), "")
+        try:
+            return json.loads(line)
+        except ValueError:
+            return {"ok": False, "error": line or "нет ответа от ассистента"}
+
     def assistant_start(self):
         self.adb.shell(f"start-stop-daemon -K -p {ASSIST_SD} 2>/dev/null; sleep 0.5; true", check=False)
         self.detach("assistant", ASSIST_RUN)
@@ -6769,6 +6790,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/footprint": p.footprint,
             "/api/privacy": p.privacy_status,
             "/api/assistant": p.assistant_status,
+            "/api/assistant/proxy_check": p.assistant_proxy_check,
             "/api/viz": p.viz_status,
             "/api/radio": p.radio_status,
             "/api/radio/search": lambda: p.radio_search(q.get("q", ""), q.get("country", "")),
@@ -6959,6 +6981,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/assistant/models": lambda: p.assistant_models(d),
             "/api/assistant/geo": lambda: p.assistant_geo(d),
             "/api/assistant/weather": lambda: p.assistant_weather_check(d),
+            "/api/assistant/proxy_check": lambda: p.assistant_proxy_check(d),
             "/api/panel/update": lambda: self.updater.update(),
             "/api/metrics/clear": lambda: p.metrics.clear(),
             "/api/alarms/uninstall": p.alarm_uninstall,

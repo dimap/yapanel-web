@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -107,6 +108,9 @@ func chat(ctx context.Context, c LLM, messages []message) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if isGemini(c.BaseURL) {
+		return chatGemini(ctx, hc, c, messages)
+	}
 	data, _, err := post(ctx, hc, c.BaseURL, "/chat/completions", c.APIKey,
 		map[string]any{"model": c.Model, "messages": messages, "max_tokens": c.MaxTokens, "stream": false}, 1<<20)
 	if err != nil {
@@ -125,6 +129,144 @@ func chat(ctx context.Context, c LLM, messages []message) (string, error) {
 	answer := strings.TrimSpace(stripThinking(r.Choices[0].Message.Content))
 	if answer == "" {
 		return "", errors.New("модель вернула пустой ответ")
+	}
+	return answer, nil
+}
+
+func isGemini(baseURL string) bool {
+	u := strings.ToLower(baseURL)
+	return strings.Contains(u, "generativelanguage.googleapis.com") || strings.Contains(u, "gemini")
+}
+
+// chatGemini — прямой нативный протокол Google Gemini v1beta: generateContent с поддержкой thinkingLevel: MINIMAL.
+func chatGemini(ctx context.Context, hc *http.Client, c LLM, messages []message) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+	base = strings.TrimSuffix(base, "/openai")
+	if !strings.HasSuffix(base, "/v1beta") && !strings.Contains(base, "/v1beta/") {
+		base = base + "/v1beta"
+	}
+	model := strings.TrimPrefix(c.Model, "models/")
+	endpoint := fmt.Sprintf("%s/models/%s:generateContent", base, model)
+
+	var contents []map[string]any
+	var sysPrompt string = c.SystemPrompt
+	for _, m := range messages {
+		role := m.Role
+		if role == "system" {
+			if sysPrompt == "" {
+				sysPrompt = m.Content
+			}
+			continue
+		}
+		if role == "assistant" {
+			role = "model"
+		}
+		contents = append(contents, map[string]any{
+			"role":  role,
+			"parts": []map[string]any{{"text": m.Content}},
+		})
+	}
+	if len(contents) == 0 {
+		return "", errors.New("нет сообщений для Gemini")
+	}
+
+	genConfig := map[string]any{
+		"maxOutputTokens": c.MaxTokens,
+	}
+	if strings.Contains(c.Model, "3.") || strings.Contains(c.Model, "thinking") {
+		genConfig["thinkingConfig"] = map[string]any{
+			"thinkingLevel": "MINIMAL",
+		}
+	}
+	payload := map[string]any{
+		"contents":         contents,
+		"generationConfig": genConfig,
+	}
+	if sysPrompt != "" {
+		payload["systemInstruction"] = map[string]any{
+			"parts": []map[string]any{{"text": sysPrompt}},
+		}
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	var resp *http.Response
+	var data []byte
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if c.APIKey != "" {
+			req.Header.Set("x-goog-api-key", c.APIKey)
+		}
+
+		resp, err = hc.Do(req)
+		if err != nil {
+			return "", err
+		}
+		data, err = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if err != nil {
+			return "", err
+		}
+		if (resp.StatusCode == 503 || resp.StatusCode == 429) && attempt == 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(800 * time.Millisecond):
+				continue
+			}
+		}
+		break
+	}
+	if resp.StatusCode/100 != 2 {
+		var e struct {
+			Error struct {
+				Message string `json:"message"`
+				Status  string `json:"status"`
+			} `json:"error"`
+		}
+		json.Unmarshal(data, &e)
+		msg := e.Error.Message
+		if msg == "" {
+			msg = string(data)
+		}
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		return "", fmt.Errorf("Gemini API ответил %d: %s", resp.StatusCode, msg)
+	}
+
+	var r struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text    string `json:"text"`
+					Thought bool   `json:"thought"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err = json.Unmarshal(data, &r); err != nil || len(r.Candidates) == 0 {
+		return "", errors.New("непонятный ответ Gemini API")
+	}
+
+	var texts []string
+	for _, p := range r.Candidates[0].Content.Parts {
+		if !p.Thought && p.Text != "" {
+			texts = append(texts, p.Text)
+		}
+	}
+	raw := strings.Join(texts, " ")
+	answer := strings.TrimSpace(stripThinking(raw))
+	replacer := strings.NewReplacer("*", "", "#", "", "`", "", "_", " ")
+	answer = strings.Join(strings.Fields(replacer.Replace(answer)), " ")
+	if answer == "" {
+		return "", errors.New("Gemini вернул пустой ответ")
 	}
 	return answer, nil
 }
@@ -176,6 +318,9 @@ func listModels(ctx context.Context, c LLM) ([]string, error) {
 	}
 	if c.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		if isGemini(c.BaseURL) && !strings.Contains(c.BaseURL, "/openai") {
+			req.Header.Set("x-goog-api-key", c.APIKey)
+		}
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -232,4 +377,113 @@ func printModels(cfgPath, overrides string) {
 		out = map[string]any{"error": err.Error()}
 	}
 	json.NewEncoder(os.Stdout).Encode(out)
+}
+
+type ProxyCheckResult struct {
+	Proxy   string `json:"proxy"`
+	OK      bool   `json:"ok"`
+	Ms      int64  `json:"ms"`
+	Target  string `json:"target,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Checked int64  `json:"checked"`
+}
+
+func checkProxy(ctx context.Context, proxy, targetURL string) ProxyCheckResult {
+	proxy = strings.TrimSpace(proxy)
+	now := time.Now().Unix()
+	if proxy == "" {
+		return ProxyCheckResult{Proxy: "", OK: true, Ms: 0, Target: "direct", Checked: now}
+	}
+	if targetURL == "" {
+		targetURL = "https://generativelanguage.googleapis.com"
+	}
+
+	u, err := url.Parse(proxy)
+	if err != nil || u.Host == "" {
+		return ProxyCheckResult{Proxy: proxy, OK: false, Error: "неверный адрес прокси", Checked: now}
+	}
+	hostPort := u.Host
+	if !strings.Contains(hostPort, ":") {
+		if u.Scheme == "https" {
+			hostPort += ":443"
+		} else {
+			hostPort += ":80"
+		}
+	}
+
+	// 1. Быстрая проверка доступности самого прокси по TCP
+	t0 := time.Now()
+	conn, err := net.DialTimeout("tcp", hostPort, 2*time.Second)
+	if err != nil {
+		return ProxyCheckResult{Proxy: proxy, OK: false, Error: "прокси недоступен (TCP): " + err.Error(), Checked: now}
+	}
+	conn.Close()
+	tcpMs := time.Since(t0).Milliseconds()
+
+	// 2. Проверка туннеля через прокси к целевому сервису (Gemini / OpenAI)
+	hc, err := client(proxy, 6*time.Second)
+	if err != nil {
+		return ProxyCheckResult{Proxy: proxy, OK: false, Error: err.Error(), Checked: now}
+	}
+
+	t1 := time.Now()
+	req, err := http.NewRequestWithContext(ctx, "HEAD", targetURL, nil)
+	if err != nil {
+		return ProxyCheckResult{Proxy: proxy, OK: false, Error: err.Error(), Checked: now}
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (yapanel; assistantd)")
+
+	resp, err := hc.Do(req)
+	totalMs := time.Since(t1).Milliseconds()
+	if err != nil {
+		req2, err2 := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+		if err2 == nil {
+			req2.Header.Set("User-Agent", "Mozilla/5.0 (yapanel; assistantd)")
+			resp2, err3 := hc.Do(req2)
+			if err3 == nil {
+				resp2.Body.Close()
+				resp = resp2
+				err = nil
+			}
+		}
+	}
+	if err != nil {
+		return ProxyCheckResult{Proxy: proxy, OK: false, Ms: tcpMs, Error: "ошибка соединения через прокси: " + err.Error(), Checked: now}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 403 {
+		return ProxyCheckResult{Proxy: proxy, OK: false, Ms: totalMs, Target: targetURL, Error: "HTTP 403 (геоблокировка не обойдена)", Checked: now}
+	}
+
+	return ProxyCheckResult{
+		Proxy:   proxy,
+		OK:      true,
+		Ms:      totalMs,
+		Target:  targetURL,
+		Checked: now,
+	}
+}
+
+func printProxyCheck(cfgPath, overrides string) {
+	c, _ := loadConfig(cfgPath)
+	targetURL := c.LLM.BaseURL
+	proxy := c.LLM.Proxy
+	if overrides != "-" {
+		if b, err := os.ReadFile(overrides); err == nil {
+			var o LLM
+			if json.Unmarshal(b, &o) == nil {
+				if o.BaseURL != "" {
+					targetURL = o.BaseURL
+				}
+				if o.Proxy != "" {
+					proxy = o.Proxy
+				}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res := checkProxy(ctx, proxy, targetURL)
+	json.NewEncoder(os.Stdout).Encode(res)
 }

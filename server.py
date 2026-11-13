@@ -4585,8 +4585,21 @@ echo @@BLUEZ
         lt = Path("/etc/localtime")
         try:
             real = lt.resolve()
+            data = real.read_bytes()
+            if not data.startswith(b"TZif"):
+                # На Keenetic/OpenWrt /etc/localtime содержит POSIX-строку (напр. <+04>-4).
+                # Собираем валидный TZif со смещением из datetime, как для Windows.
+                import datetime
+                import struct
+                offset = int(datetime.datetime.now().astimezone().utcoffset().total_seconds())
+                minutes = abs(offset) // 60
+                name = f"UTC{'+' if offset >= 0 else '-'}{minutes // 60:02d}:{minutes % 60:02d}"
+                abbr = name.encode("ascii") + b"\0"
+                data = (b"TZif" + b"\0" * 16 + struct.pack(">6I", 0, 0, 0, 0, 1, len(abbr))
+                        + struct.pack(">lBB", offset, 0, 0) + abbr)
+                return name, data
             name = str(real).split("zoneinfo/", 1)[1] if "zoneinfo/" in str(real) else None
-            return name or time.strftime("%Z"), real.read_bytes()
+            return name or time.strftime("%Z"), data
         except OSError:
             return None, None
 

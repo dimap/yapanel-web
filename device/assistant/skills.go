@@ -116,8 +116,70 @@ func (d *Daemon) localZone() *time.Location {
 		if loc, err := time.LoadLocationFromTZData("local", data); err == nil {
 			return loc
 		}
+		if loc := parsePOSIXTZ(data); loc != nil {
+			return loc
+		}
 	}
 	return time.Local
+}
+
+// parsePOSIXTZ разбирает строку таймзоны (напр. "<+04>-4", "MSK-3"), которую пишут роутеры
+// (Keenetic, OpenWrt, Entware), если вместо бинарного TZif в /etc/localtime лежит текстовая строка.
+func parsePOSIXTZ(data []byte) *time.Location {
+	s := strings.TrimSpace(string(data))
+	if s == "" || strings.HasPrefix(s, "TZif") {
+		return nil
+	}
+	var name, rest string
+	if strings.HasPrefix(s, "<") {
+		end := strings.Index(s, ">")
+		if end > 1 {
+			name = s[1:end]
+			rest = strings.TrimSpace(s[end+1:])
+		}
+	} else {
+		for i, r := range s {
+			if (r >= '0' && r <= '9') || r == '+' || r == '-' {
+				name = strings.TrimSpace(s[:i])
+				rest = strings.TrimSpace(s[i:])
+				break
+			}
+		}
+	}
+	if rest == "" {
+		return nil
+	}
+	// Из rest берём только смещение до перехода на летнее время (напр. "5" из "5EDT" или "-4" из "-4")
+	var offsetPart string
+	for i, r := range rest {
+		if (r >= '0' && r <= '9') || r == ':' || (i == 0 && (r == '+' || r == '-')) {
+			offsetPart += string(r)
+		} else {
+			break
+		}
+	}
+	if offsetPart == "" {
+		return nil
+	}
+	parts := strings.Split(offsetPart, ":")
+	h, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil
+	}
+	min := 0
+	if len(parts) > 1 {
+		min, _ = strconv.Atoi(parts[1])
+	}
+	// POSIX standard: отрицательное смещение означает время восточнее Гринвича (UTC+).
+	// Например: -4 означает UTC+4 (+14400с), -3 означает UTC+3 (+10800с).
+	sec := -(h*3600 + min*60)
+	if h < 0 {
+		sec = -h*3600 + min*60
+	}
+	if name == "" {
+		name = fmt.Sprintf("UTC%+03d:%02d", -h, min)
+	}
+	return time.FixedZone(name, sec)
 }
 
 // localAnswer отвечает на стандартный вопрос без модели. ok=false — пусть отвечает модель.

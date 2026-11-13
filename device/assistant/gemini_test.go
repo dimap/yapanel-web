@@ -88,6 +88,19 @@ func TestChatGeminiNativeProtocol(t *testing.T) {
 	if thinkCfg["thinkingLevel"] != "MINIMAL" {
 		t.Errorf("expected thinkingLevel MINIMAL, got %v", thinkCfg["thinkingLevel"])
 	}
+
+	// Verify gemini-2.5-flash sends thinkingBudget: 0
+	c25 := c
+	c25.Model = "gemini-2.5-flash"
+	_, err = chat(context.Background(), c25, []message{{"user", "ping"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	genCfg25 := receivedBody["generationConfig"].(map[string]any)
+	thinkCfg25 := genCfg25["thinkingConfig"].(map[string]any)
+	if budget, ok := thinkCfg25["thinkingBudget"].(float64); !ok || budget != 0 {
+		t.Errorf("expected thinkingBudget 0 for 2.5-flash, got %v", thinkCfg25["thinkingBudget"])
+	}
 }
 
 func TestCheckProxyDirect(t *testing.T) {

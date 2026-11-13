@@ -173,7 +173,13 @@ func chatGemini(ctx context.Context, hc *http.Client, c LLM, messages []message)
 	genConfig := map[string]any{
 		"maxOutputTokens": c.MaxTokens,
 	}
-	if strings.Contains(c.Model, "3.") || strings.Contains(c.Model, "thinking") {
+	if strings.Contains(c.Model, "2.5") {
+		// Gemini 2.5 Flash по умолчанию тратит сотни токенов на reasoning,
+		// съедая лимит maxOutputTokens и обрывая ответ. thinkingBudget: 0 отключает thinking для голоса.
+		genConfig["thinkingConfig"] = map[string]any{
+			"thinkingBudget": 0,
+		}
+	} else if strings.Contains(c.Model, "3.") || strings.Contains(c.Model, "4.") || strings.Contains(c.Model, "thinking") {
 		genConfig["thinkingConfig"] = map[string]any{
 			"thinkingLevel": "MINIMAL",
 		}

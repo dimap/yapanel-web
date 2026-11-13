@@ -176,3 +176,29 @@ func TestLocalZoneWithoutFilesKeepsSystemTimezone(t *testing.T) {
 		t.Fatal("без файлов должен остаться системный часовой пояс")
 	}
 }
+
+func TestLocalZoneParsesPOSIXString(t *testing.T) {
+	for _, tc := range []struct {
+		input  string
+		offset int
+	}{
+		{"<+04>-4\n", 4 * 3600},
+		{"MSK-3\n", 3 * 3600},
+		{"UTC-5", 5 * 3600},
+		{"EST5EDT", -5 * 3600},
+	} {
+		dir := t.TempDir()
+		cfg := filepath.Join(dir, "config.json")
+		if err := os.WriteFile(cfg, []byte("{}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "localtime"), []byte(tc.input), 0644); err != nil {
+			t.Fatal(err)
+		}
+		d := &Daemon{cfgPath: cfg}
+		_, off := time.Now().In(d.localZone()).Zone()
+		if off != tc.offset {
+			t.Errorf("для %q получили смещение %d, ожидали %d", tc.input, off, tc.offset)
+		}
+	}
+}

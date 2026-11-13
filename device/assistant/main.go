@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -102,6 +103,11 @@ type Daemon struct {
 	musicWish *musicWish
 	// когда включили своё радио: в первые секунды отклики плеера Алисы на паузу не считаем её новой музыкой
 	radioAt time.Time
+
+	// статус прокси и подключения к LLM API
+	proxyStatus   ProxyCheckResult
+	proxyChecked  time.Time
+	proxyChecking bool
 }
 
 func (d *Daemon) reload() {
@@ -177,6 +183,34 @@ func (d *Daemon) returnToAlice(turn uint64) {
 	os.Remove(microphoneLease)
 }
 
+func (d *Daemon) checkProxyBg(force bool) {
+	d.mu.Lock()
+	if d.proxyChecking || (!force && time.Since(d.proxyChecked) < 60*time.Second) {
+		d.mu.Unlock()
+		return
+	}
+	d.proxyChecking = true
+	proxy := d.cfg.LLM.Proxy
+	baseURL := d.cfg.LLM.BaseURL
+	d.mu.Unlock()
+
+	defer func() {
+		d.mu.Lock()
+		d.proxyChecking = false
+		d.mu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	res := checkProxy(ctx, proxy, baseURL)
+
+	d.mu.Lock()
+	d.proxyStatus = res
+	d.proxyChecked = time.Now()
+	d.dirty = true
+	d.mu.Unlock()
+}
+
 func (d *Daemon) writeStatus() {
 	// радио меняется само (название трека, обрыв потока) — пишем состояние, когда оно изменилось
 	radio, _ := json.Marshal(d.radio.Status())
@@ -194,7 +228,7 @@ func (d *Daemon) writeStatus() {
 		"microphone": map[string]any{"ready": d.micReady, "error": d.micError},
 		"skills":     map[string]any{"time": d.cfg.Skills.Time, "weather": d.cfg.Skills.Weather},
 		"mode":       d.mode, "route": d.route, "radio": d.radio.Status(), "radio_miss": d.radioMiss,
-		"music": d.musicWish}
+		"music": d.musicWish, "proxy": d.proxyStatus}
 	if d.mode {
 		s["mode_until"] = d.modeAt.Add(time.Duration(d.cfg.Mode.TimeoutMin) * time.Minute).Unix()
 	}
@@ -409,6 +443,22 @@ func (d *Daemon) audioControl(text string, turn uint64) bool {
 	return false
 }
 
+func speakGlagol(ctx context.Context, text string) bool {
+	client := &http.Client{Timeout: 3 * time.Second}
+	body, _ := json.Marshal(map[string]string{"action": "speak_text", "query": text})
+	req, err := http.NewRequestWithContext(ctx, "POST", "http://127.0.0.1:8099/api", bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 // speak озвучивает текст выбранным голосом; byAlice — прочитала Алиса (в том числе запасным путём,
 // тогда её микрофон после ответа уже открыт сам). Если голос ассистента недоступен (адрес, ключ, сеть,
 // aplay) — текст читает Алиса, чтобы ответ и голосовые ошибки всё равно прозвучали.
@@ -423,6 +473,9 @@ func (d *Daemon) speak(ctx context.Context, c Config, text string) (byAlice bool
 		return false, err
 	}
 	if c.TTS.Provider != "openai" {
+		if speakGlagol(ctx, text) {
+			return true, nil
+		}
 		return true, d.aliceSay(ctx, text)
 	}
 	voiceErr := func() error {
@@ -897,11 +950,15 @@ func (d *Daemon) command() {
 		Route     *bool    `json:"route"`
 		Radio     *Station `json:"radio"`
 		RadioStop bool     `json:"radio_stop"`
-		MissSeen  bool     `json:"radio_miss_seen"`
-		MusicSeen bool     `json:"music_seen"`
+		MissSeen   bool     `json:"radio_miss_seen"`
+		MusicSeen  bool     `json:"music_seen"`
+		CheckProxy bool     `json:"check_proxy"`
 	}
 	if json.Unmarshal(b, &cmd) != nil {
 		return
+	}
+	if cmd.CheckProxy {
+		go d.checkProxyBg(true)
 	}
 	if cmd.Stop {
 		d.stopAnswer()
@@ -976,13 +1033,17 @@ func (d *Daemon) follow(ctx context.Context, path string) {
 	var offset int64
 	var pending []byte
 	first := true
-	tick := time.NewTicker(200 * time.Millisecond)
+	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
+	proxyTick := time.NewTicker(60 * time.Second)
+	defer proxyTick.Stop()
 	buf := make([]byte, 64<<10)
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-proxyTick.C:
+			go d.checkProxyBg(false)
 		case <-tick.C:
 		}
 		d.reload()
@@ -1036,6 +1097,7 @@ func main() {
 	dir := flag.String("dir", "/data/quasar/webpanel/assistant", "папка с config.json")
 	showVersion := flag.Bool("version", false, "показать версию")
 	models := flag.String("models", "", "вывести модели API в JSON; значение — файл с base_url/api_key/proxy поверх настроек или -")
+	checkProxyFlag := flag.String("check-proxy", "", "проверить прокси и доступность API; значение — файл с base_url/proxy или -")
 	weather := flag.String("weather", "", "проверить запрос погоды: \"lat,lon\" или пусто — из настроек; и выйти")
 	flag.Parse()
 	if *showVersion {
@@ -1046,6 +1108,10 @@ func main() {
 		printModels(*dir+"/config.json", *models)
 		return
 	}
+	if *checkProxyFlag != "" {
+		printProxyCheck(*dir+"/config.json", *checkProxyFlag)
+		return
+	}
 	if *weather != "" {
 		checkWeather(*dir+"/config.json", *weather)
 		return
@@ -1054,6 +1120,7 @@ func main() {
 	d := &Daemon{cfgPath: *dir + "/config.json", statusPath: "/tmp/webpanel_assistant.json",
 		cmdPath: "/tmp/webpanel_assistant.cmd", state: "idle", cfg: defaults(), dirty: true}
 	d.reload()
+	go d.checkProxyBg(false)
 	// станция так и не заиграла — объясняем голосом, а не молчим (подробности — в панели)
 	d.radio.onFail = func(spoken string) {
 		d.mu.Lock()

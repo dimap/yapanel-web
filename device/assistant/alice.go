@@ -25,7 +25,7 @@ type cliTiming struct {
 	start, line, speech, exit time.Duration
 }
 
-var defaultCLITiming = cliTiming{2 * time.Second, 500 * time.Millisecond, 3 * time.Second, time.Second}
+var defaultCLITiming = cliTiming{50 * time.Millisecond, 20 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond}
 
 type aliceCLI struct {
 	mu           sync.Mutex

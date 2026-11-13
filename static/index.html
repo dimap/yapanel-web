@@ -2837,7 +2837,17 @@
                 <div class="as-field"><label class="as-label" for="as-prompt">Системный промт</label><textarea class="field" id="as-prompt" rows="5"></textarea></div>
                 <div class="as-field"><label class="as-label" for="as-tokens">Длина ответа</label><input class="field" id="as-tokens" type="number" min="50" max="4000" step="50"></div>
                 <div class="as-field"><label class="as-label" for="as-history">Помнить реплик</label><input class="field" id="as-history" type="number" min="0" max="20"><p class="hint">Пар «вопрос — ответ». Через 10 минут тишины разговор начинается заново.</p></div>
-                <div class="as-field"><label class="as-label" for="as-proxy">Прокси</label><input class="field" id="as-proxy" placeholder="socks5://адрес:порт или http://адрес:порт"><p class="hint" id="as-proxy-hint">Для запросов к модели и озвучке; остальной трафик колонки не меняется.</p></div>
+                <div class="as-field">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                    <label class="as-label" for="as-proxy" style="margin:0;">Прокси</label>
+                    <span id="as-proxy-status-pill" class="as-state" style="padding:2px 8px;font-size:11px;" hidden></span>
+                  </div>
+                  <div style="display:flex;gap:8px;">
+                    <input class="field" id="as-proxy" placeholder="socks5://адрес:порт или http://адрес:порт" style="flex:1;">
+                    <button type="button" class="btn sm" id="as-proxy-check-btn" style="white-space:nowrap;">Проверить</button>
+                  </div>
+                  <p class="hint" id="as-proxy-hint">Для запросов к модели и озвучке; остальной трафик колонки не меняется.</p>
+                </div>
               </details>
               <p class="hint as-http" hidden></p>
             </div>
@@ -7295,6 +7305,7 @@ async function loadAssistant(fill) {
     $('#as-mic-connect').dataset.on = st.microphone_installed ? '1' : '';
   }
   if (fill && st.installed) { asFill(c); asWakeLoad(true); }
+  if (s.proxy_check && !$('#as-proxy-check-btn')?.disabled) asUpdateProxyStatus(s.proxy_check);
   asAudioView();
   if (!$('#tab-assistant').hidden) asTimer = setTimeout(loadAssistant, s.state && s.state !== 'idle' ? 1000 : 4000);
 }
@@ -7925,6 +7936,36 @@ $('#as-weather-geo').onclick = () => asWeatherGeo(false);
 $('#as-weather-city').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); asWeatherGeo(false); }
 });
+function asUpdateProxyStatus(res) {
+  const pill = $('#as-proxy-status-pill');
+  if (!pill) return;
+  if (!res || !res.checked) { pill.hidden = true; return; }
+  pill.hidden = false;
+  if (res.ok) {
+    pill.textContent = `✓ доступен (${res.ms} мс)`;
+    pill.className = 'as-state';
+  } else {
+    pill.textContent = `✗ ошибка: ${res.error || 'не отвечает'}`;
+    pill.className = 'as-state is-bad';
+  }
+}
+$('#as-proxy-check-btn').onclick = async () => {
+  const btn = $('#as-proxy-check-btn');
+  btn.disabled = true;
+  btn.textContent = 'Проверяю…';
+  try {
+    const res = await api('/api/assistant/proxy_check', {
+      base_url: $('#as-url').value.trim(),
+      proxy: $('#as-proxy').value.trim()
+    });
+    asUpdateProxyStatus(res);
+  } catch (e) {
+    asUpdateProxyStatus({ ok: false, error: e.message, checked: new Date().toISOString() });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Проверить';
+  }
+};
 ['#as-url', '#as-key', '#as-proxy'].forEach(id => $(id).addEventListener('change', () => asModels(true)));
 $('#as-update').onclick = e => act(e.currentTarget, async () => { await api('/api/assistant/install', {}); await loadAssistant(); }, 'Программа на колонке обновлена');
 $('#as-install').onclick = e => act(e.currentTarget, async () => { await api('/api/assistant/install', {}); await loadAssistant(true); },

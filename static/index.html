@@ -2862,6 +2862,10 @@
                 <div class="as-field"><label class="as-label" for="as-tts-model">Модель</label><input class="field" id="as-tts-model" placeholder="tts-1"></div>
                 <div class="as-field"><label class="as-label" for="as-tts-voice">Голос</label><input class="field" id="as-tts-voice" placeholder="например, alloy или ru_RU-irina-medium"></div>
                 <div class="as-field"><label class="as-label" for="as-tts-speed">Скорость</label><input class="field" id="as-tts-speed" type="number" min="0.5" max="2" step="0.1" value="1"></div>
+                <div class="as-field" id="as-tts-stream-row" hidden>
+                  <label class="as-head-switch"><span>Потоковая озвучка (Fish Audio)</span><input type="checkbox" class="switch" id="as-tts-stream"></label>
+                  <p class="hint">Модель отвечает потоком, и каждое готовое предложение сразу уходит в Fish Audio, не дожидаясь конца ответа: звук начинается раньше. Только для Fish Audio и режима Chat Completions.</p>
+                </div>
                 <p class="hint">Если синтезатор не ответит, ответ прочитает Алиса.</p>
               </div>
             </div>
@@ -7100,7 +7104,7 @@ $('#as-tts-preset').onchange = e => {
   } else {
     $('#as-tts-voice').placeholder = 'например, alloy или ru_RU-irina-medium';
   }
-  asKeysView(); asDirty(); asHttpWarning();
+  asStreamView(); asKeysView(); asDirty(); asHttpWarning();
 };
 $('#set-viz').onchange = e => { store.set('ui.viz', e.target.checked ? '1' : '0'); applyUI(); };
 $('#set-viz-style').onchange = e => { store.set('ui.vizStyle', e.target.value); applyUI(); };
@@ -7355,6 +7359,8 @@ function asFill(c) {
   $('#as-tts-model').value = tts.model || 'tts-1';
   $('#as-tts-voice').value = tts.voice || '';
   $('#as-tts-speed').value = tts.speed || 1;
+  $('#as-tts-stream').checked = !!tts.stream;
+  asStreamView();
   const skills = c.skills || {}, weather = c.weather || {};
   $('#as-skill-time').checked = skills.time ?? true;
   $('#as-skill-weather').checked = !!skills.weather;
@@ -7625,7 +7631,7 @@ function asFormSig() {
     $('#as-transport').value, $('#as-realtime-voice').value, $('#as-prompt').value, $('#as-tokens').value, $('#as-history').value,
     $('#as-proxy').value.trim(), $('#as-mic-gain').value, $('#as-mic-threshold').value, $('#as-mic-silence').value,
     $('#as-stt').value, $('#as-stt-url').value, $('#as-stt-proxy').value, $('#as-stt-model').value, $('#as-stt-language').value,
-    $('#as-tts').value, $('#as-tts-url').value, $('#as-tts-model').value, $('#as-tts-voice').value, $('#as-tts-speed').value,
+    $('#as-tts').value, $('#as-tts-url').value, $('#as-tts-model').value, $('#as-tts-voice').value, $('#as-tts-speed').value, asStreamOn(),
     $('#as-skill-time').checked, $('#as-skill-weather').checked, $('#as-weather-city').value.trim(),
     $('#as-weather-lat').value, $('#as-weather-lon').value,
     key('#as-key'), key('#as-stt-key'), key('#as-tts-key')]);
@@ -7649,6 +7655,7 @@ function asKeysView() {
   });
 }
 ['#as-url', '#as-tts-url', '#as-stt-url'].forEach(id => $(id).addEventListener('input', asKeysView));
+$('#as-tts-url').addEventListener('input', () => { asStreamView(); asDirty(); });
 // Панель открыта по HTTP с другого устройства: ключ уйдёт по сети открытым текстом. Не запрещаем — в домашней сети
 // это обычный случай, — но предупреждаем и даём ссылку на HTTPS, если он включён.
 function asHttpWarning() {
@@ -7673,11 +7680,19 @@ function asPrivacyView() {
   tts.hidden = realtime || $('#as-tts').value !== 'alice';
   if (!tts.hidden) tts.innerHTML = '<b>Обратите внимание!</b> ' + esc('Ответ модели уходит Яндексу: Алиса озвучивает его запросом «Повтори за мной».');
 }
+// Галочка есть только у Fish Audio; у остальных провайдеров потоковый режим не поддерживается и не сохраняется.
+const asIsFish = () => /^https?:\/\/api\.fish\.audio(\/|$)/i.test($('#as-tts-url').value.trim());
+const asStreamOn = () => asIsFish() && $('#as-tts-stream').checked;
+function asStreamView() {
+  $('#as-tts-stream-row').hidden = !asIsFish();
+  if (!asIsFish()) $('#as-tts-stream').checked = false;
+}
 function asTtsView() {
   const v = $('#as-tts').value;
   $$('input[name="as-tts-src"]').forEach(r => r.checked = r.value === v);
   $('#as-tts-custom').hidden = $('#as-transport').value === 'realtime' || v !== 'openai';
   $('#as-tts-hint').textContent = AS_TTS_HINT[v];
+  asStreamView();
   asHttpWarning();
   asPrivacyView();
 }
@@ -7953,7 +7968,7 @@ $('#as-save').onclick = e => act(e.currentTarget, async () => {
     microphone: { source: $('#as-input').value, gain: num('#as-mic-gain', 32), threshold: num('#as-mic-threshold', 300), silence_ms: num('#as-mic-silence', 900) },
     stt: { proxy: $('#as-stt-proxy').value.trim(), provider: $('#as-stt').value, base_url: $('#as-stt-url').value.trim(), api_key: $('#as-stt-key').value, model: $('#as-stt-model').value.trim(), language: $('#as-stt-language').value.trim() },
     tts: { provider: $('#as-tts').value, base_url: $('#as-tts-url').value.trim(), api_key: $('#as-tts-key').value,
-      model: $('#as-tts-model').value.trim(), voice: $('#as-tts-voice').value.trim(), speed: num('#as-tts-speed', 1) },
+      model: $('#as-tts-model').value.trim(), voice: $('#as-tts-voice').value.trim(), speed: num('#as-tts-speed', 1), stream: asStreamOn() },
     skills: { time: $('#as-skill-time').checked, weather: $('#as-skill-weather').checked },
     weather: { city: $('#as-weather-city').value.trim(), lat: Number($('#as-weather-lat').value) || 0,
       lon: Number($('#as-weather-lon').value) || 0 },

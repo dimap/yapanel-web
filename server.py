@@ -2897,7 +2897,7 @@ echo @@BLUEZ
     ASSIST_FIELDS = {"llm": ("base_url", "model", "system_prompt", "max_tokens", "history", "proxy", "transport", "voice"),
                      "stt": ("provider", "base_url", "model", "language", "proxy"),
                      "microphone": ("source", "gain", "threshold", "silence_ms"),
-                     "tts": ("provider", "base_url", "model", "voice", "speed"),
+                     "tts": ("provider", "base_url", "model", "voice", "speed", "stream"),
                      "skills": ("time", "weather"),
                      "weather": ("city", "lat", "lon"),
                      "led": ("enabled", "color"),
@@ -3111,6 +3111,10 @@ echo @@BLUEZ
         self.adb.shell(f"chmod 600 {ASSIST_CONF}.new; mv {ASSIST_CONF}.new {ASSIST_CONF}")
 
     @staticmethod
+    def _is_fish_url(base):
+        return (urlparse(str(base or "").strip()).hostname or "").lower() == "api.fish.audio"
+
+    @staticmethod
     def _key_id(base):
         # как keyID в device/assistant: один провайдер при любом написании адреса
         return str(base or "").strip().rstrip("/").lower()
@@ -3210,6 +3214,9 @@ echo @@BLUEZ
         tts = cfg.get("tts", {})
         if tts.get("provider") not in (None, "alice", "openai"):
             raise AdbError("неизвестный способ озвучки")
+        if "stream" in tts:
+            # потоковая озвучка есть только у Fish Audio
+            tts["stream"] = bool(tts["stream"]) and self._is_fish_url(tts.get("base_url"))
         if cfg.get("llm", {}).get("transport", "chat") not in ("chat", "realtime"):
             raise AdbError("неизвестный режим API")
         if cfg.get("stt", {}).get("provider", "alice") not in ("alice", "model", "custom"):

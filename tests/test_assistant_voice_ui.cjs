@@ -10,6 +10,7 @@ const context = {AssistantRoute,asRouteRuntime:{},asMicPending:null,asMicNotice:
 vm.createContext(context);
 const extract=(start,end)=>html.slice(html.indexOf(start),html.indexOf(end,html.indexOf(start)));
 vm.runInContext(extract('function asAudioView()', "$('#as-transport').onchange"),context);
+vm.runInContext(extract('const asIsFish', 'function asTtsView()'),context);
 const view=()=>vm.runInContext('asAudioView()',context);
 get('#as-url').value='http://hermes/v1';get('#as-model').value='hermes-agent';
 get('#as-input').value='alice';get('#as-stt').value='custom';get('#as-transport').value='realtime';
@@ -60,6 +61,12 @@ async function save(){await get('#as-save').onclick({currentTarget:{}});return c
  d=await save();assert(!('voice'in d.llm));assert(!('stt'in d));assert.deepEqual(d.microphone,{source:'alice'});assert.deepEqual(d.tts,{provider:'alice'});
  get('#as-input').value='microphone';get('#as-tts').value='openai';d=await save();
  assert.equal(d.tts.voice,'my-voice');assert.equal(d.stt.api_key,'test-secret');assert.equal(d.microphone.silence_ms,900);
+ assert.equal(d.tts.stream,false,'streaming is off outside Fish Audio');
+ get('#as-tts-url').value='https://api.fish.audio/v1';get('#as-tts-stream').checked=true;d=await save();
+ assert.equal(d.tts.stream,true);
+ get('#as-tts-url').value='https://api.openai.com/v1';d=await save();
+ assert.equal(d.tts.stream,false,'a stale checkbox must not enable streaming for another provider');
+ get('#as-tts-url').value='';get('#as-tts-stream').checked=false;
  get('#as-stt').value='model';d=await save();assert(!('api_key'in d.stt));assert(!('base_url'in d.stt));
  context.asRouteRuntime={running:true,microphone_installed:false};
  get('#as-input').value='alice';get('#as-url').value='http://hermes/v1';get('#as-model').value='hermes-agent';view();

@@ -256,3 +256,22 @@ class MicrophoneConfirmation(unittest.TestCase):
         self.assertTrue(state['microphone_installed'])
         self.assertEqual(p.assistant_status.call_count, 3)
         self.assertTrue(any('manage.sh confirm' in call.args[0] for call in p.adb.shell.call_args_list))
+
+
+class AssistantStreamSetting(AssistantKeys):
+    """Потоковая озвучка есть только у Fish Audio: панель сбрасывает галочку у остальных провайдеров."""
+
+    def setUp(self):
+        self.panel_ = AssistantKeys.panel(self, {})
+
+    def set(self, d):
+        self.panel_.assistant_set(d)
+        return self.panel_.stored
+
+    def test_stream_only_for_fish(self):
+        fish = {"provider": "openai", "base_url": "https://api.fish.audio/v1", "stream": True}
+        self.assertTrue(self.set({"tts": dict(fish)})["tts"]["stream"])
+        other = dict(fish, base_url="https://api.openai.com/v1")
+        self.assertFalse(self.set({"tts": other})["tts"]["stream"])
+        fake = dict(fish, base_url="https://evil.example/?x=api.fish.audio")
+        self.assertFalse(self.set({"tts": fake})["tts"]["stream"])

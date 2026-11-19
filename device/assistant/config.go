@@ -27,6 +27,7 @@ type TTS struct {
 	Model    string  `json:"model"`
 	Voice    string  `json:"voice"`
 	Speed    float64 `json:"speed"`
+	Stream   bool    `json:"stream"` // только Fish Audio: ответ модели озвучивается по мере генерации
 }
 
 // STT uses an OpenAI-compatible multipart /audio/transcriptions endpoint.

@@ -55,6 +55,25 @@ func clientWithCA(proxy string, timeout time.Duration, firmwareCA string) (*http
 	return &http.Client{Transport: t, Timeout: timeout}, nil
 }
 
+// apiError — ошибка API его собственным текстом.
+func apiError(status int, data []byte) error {
+	var e struct {
+		Error any `json:"error"`
+	}
+	msg := strings.TrimSpace(string(data))
+	if json.Unmarshal(data, &e) == nil && e.Error != nil {
+		if m, ok := e.Error.(map[string]any); ok && m["message"] != nil {
+			msg = fmt.Sprint(m["message"])
+		} else {
+			msg = fmt.Sprint(e.Error)
+		}
+	}
+	if len(msg) > 300 {
+		msg = msg[:300]
+	}
+	return fmt.Errorf("API ответил %d: %s", status, msg)
+}
+
 // post отправляет JSON и возвращает тело ответа; ошибки API — их собственным текстом.
 func post(ctx context.Context, hc *http.Client, base, path, key string, payload any, limit int64) ([]byte, string, error) {
 	if strings.TrimSpace(base) == "" {
@@ -79,21 +98,7 @@ func post(ctx context.Context, hc *http.Client, base, path, key string, payload 
 		return nil, "", err
 	}
 	if resp.StatusCode/100 != 2 {
-		var e struct {
-			Error any `json:"error"`
-		}
-		msg := strings.TrimSpace(string(data))
-		if json.Unmarshal(data, &e) == nil && e.Error != nil {
-			if m, ok := e.Error.(map[string]any); ok && m["message"] != nil {
-				msg = fmt.Sprint(m["message"])
-			} else {
-				msg = fmt.Sprint(e.Error)
-			}
-		}
-		if len(msg) > 300 {
-			msg = msg[:300]
-		}
-		return nil, "", fmt.Errorf("API ответил %d: %s", resp.StatusCode, msg)
+		return nil, "", apiError(resp.StatusCode, data)
 	}
 	return data, resp.Header.Get("Content-Type"), nil
 }

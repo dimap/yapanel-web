@@ -75,6 +75,7 @@ type Daemon struct {
 	playbackEnd   time.Time
 	outputActive  bool
 	playWave      func(context.Context, []byte) error
+	pcmCommand    func(context.Context) *exec.Cmd // подмена aplay в тестах
 	micArmed      bool
 	noSpeechAt    time.Time
 	noSpeechLevel float64
@@ -313,14 +314,25 @@ func (d *Daemon) startTurn(question, source string, pcm []byte) {
 			d.mu.Unlock()
 		} else if err == nil && !local {
 			modelStart := time.Now()
-			answer, err = chat(ctx, c.LLM, msgs)
-			e.ModelMs = time.Since(modelStart).Milliseconds()
-			if err == nil {
-				d.setContext(ctx, "speaking", "")
-				if c.TTS.Provider != "openai" {
+			if c.streamTTS() {
+				answer, byAlice, err = d.streamAnswer(ctx, c, msgs, func() {
+					e.ModelMs = time.Since(modelStart).Milliseconds()
+					d.setContext(ctx, "speaking", "")
 					unglow()
+				})
+				if e.ModelMs == 0 {
+					e.ModelMs = time.Since(modelStart).Milliseconds()
 				}
-				byAlice, err = d.speak(ctx, c, answer)
+			} else {
+				answer, err = chat(ctx, c.LLM, msgs)
+				e.ModelMs = time.Since(modelStart).Milliseconds()
+				if err == nil {
+					d.setContext(ctx, "speaking", "")
+					if c.TTS.Provider != "openai" {
+						unglow()
+					}
+					byAlice, err = d.speak(ctx, c, answer)
+				}
 			}
 		}
 		if errors.Is(err, errNoSpeech) {
@@ -407,6 +419,55 @@ func (d *Daemon) audioControl(text string, turn uint64) bool {
 		return true
 	}
 	return false
+}
+
+// streamAnswer — потоковый режим Fish Audio: ответ модели озвучивается по мере генерации. onSound вызывается
+// один раз, когда пошёл звук. Если Fish не смог ничего сыграть, готовый текст озвучивается обычным путём
+// (с запасным голосом Алисы), поэтому ответ не теряется.
+func (d *Daemon) streamAnswer(ctx context.Context, c Config, msgs []message, onSound func()) (answer string, byAlice bool, err error) {
+	var fishErr error
+	answer, err = func() (string, error) {
+		d.outputMu.Lock()
+		defer d.outputMu.Unlock()
+		d.mu.Lock()
+		d.outputActive = true
+		d.mu.Unlock()
+		defer func() { d.mu.Lock(); d.playbackEnd = time.Now(); d.outputActive = false; d.mu.Unlock() }()
+		player := &pcmPlayback{ctx: ctx, command: d.pcmCommand}
+		var once sync.Once
+		start := time.Now()
+		text, played, err := streamSpeak(ctx, c, msgs, func(audio []byte) error {
+			once.Do(func() {
+				if timing, ok := ctx.Value(voiceTimingKey{}).(*entry); ok {
+					timing.TTSMs = time.Since(start).Milliseconds()
+				}
+				onSound()
+			})
+			return player.Write(audio)
+		})
+		var fe *fishError
+		if errors.As(err, &fe) {
+			fishErr, err = fe, nil
+		}
+		if err != nil || (fishErr != nil && !played) {
+			player.Abort()
+		}
+		if perr := player.Close(); perr != nil && err == nil && played {
+			err = perr
+		}
+		if fishErr != nil && played {
+			log.Printf("Fish Audio оборвал озвучку на середине ответа: %v", fishErr)
+			fishErr = nil
+		}
+		return text, err
+	}()
+	if err != nil || fishErr == nil {
+		return answer, false, err
+	}
+	log.Printf("потоковая озвучка Fish Audio не сработала (%v) — озвучиваю обычным путём", fishErr)
+	onSound()
+	byAlice, err = d.speak(ctx, c, answer)
+	return answer, byAlice, err
 }
 
 // speak озвучивает текст выбранным голосом; byAlice — прочитала Алиса (в том числе запасным путём,

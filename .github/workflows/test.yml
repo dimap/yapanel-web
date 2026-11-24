@@ -14,9 +14,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest]
-        python: ['3.9', '3.14']
         include:
+          - os: ubuntu-24.04
+            python: '3.9'
+          - os: ubuntu-latest
+            python: '3.14'
           - os: macos-latest
             python: '3.14'
     steps:

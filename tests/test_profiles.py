@@ -112,7 +112,8 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(s.LED_PREFIX, 'micro')
         self.assertEqual(s.detect_model(SimpleNamespace(shell=lambda *a, **k: ('yandex,station-micro amlogic,axg', '', 0))),
                          ('lite', 'station-micro'))
-        self.assertEqual(set(profiles.PROFILES['lite']['tested']), {'alarm', 'sounds', 'say', 'assistant'})   # #43: ассистент подтверждён
+        self.assertEqual(set(profiles.PROFILES['lite']['tested']),
+                         {'alarm', 'sounds', 'say', 'assistant', 'btpower', 'btout'})
 
     def test_model_detection_covers_prune_station_midi_and_no_clock_mini2(self):
         s = fresh_server()

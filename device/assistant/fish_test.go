@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -131,10 +133,10 @@ func sseServer(t *testing.T, got *map[string]any, parts []string, gap time.Durat
 	}))
 }
 
-// fishServer — Fish Live: проверяет протокол и на каждый flush отвечает куском PCM.
-func fishServer(t *testing.T, texts *[]string, header *http.Header, failAfter int) *httptest.Server {
+// fishHandler — Fish Live: проверяет протокол и на каждый flush отвечает куском PCM.
+func fishHandler(t *testing.T, texts *[]string, header *http.Header, failAfter int) http.HandlerFunc {
 	var mu sync.Mutex
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		*header = r.Header.Clone()
 		mu.Unlock()
@@ -181,7 +183,7 @@ func fishServer(t *testing.T, texts *[]string, header *http.Header, failAfter in
 				return
 			}
 		}
-	}))
+	}
 }
 
 func streamCfg(llm, fish string) Config {
@@ -203,7 +205,7 @@ func TestStreamSpeakEndToEnd(t *testing.T) {
 	defer llm.Close()
 	var texts []string
 	var hdr http.Header
-	fish := fishServer(t, &texts, &hdr, 0)
+	fish := httptest.NewServer(fishHandler(t, &texts, &hdr, 0))
 	defer fish.Close()
 	c := streamCfg(llm.URL, fish.URL)
 	var audio [][]byte
@@ -240,7 +242,7 @@ func TestStreamSpeakFishFailureKeepsAnswer(t *testing.T) {
 	defer llm.Close()
 	var texts []string
 	var hdr http.Header
-	fish := fishServer(t, &texts, &hdr, 1)
+	fish := httptest.NewServer(fishHandler(t, &texts, &hdr, 1))
 	defer fish.Close()
 	answer, played, err := streamSpeak(context.Background(), streamCfg(llm.URL, fish.URL), nil, func([]byte) error { return nil })
 	var fe *fishError
@@ -249,12 +251,57 @@ func TestStreamSpeakFishFailureKeepsAnswer(t *testing.T) {
 	}
 }
 
+func TestStreamAnswerFallsBackWhenPCMPlaybackCannotStart(t *testing.T) {
+	fishScheme = "ws"
+	t.Cleanup(func() { fishScheme = "wss" })
+	const want = "Первое предложение. Остаток ответа."
+	llm := sseServer(t, nil, []string{"Первое предложение. ", "Остаток ответа."}, 0)
+	t.Cleanup(llm.Close)
+	var texts []string
+	var hdr http.Header
+	wav := append([]byte("RIFF"), make([]byte, 40)...)
+	mux := http.NewServeMux()
+	mux.Handle("/v1/tts/live", fishHandler(t, &texts, &hdr, 0))
+	mux.HandleFunc("/audio/speech", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		decodeBody(r, &body)
+		if body["input"] != want {
+			t.Errorf("fallback input = %q, want %q", body["input"], want)
+		}
+		w.Write(wav)
+	})
+	tts := httptest.NewServer(mux)
+	t.Cleanup(tts.Close)
+	missingPlayer := filepath.Join(t.TempDir(), "aplay")
+	pcmAttempts, wavPlays, soundEvents := 0, 0, 0
+	d := &Daemon{
+		pcmCommand: func(ctx context.Context) *exec.Cmd {
+			pcmAttempts++
+			return exec.CommandContext(ctx, missingPlayer)
+		},
+		playWave: func(_ context.Context, got []byte) error {
+			wavPlays++
+			if !bytes.Equal(got, wav) {
+				t.Errorf("fallback returned unexpected WAV: %x", got)
+			}
+			return nil
+		},
+	}
+	answer, byAlice, err := d.streamAnswer(context.Background(), streamCfg(llm.URL, tts.URL), nil, func() { soundEvents++ })
+	if err != nil || byAlice || answer != want {
+		t.Fatalf("streamAnswer = %q, %v, %v", answer, byAlice, err)
+	}
+	if pcmAttempts != 1 || wavPlays != 1 || soundEvents != 1 {
+		t.Fatalf("PCM attempts = %d, WAV plays = %d, sound events = %d", pcmAttempts, wavPlays, soundEvents)
+	}
+}
+
 func TestStreamSpeakModelErrors(t *testing.T) {
 	fishScheme = "ws"
 	defer func() { fishScheme = "wss" }()
 	var texts []string
 	var hdr http.Header
-	fish := fishServer(t, &texts, &hdr, 0)
+	fish := httptest.NewServer(fishHandler(t, &texts, &hdr, 0))
 	defer fish.Close()
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
@@ -285,7 +332,7 @@ func TestStreamSpeakCancelAndTimeout(t *testing.T) {
 	defer hang.Close()
 	var texts []string
 	var hdr http.Header
-	fish := fishServer(t, &texts, &hdr, 0)
+	fish := httptest.NewServer(fishHandler(t, &texts, &hdr, 0))
 	defer fish.Close()
 	c := streamCfg(hang.URL, fish.URL)
 	streamTimeout = 1 * time.Second // секунда

@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -278,14 +277,15 @@ func streamSpeak(ctx context.Context, c Config, messages []message, play func([]
 	defer cancel()
 	texts := make(chan string, 32)
 	var split speechSplitter
-	var mu sync.Mutex
 	fishDone := make(chan error, 1)
 	go func() {
 		fishDone <- fishLive(ctx, c.TTS, c.LLM.Proxy, texts, func(a []byte) error {
-			mu.Lock()
+			if err := play(a); err != nil {
+				return err
+			}
+			// The receiver of fishDone reads played only after playback completes.
 			played = true
-			mu.Unlock()
-			return play(a)
+			return nil
 		})
 	}()
 	var fishErr error
@@ -323,8 +323,14 @@ func streamSpeak(ctx context.Context, c Config, messages []message, play func([]
 	case answer == "":
 		return "", played, errors.New("модель вернула пустой ответ")
 	}
-	if fishErr != nil && ctx.Err() == nil {
+	if err := ctx.Err(); err != nil {
+		return answer, played, err
+	}
+	if fishErr == nil && !played {
+		fishErr = errors.New("Fish Audio завершил озвучку без аудио")
+	}
+	if fishErr != nil {
 		return answer, played, &fishError{fishErr}
 	}
-	return answer, played, ctx.Err()
+	return answer, played, nil
 }

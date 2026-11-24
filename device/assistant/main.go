@@ -437,13 +437,16 @@ func (d *Daemon) streamAnswer(ctx context.Context, c Config, msgs []message, onS
 		var once sync.Once
 		start := time.Now()
 		text, played, err := streamSpeak(ctx, c, msgs, func(audio []byte) error {
+			if err := player.Write(audio); err != nil {
+				return err
+			}
 			once.Do(func() {
 				if timing, ok := ctx.Value(voiceTimingKey{}).(*entry); ok {
 					timing.TTSMs = time.Since(start).Milliseconds()
 				}
 				onSound()
 			})
-			return player.Write(audio)
+			return nil
 		})
 		var fe *fishError
 		if errors.As(err, &fe) {
